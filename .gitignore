@@ -1,4 +1,4 @@
-/data
+/data/*.csv
 
 **/.DS_Store/**
 **/__pychache__/**
