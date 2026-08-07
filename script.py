@@ -1,8 +1,9 @@
-# script.py
+# script.py - ExtraTrees
 
 from pathlib import Path
 
 import joblib
+import numpy as np
 import pandas as pd
 
 
@@ -57,7 +58,8 @@ def find_model():
 
     if len(model_files) > 1:
         raise RuntimeError(
-            f"model/에 .pkl 파일이 여러 개 있습니다: {model_files}"
+            f"model/에 .pkl 파일이 여러 개 있습니다: "
+            f"{model_files}"
         )
 
     return model_files[0]
@@ -103,70 +105,21 @@ def load_sample_submission(path):
 
 
 # =========================================================
-# LightGBM Feature 전처리
+# Feature 생성
 # =========================================================
 
-def prepare_features(
-    df,
-    features,
-    cat_cols,
-    category_levels,
-    id_like_cols,
-):
+def build_features(df):
     """
-    train.py와 동일한 LightGBM V2 전처리를 수행한다.
+    train.py와 동일하게 row_id를 모델 입력에서 제외한다.
 
-    1. 학습 시점 Feature 순서로 정렬
-    2. 저카디널리티 범주형만 pd.Categorical 처리
-    3. 학습 시 저장한 category level을 그대로 적용
-    4. ID 계열은 numeric 유지
-    5. 수치형 결측값은 LightGBM이 직접 처리
+    ExtraTrees 모델은 sklearn Pipeline으로 저장되어 있으므로
+    categorical encoding과 missing-value imputation은
+    저장된 모델 내부에서 자동 수행된다.
     """
 
-    missing_features = [
-        col
-        for col in features
-        if col not in df.columns
-    ]
-
-    if missing_features:
-        raise ValueError(
-            "입력 데이터에 학습 Feature가 없습니다: "
-            + ", ".join(missing_features)
-        )
-
-    X = df[
-        features
-    ].copy()
-
-    # -----------------------------------------------------
-    # 저카디널리티 categorical
-    # -----------------------------------------------------
-
-    for col in cat_cols:
-        values = (
-            X[col]
-            .fillna("__MISSING__")
-            .astype(str)
-        )
-
-        X[col] = pd.Categorical(
-            values,
-            categories=category_levels[col],
-        )
-
-    # -----------------------------------------------------
-    # ID 계열 numeric 유지
-    # -----------------------------------------------------
-
-    for col in id_like_cols:
-        if col in X.columns:
-            X[col] = pd.to_numeric(
-                X[col],
-                errors="coerce",
-            )
-
-    return X
+    return df.drop(
+        columns=[ID_COL]
+    )
 
 
 # =========================================================
@@ -212,96 +165,17 @@ def build_submission(
 def main():
 
     # -----------------------------------------------------
-    # 모델 artifact 로드
+    # 모델 탐색 / 로드
     # -----------------------------------------------------
 
     model_path = find_model()
 
     print(
-        f"[Model artifact] {model_path}"
+        f"[Model] {model_path}"
     )
 
-    artifact = joblib.load(
+    model = joblib.load(
         model_path
-    )
-
-    # -----------------------------------------------------
-    # artifact 구조 검증
-    # -----------------------------------------------------
-
-    required_keys = {
-        "model",
-        "features",
-        "cat_cols",
-        "id_like_cols",
-        "category_levels",
-        "best_iteration",
-    }
-
-    if not isinstance(
-        artifact,
-        dict,
-    ):
-        raise TypeError(
-            "LightGBM 모델 파일은 "
-            "artifact dictionary여야 합니다."
-        )
-
-    missing_keys = (
-        required_keys
-        - set(artifact.keys())
-    )
-
-    if missing_keys:
-        raise ValueError(
-            "모델 artifact에 필요한 항목이 없습니다: "
-            + ", ".join(
-                sorted(missing_keys)
-            )
-        )
-
-    model = artifact[
-        "model"
-    ]
-
-    features = artifact[
-        "features"
-    ]
-
-    cat_cols = artifact[
-        "cat_cols"
-    ]
-
-    id_like_cols = artifact[
-        "id_like_cols"
-    ]
-
-    category_levels = artifact[
-        "category_levels"
-    ]
-
-    best_iteration = artifact[
-        "best_iteration"
-    ]
-
-    print(
-        f"model_name={artifact.get('model_name', '?')}"
-    )
-
-    print(
-        f"best_iteration={best_iteration}"
-    )
-
-    print(
-        f"features={len(features)}"
-    )
-
-    print(
-        f"categorical={cat_cols}"
-    )
-
-    print(
-        f"numeric_id={id_like_cols}"
     )
 
     # -----------------------------------------------------
@@ -329,16 +203,12 @@ def main():
         ID_COL
     ].to_numpy()
 
-    X = prepare_features(
-        df=test,
-        features=features,
-        cat_cols=cat_cols,
-        category_levels=category_levels,
-        id_like_cols=id_like_cols,
+    X = build_features(
+        test
     )
 
     print(
-        f"prepared features={X.shape[1]}"
+        f"features={X.shape[1]}"
     )
 
     # -----------------------------------------------------
@@ -346,8 +216,7 @@ def main():
     # -----------------------------------------------------
 
     predictions = model.predict_proba(
-        X,
-        num_iteration=best_iteration,
+        X
     )[:, 1]
 
     # -----------------------------------------------------
@@ -359,13 +228,11 @@ def main():
             "Test 예측 수와 입력 row 수가 다릅니다."
         )
 
-    if not pd.Series(
+    if not np.isfinite(
         predictions
-    ).map(
-        lambda x: pd.notna(x)
     ).all():
         raise RuntimeError(
-            "예측값에 NaN이 존재합니다."
+            "예측값에 NaN 또는 무한대가 있습니다."
         )
 
     if not (
@@ -417,12 +284,8 @@ def main():
 
     print()
     print("[Submission 저장 완료]")
-    print(
-        f"- {OUTPUT_PATH}"
-    )
-    print(
-        f"- rows: {len(submission)}"
-    )
+    print(f"- {OUTPUT_PATH}")
+    print(f"- rows: {len(submission)}")
 
 
 if __name__ == "__main__":

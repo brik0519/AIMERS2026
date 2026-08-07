@@ -1,16 +1,18 @@
 # train.py
 
-import gc
 import json
 import shutil
 import time
 from pathlib import Path
 
 import joblib
-import lightgbm as lgb
 import numpy as np
 import pandas as pd
-from lightgbm import LGBMClassifier
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import ExtraTreesClassifier
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OrdinalEncoder
 
 
 # =========================================================
@@ -23,7 +25,7 @@ ID = "row_id"
 TARGET = "control_success"
 
 # 실험마다 이 값만 변경
-EXPERIMENT_NAME = "lgb_v001"
+EXPERIMENT_NAME = "et_v001"
 
 MODEL_ROOT = Path("./model")
 MODEL_DIR = MODEL_ROOT / EXPERIMENT_NAME
@@ -32,16 +34,12 @@ MODEL_PATH = MODEL_DIR / f"{EXPERIMENT_NAME}.pkl"
 VALIDATION_ROOT = Path("./validation")
 VALIDATION_DIR = VALIDATION_ROOT / EXPERIMENT_NAME
 
-MAX_ITERATIONS = 5000
-EARLY_STOPPING_ROUNDS = 200
-RANDOM_STATE = 42
-
 
 # =========================================================
-# 범주형 컬럼 정의
+# Feature 정책
 # =========================================================
 
-# 저카디널리티 명목형 변수만 categorical로 처리
+# 저카디널리티 명목형 변수만 categorical encoding
 CAT_COLS = [
     "top_bottom",
     "game_type",
@@ -50,7 +48,8 @@ CAT_COLS = [
     "batter_hand",
 ]
 
-# ID 계열은 numeric으로 유지
+# 고카디널리티 ID는 categorical encoding하지 않고
+# numeric 값으로 유지
 ID_LIKE_COLS = [
     "pitcher_id",
     "batter_id",
@@ -60,132 +59,103 @@ ID_LIKE_COLS = [
 
 
 # =========================================================
-# LightGBM 모델 파라미터
+# ExtraTrees 설정
 # =========================================================
 
 MODEL_PARAMS = {
-    "objective": "binary",
-    "metric": "None",
-    "learning_rate": 0.03,
-    "num_leaves": 63,
-    "max_depth": -1,
-    "min_child_samples": 200,
-    "subsample": 0.85,
-    "subsample_freq": 1,
-    "colsample_bytree": 0.85,
-    "reg_alpha": 1.0,
-    "reg_lambda": 10.0,
-    "random_state": RANDOM_STATE,
+    "n_estimators": 500,
+    "max_depth": None,
+    "min_samples_leaf": 50,
+    "max_features": "sqrt",
+    "bootstrap": False,
     "n_jobs": -1,
-    "verbosity": -1,
+    "random_state": 42,
 }
 
 
 # =========================================================
-# 사용자 정의 Brier Score
+# 전처리 생성
 # =========================================================
 
-def brier_metric(y_true, y_pred):
-    y_true = np.asarray(y_true)
-    y_pred = np.asarray(y_pred)
+def create_preprocessor(
+    cat_cols,
+    num_cols,
+):
+    """
+    ExtraTrees 입력 전처리 객체를 새로 생성한다.
 
-    brier = np.mean(
-        (y_pred - y_true) ** 2
+    Validation 모델과 Final 모델이 서로 독립된
+    fitted preprocessing state를 갖도록 매번 새 객체를 반환한다.
+    """
+
+    return ColumnTransformer(
+        transformers=[
+            (
+                "cat",
+                Pipeline([
+                    (
+                        "imputer",
+                        SimpleImputer(
+                            strategy="constant",
+                            fill_value="__MISSING__",
+                        ),
+                    ),
+                    (
+                        "encoder",
+                        OrdinalEncoder(
+                            handle_unknown="use_encoded_value",
+                            unknown_value=-1,
+                        ),
+                    ),
+                ]),
+                cat_cols,
+            ),
+            (
+                "num",
+                SimpleImputer(
+                    strategy="median",
+                ),
+                num_cols,
+            ),
+        ],
+        remainder="drop",
     )
 
-    return (
-        "brier",
-        float(brier),
-        False,
-    )
-
 
 # =========================================================
-# 범주형 level 생성
-# =========================================================
-
-def fit_category_levels(
-    df,
-    cat_cols,
-):
-    category_levels = {}
-
-    for col in cat_cols:
-        values = (
-            df[col]
-            .fillna("__MISSING__")
-            .astype(str)
-        )
-
-        category_levels[col] = sorted(
-            values.unique().tolist()
-        )
-
-    return category_levels
-
-
-# =========================================================
-# Feature 전처리
-# =========================================================
-
-def prepare_features(
-    df,
-    features,
-    cat_cols,
-    category_levels,
-    id_like_cols,
-):
-    missing_features = [
-        col
-        for col in features
-        if col not in df.columns
-    ]
-
-    if missing_features:
-        raise ValueError(
-            "입력 데이터에 학습 Feature가 없습니다: "
-            + ", ".join(missing_features)
-        )
-
-    X = df[
-        features
-    ].copy()
-
-    # 저카디널리티 categorical 처리
-    for col in cat_cols:
-        values = (
-            X[col]
-            .fillna("__MISSING__")
-            .astype(str)
-        )
-
-        X[col] = pd.Categorical(
-            values,
-            categories=category_levels[col],
-        )
-
-    # 고카디널리티 ID는 numeric 유지
-    for col in id_like_cols:
-        if col in X.columns:
-            X[col] = pd.to_numeric(
-                X[col],
-                errors="coerce",
-            )
-
-    return X
-
-
-# =========================================================
-# LightGBM 모델 생성
+# ExtraTrees 모델 생성
 # =========================================================
 
 def create_model(
-    n_estimators,
+    cat_cols,
+    num_cols,
 ):
-    return LGBMClassifier(
-        n_estimators=n_estimators,
-        **MODEL_PARAMS,
+    """
+    새로운 전처리 객체와 새로운 ExtraTreesClassifier를 생성하여
+    독립적인 Pipeline을 반환한다.
+    """
+
+    preprocessor = create_preprocessor(
+        cat_cols=cat_cols,
+        num_cols=num_cols,
     )
+
+    estimator = ExtraTreesClassifier(
+        **MODEL_PARAMS
+    )
+
+    model = Pipeline([
+        (
+            "pre",
+            preprocessor,
+        ),
+        (
+            "clf",
+            estimator,
+        ),
+    ])
+
+    return model, estimator
 
 
 # =========================================================
@@ -203,7 +173,6 @@ def save_validation(
     baseline_brier,
     bss,
     output_root,
-    best_iteration,
 ):
     row_ids = np.asarray(row_ids)
     y_true = np.asarray(y_true)
@@ -266,9 +235,6 @@ def save_validation(
         "experiment_name": experiment_name,
         "model_type": type(estimator).__name__,
         "model_params": model_params,
-        "max_iterations": MAX_ITERATIONS,
-        "early_stopping_rounds": EARLY_STOPPING_ROUNDS,
-        "best_iteration": int(best_iteration),
         "validation_season": 2024,
         "n_validation": int(len(y_true)),
         "positive_rate": float(np.mean(y_true)),
@@ -295,15 +261,9 @@ def save_validation(
 
     print()
     print("[Validation 저장 완료]")
-    print(
-        f"- {output_dir / 'pred.csv'}"
-    )
-    print(
-        f"- {output_dir / 'validation.npz'}"
-    )
-    print(
-        f"- {output_dir / 'metadata.json'}"
-    )
+    print(f"- {output_dir / 'pred.csv'}")
+    print(f"- {output_dir / 'validation.npz'}")
+    print(f"- {output_dir / 'metadata.json'}")
 
 
 # =========================================================
@@ -334,15 +294,8 @@ def main():
     # 파일 경로
     # -----------------------------------------------------
 
-    TEST_PATH = (
-        DATA_DIR
-        / "test.csv"
-    )
-
-    TRAIN_PATH = (
-        DATA_DIR
-        / "train.csv"
-    )
+    TEST_PATH = DATA_DIR / "test.csv"
+    TRAIN_PATH = DATA_DIR / "train.csv"
 
     # -----------------------------------------------------
     # 데이터 파일 검증
@@ -415,9 +368,9 @@ def main():
     )
 
     required_columns = {
+        ID,
         "season",
         TARGET,
-        ID,
     }
 
     missing_columns = (
@@ -440,42 +393,51 @@ def main():
         )
 
     print("=" * 70)
-    print("LightGBM V2 데이터 로드 완료")
+    print("ExtraTrees 데이터 로드 완료")
     print("=" * 70)
+
     print(
         "Train shape          :",
         train.shape,
     )
+
     print(
         "Feature 수           :",
         len(features),
     )
+
     print(
         "Categorical 수       :",
         len(cat_cols),
     )
+
     print(
         "Numeric 수           :",
         len(num_cols),
     )
+
     print(
         "Categorical Feature  :",
         cat_cols,
     )
+
     print(
         "Numeric ID Feature   :",
         id_like_cols,
     )
+
     print(
         "시즌 범위            :",
         train["season"].min(),
         "~",
         train["season"].max(),
     )
+
     print(
         f"전체 제구 성공률      : "
         f"{train[TARGET].mean():.6f}"
     )
+
     print("=" * 70)
 
     # -----------------------------------------------------
@@ -497,52 +459,30 @@ def main():
             "2024년 이전 학습 데이터가 없습니다."
         )
 
-    train_df = train.loc[
-        ~is_val
-    ].copy()
+    X_train = train.loc[
+        ~is_val,
+        features,
+    ]
 
-    val_df = train.loc[
-        is_val
-    ].copy()
+    y_train = train.loc[
+        ~is_val,
+        TARGET,
+    ]
 
-    y_train = train_df[
-        TARGET
-    ].copy()
+    X_val = train.loc[
+        is_val,
+        features,
+    ]
 
-    y_val = val_df[
-        TARGET
-    ].copy()
+    y_val = train.loc[
+        is_val,
+        TARGET,
+    ]
 
-    val_row_id = val_df[
-        ID
-    ].copy()
-
-    # -----------------------------------------------------
-    # Validation category level
-    # -----------------------------------------------------
-
-    category_levels = (
-        fit_category_levels(
-            train_df,
-            cat_cols,
-        )
-    )
-
-    X_train = prepare_features(
-        df=train_df,
-        features=features,
-        cat_cols=cat_cols,
-        category_levels=category_levels,
-        id_like_cols=id_like_cols,
-    )
-
-    X_val = prepare_features(
-        df=val_df,
-        features=features,
-        cat_cols=cat_cols,
-        category_levels=category_levels,
-        id_like_cols=id_like_cols,
-    )
+    val_row_id = train.loc[
+        is_val,
+        ID,
+    ]
 
     print(
         "학습 데이터 shape     :",
@@ -565,94 +505,45 @@ def main():
     )
 
     # -----------------------------------------------------
-    # Validation 모델
+    # Validation 모델 생성
     # -----------------------------------------------------
 
-    estimator = create_model(
-        n_estimators=MAX_ITERATIONS,
+    model, estimator = create_model(
+        cat_cols=cat_cols,
+        num_cols=num_cols,
     )
+
+    # -----------------------------------------------------
+    # Validation 학습
+    # -----------------------------------------------------
 
     print("=" * 70)
-    print(
-        "LightGBM V2 Validation 학습 시작"
-    )
-    print(
-        f"최대 iteration        : "
-        f"{MAX_ITERATIONS}"
-    )
-    print(
-        f"Early stopping rounds : "
-        f"{EARLY_STOPPING_ROUNDS}"
-    )
-    print(
-        "Early stopping metric : "
-        "Brier Score"
-    )
+    print("ExtraTrees Validation 학습 시작")
     print("=" * 70)
 
-    validation_start = time.time()
+    start_time = time.time()
 
-    estimator.fit(
+    model.fit(
         X_train,
         y_train,
-        categorical_feature=cat_cols,
-        eval_set=[
-            (
-                X_val,
-                y_val,
-            )
-        ],
-        eval_metric=brier_metric,
-        callbacks=[
-            lgb.early_stopping(
-                stopping_rounds=EARLY_STOPPING_ROUNDS,
-                first_metric_only=True,
-                verbose=True,
-            ),
-            lgb.log_evaluation(
-                period=100,
-            ),
-        ],
     )
 
     validation_elapsed = (
         time.time()
-        - validation_start
+        - start_time
     )
 
     print(
-        "Validation 학습 완료 : "
+        f"Validation 학습 완료 : "
         f"{validation_elapsed:.1f}초"
-    )
-
-    # -----------------------------------------------------
-    # Best iteration
-    # -----------------------------------------------------
-
-    best_iteration = (
-        estimator.best_iteration_
-    )
-
-    if (
-        best_iteration is None
-        or best_iteration <= 0
-    ):
-        best_iteration = (
-            MAX_ITERATIONS
-        )
-
-    print(
-        "Best iteration       :",
-        best_iteration,
     )
 
     # -----------------------------------------------------
     # Validation prediction
     # -----------------------------------------------------
 
-    val_pred = estimator.predict_proba(
-        X_val,
-        num_iteration=best_iteration,
+    val_pred = model.predict_proba(
+        X_val
     )[:, 1]
 
     # -----------------------------------------------------
@@ -726,9 +617,7 @@ def main():
     )
 
     print("=" * 70)
-    print(
-        "LightGBM V2 Validation 결과"
-    )
+    print("ExtraTrees Validation 결과")
     print("=" * 70)
 
     print(
@@ -744,11 +633,6 @@ def main():
     print(
         f"Validation Score     : "
         f"{validation_score:.4f}"
-    )
-
-    print(
-        f"Best iteration       : "
-        f"{best_iteration}"
     )
 
     print(
@@ -793,104 +677,44 @@ def main():
         baseline_brier=baseline_brier,
         bss=validation_score,
         output_root=VALIDATION_ROOT,
-        best_iteration=best_iteration,
     )
 
     # -----------------------------------------------------
-    # Validation 관련 메모리 정리
+    # 전체 데이터 재학습용 모델 생성
     # -----------------------------------------------------
 
-    del X_train
-    del X_val
-    del train_df
-    del val_df
-    del estimator
-
-    gc.collect()
-
-    # -----------------------------------------------------
-    # 전체 데이터 기준 category level 재생성
-    # -----------------------------------------------------
-
-    final_category_levels = (
-        fit_category_levels(
-            train,
-            cat_cols,
-        )
-    )
-
-    X_full = prepare_features(
-        df=train,
-        features=features,
+    final_model, _ = create_model(
         cat_cols=cat_cols,
-        category_levels=final_category_levels,
-        id_like_cols=id_like_cols,
+        num_cols=num_cols,
     )
-
-    y_full = train[
-        TARGET
-    ].copy()
 
     # -----------------------------------------------------
-    # 최종 모델
+    # 전체 데이터 재학습
     # -----------------------------------------------------
 
-    final_model = create_model(
-        n_estimators=best_iteration,
-    )
-
     print("=" * 70)
-    print(
-        "LightGBM V2 전체 데이터 재학습 시작"
-    )
-    print(
-        f"사용 iteration       : "
-        f"{best_iteration}"
-    )
+    print("ExtraTrees 전체 데이터 재학습 시작")
     print("=" * 70)
 
-    final_start = time.time()
+    start_time = time.time()
 
     final_model.fit(
-        X_full,
-        y_full,
-        categorical_feature=cat_cols,
+        train[features],
+        train[TARGET],
     )
 
     final_elapsed = (
         time.time()
-        - final_start
+        - start_time
     )
 
     print(
-        "전체 데이터 재학습 완료: "
+        f"전체 데이터 재학습 완료: "
         f"{final_elapsed:.1f}초"
     )
 
     # -----------------------------------------------------
-    # Model artifact
-    # -----------------------------------------------------
-
-    artifact = {
-        "model": final_model,
-        "features": features,
-        "cat_cols": cat_cols,
-        "id_like_cols": id_like_cols,
-        "category_levels": final_category_levels,
-        "best_iteration": int(
-            best_iteration
-        ),
-        "validation_brier": float(
-            brier
-        ),
-        "validation_score": float(
-            validation_score
-        ),
-        "model_name": EXPERIMENT_NAME,
-    }
-
-    # -----------------------------------------------------
-    # Model 저장
+    # 최종 모델 저장
     # -----------------------------------------------------
 
     MODEL_DIR.mkdir(
@@ -899,40 +723,40 @@ def main():
     )
 
     joblib.dump(
-        artifact,
+        final_model,
         MODEL_PATH,
         compress=3,
     )
 
+    # 해당 모델을 생성한 train.py snapshot
     shutil.copy2(
         "./train.py",
         MODEL_DIR / "train.py",
     )
 
     print("=" * 70)
-    print(
-        "LightGBM V2 모델 저장 완료"
-    )
+    print("ExtraTrees 모델 저장 완료")
+
     print(
         f"저장 경로            : "
         f"{MODEL_PATH}"
     )
-    print(
-        f"Best iteration       : "
-        f"{best_iteration}"
-    )
+
     print(
         f"Validation Brier     : "
         f"{brier:.10f}"
     )
+
     print(
         f"Validation Score     : "
         f"{validation_score:.4f}"
     )
+
     print(
         f"train.py snapshot    : "
         f"{MODEL_DIR / 'train.py'}"
     )
+
     print("=" * 70)
 
 
