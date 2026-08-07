@@ -1,4 +1,7 @@
 /data/*.csv
 
+# 용량이 큰 Model 파일 제거.
+**/et_v001.pkl
+
 **/.DS_Store/**
 **/__pychache__/**

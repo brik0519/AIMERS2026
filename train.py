@@ -8,11 +8,10 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
+import xgboost as xgb
 from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import ExtraTreesClassifier
-from sklearn.impute import SimpleImputer
-from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OrdinalEncoder
+from xgboost import XGBClassifier
 
 
 # =========================================================
@@ -25,7 +24,7 @@ ID = "row_id"
 TARGET = "control_success"
 
 # 실험마다 이 값만 변경
-EXPERIMENT_NAME = "et_v001"
+EXPERIMENT_NAME = "xgb_v001"
 
 MODEL_ROOT = Path("./model")
 MODEL_DIR = MODEL_ROOT / EXPERIMENT_NAME
@@ -36,10 +35,19 @@ VALIDATION_DIR = VALIDATION_ROOT / EXPERIMENT_NAME
 
 
 # =========================================================
+# 학습 설정
+# =========================================================
+
+MAX_ITERATIONS = 5000
+EARLY_STOPPING_ROUNDS = 200
+RANDOM_STATE = 42
+
+
+# =========================================================
 # Feature 정책
 # =========================================================
 
-# 저카디널리티 명목형 변수만 categorical encoding
+# 저카디널리티 명목형만 categorical encoding
 CAT_COLS = [
     "top_bottom",
     "game_type",
@@ -59,18 +67,105 @@ ID_LIKE_COLS = [
 
 
 # =========================================================
-# ExtraTrees 설정
+# XGBoost 모델 파라미터
 # =========================================================
 
 MODEL_PARAMS = {
-    "n_estimators": 500,
-    "max_depth": None,
-    "min_samples_leaf": 50,
-    "max_features": "sqrt",
-    "bootstrap": False,
+    "objective": "binary:logistic",
+
+    "learning_rate": 0.03,
+
+    "max_depth": 8,
+    "min_child_weight": 10.0,
+
+    "subsample": 0.85,
+    "colsample_bytree": 0.85,
+
+    "reg_alpha": 1.0,
+    "reg_lambda": 10.0,
+
+    "tree_method": "hist",
+    "device": "cpu",
+
+    "random_state": RANDOM_STATE,
     "n_jobs": -1,
-    "random_state": 42,
 }
+
+
+# =========================================================
+# Brier Score
+# =========================================================
+
+def brier_metric(
+    y_true,
+    y_pred,
+):
+    """
+    XGBoost validation용 Brier Score.
+
+    callable eval_metric은 cost function으로 사용되며
+    값이 작을수록 좋다.
+    """
+
+    y_true = np.asarray(
+        y_true
+    )
+
+    y_pred = np.asarray(
+        y_pred
+    )
+
+    return float(
+        np.mean(
+            (y_pred - y_true) ** 2
+        )
+    )
+
+
+# =========================================================
+# Raw Feature 준비
+# =========================================================
+
+def prepare_raw_features(
+    df,
+    features,
+    id_like_cols,
+):
+    """
+    XGBoost 전처리 직전 DataFrame을 생성한다.
+
+    1. 학습 Feature 순서 고정
+    2. ID 계열은 numeric으로 강제 변환
+    3. 나머지 numeric NaN은 그대로 유지
+       → XGBoost가 직접 처리
+    """
+
+    missing_features = [
+        col
+        for col in features
+        if col not in df.columns
+    ]
+
+    if missing_features:
+        raise ValueError(
+            "입력 데이터에 학습 Feature가 없습니다: "
+            + ", ".join(
+                missing_features
+            )
+        )
+
+    X = df[
+        features
+    ].copy()
+
+    for col in id_like_cols:
+        if col in X.columns:
+            X[col] = pd.to_numeric(
+                X[col],
+                errors="coerce",
+            )
+
+    return X
 
 
 # =========================================================
@@ -82,39 +177,35 @@ def create_preprocessor(
     num_cols,
 ):
     """
-    ExtraTrees 입력 전처리 객체를 새로 생성한다.
+    새로운 OrdinalEncoder를 포함하는
+    XGBoost 전처리 객체를 매번 생성한다.
 
-    Validation 모델과 Final 모델이 서로 독립된
-    fitted preprocessing state를 갖도록 매번 새 객체를 반환한다.
+    Validation과 Final model이 서로 독립된
+    fitted encoder를 갖도록 한다.
+
+    categorical:
+        "__MISSING__" 사용
+        unseen category → -1
+
+    numeric:
+        그대로 통과
+        NaN도 그대로 XGBoost에 전달
     """
 
     return ColumnTransformer(
         transformers=[
             (
                 "cat",
-                Pipeline([
-                    (
-                        "imputer",
-                        SimpleImputer(
-                            strategy="constant",
-                            fill_value="__MISSING__",
-                        ),
-                    ),
-                    (
-                        "encoder",
-                        OrdinalEncoder(
-                            handle_unknown="use_encoded_value",
-                            unknown_value=-1,
-                        ),
-                    ),
-                ]),
+                OrdinalEncoder(
+                    handle_unknown="use_encoded_value",
+                    unknown_value=-1,
+                    encoded_missing_value=-1,
+                ),
                 cat_cols,
             ),
             (
                 "num",
-                SimpleImputer(
-                    strategy="median",
-                ),
+                "passthrough",
                 num_cols,
             ),
         ],
@@ -123,39 +214,47 @@ def create_preprocessor(
 
 
 # =========================================================
-# ExtraTrees 모델 생성
+# Validation 모델 생성
 # =========================================================
 
-def create_model(
-    cat_cols,
-    num_cols,
+def create_validation_model():
+    """
+    Brier Score 기반 early stopping을 사용하는
+    Validation용 XGBClassifier를 생성한다.
+    """
+
+    return XGBClassifier(
+        n_estimators=MAX_ITERATIONS,
+
+        eval_metric=brier_metric,
+        early_stopping_rounds=EARLY_STOPPING_ROUNDS,
+
+        **MODEL_PARAMS,
+    )
+
+
+# =========================================================
+# Final 모델 생성
+# =========================================================
+
+def create_final_model(
+    n_estimators,
 ):
     """
-    새로운 전처리 객체와 새로운 ExtraTreesClassifier를 생성하여
-    독립적인 Pipeline을 반환한다.
+    Validation에서 찾은 best iteration만큼
+    전체 데이터로 다시 학습할 Final 모델.
+
+    Final 모델에는 eval_metric callable과
+    early stopping 설정을 넣지 않는다.
+
+    이렇게 해야 저장된 model.pkl이
+    script.py의 함수 정의에 의존하지 않는다.
     """
 
-    preprocessor = create_preprocessor(
-        cat_cols=cat_cols,
-        num_cols=num_cols,
+    return XGBClassifier(
+        n_estimators=n_estimators,
+        **MODEL_PARAMS,
     )
-
-    estimator = ExtraTreesClassifier(
-        **MODEL_PARAMS
-    )
-
-    model = Pipeline([
-        (
-            "pre",
-            preprocessor,
-        ),
-        (
-            "clf",
-            estimator,
-        ),
-    ])
-
-    return model, estimator
 
 
 # =========================================================
@@ -173,10 +272,19 @@ def save_validation(
     baseline_brier,
     bss,
     output_root,
+    best_iteration,
 ):
-    row_ids = np.asarray(row_ids)
-    y_true = np.asarray(y_true)
-    y_pred = np.asarray(y_pred)
+    row_ids = np.asarray(
+        row_ids
+    )
+
+    y_true = np.asarray(
+        y_true
+    )
+
+    y_pred = np.asarray(
+        y_pred
+    )
 
     assert (
         len(row_ids)
@@ -235,16 +343,41 @@ def save_validation(
         "experiment_name": experiment_name,
         "model_type": type(estimator).__name__,
         "model_params": model_params,
+
+        "max_iterations": MAX_ITERATIONS,
+        "early_stopping_rounds": EARLY_STOPPING_ROUNDS,
+        "best_iteration": int(best_iteration),
+
         "validation_season": 2024,
         "n_validation": int(len(y_true)),
-        "positive_rate": float(np.mean(y_true)),
+
+        "positive_rate": float(
+            np.mean(y_true)
+        ),
+
         "brier": float(brier),
-        "baseline_brier": float(baseline_brier),
+        "baseline_brier": float(
+            baseline_brier
+        ),
         "bss": float(bss),
-        "prediction_mean": float(np.mean(y_pred)),
-        "prediction_std": float(np.std(y_pred)),
-        "prediction_min": float(np.min(y_pred)),
-        "prediction_max": float(np.max(y_pred)),
+
+        "prediction_mean": float(
+            np.mean(y_pred)
+        ),
+
+        "prediction_std": float(
+            np.std(y_pred)
+        ),
+
+        "prediction_min": float(
+            np.min(y_pred)
+        ),
+
+        "prediction_max": float(
+            np.max(y_pred)
+        ),
+
+        "xgboost_version": xgb.__version__,
     }
 
     with open(
@@ -261,9 +394,15 @@ def save_validation(
 
     print()
     print("[Validation 저장 완료]")
-    print(f"- {output_dir / 'pred.csv'}")
-    print(f"- {output_dir / 'validation.npz'}")
-    print(f"- {output_dir / 'metadata.json'}")
+    print(
+        f"- {output_dir / 'pred.csv'}"
+    )
+    print(
+        f"- {output_dir / 'validation.npz'}"
+    )
+    print(
+        f"- {output_dir / 'metadata.json'}"
+    )
 
 
 # =========================================================
@@ -291,11 +430,18 @@ def main():
         )
 
     # -----------------------------------------------------
-    # 파일 경로
+    # 경로
     # -----------------------------------------------------
 
-    TEST_PATH = DATA_DIR / "test.csv"
-    TRAIN_PATH = DATA_DIR / "train.csv"
+    TEST_PATH = (
+        DATA_DIR
+        / "test.csv"
+    )
+
+    TRAIN_PATH = (
+        DATA_DIR
+        / "train.csv"
+    )
 
     # -----------------------------------------------------
     # 데이터 파일 검증
@@ -393,8 +539,13 @@ def main():
         )
 
     print("=" * 70)
-    print("ExtraTrees 데이터 로드 완료")
+    print("XGBoost 데이터 로드 완료")
     print("=" * 70)
+
+    print(
+        "XGBoost version      :",
+        xgb.__version__,
+    )
 
     print(
         "Train shape          :",
@@ -438,6 +589,10 @@ def main():
         f"{train[TARGET].mean():.6f}"
     )
 
+    print(
+        "Device               : cpu"
+    )
+
     print("=" * 70)
 
     # -----------------------------------------------------
@@ -459,30 +614,66 @@ def main():
             "2024년 이전 학습 데이터가 없습니다."
         )
 
-    X_train = train.loc[
-        ~is_val,
-        features,
-    ]
+    train_df = train.loc[
+        ~is_val
+    ].copy()
 
-    y_train = train.loc[
-        ~is_val,
-        TARGET,
-    ]
+    val_df = train.loc[
+        is_val
+    ].copy()
 
-    X_val = train.loc[
-        is_val,
-        features,
-    ]
+    y_train = train_df[
+        TARGET
+    ].copy()
 
-    y_val = train.loc[
-        is_val,
-        TARGET,
-    ]
+    y_val = val_df[
+        TARGET
+    ].copy()
 
-    val_row_id = train.loc[
-        is_val,
-        ID,
-    ]
+    val_row_id = val_df[
+        ID
+    ].copy()
+
+    # -----------------------------------------------------
+    # Validation raw features
+    # -----------------------------------------------------
+
+    X_train_raw = prepare_raw_features(
+        df=train_df,
+        features=features,
+        id_like_cols=id_like_cols,
+    )
+
+    X_val_raw = prepare_raw_features(
+        df=val_df,
+        features=features,
+        id_like_cols=id_like_cols,
+    )
+
+    # -----------------------------------------------------
+    # Validation encoder
+    # -----------------------------------------------------
+
+    validation_preprocessor = (
+        create_preprocessor(
+            cat_cols=cat_cols,
+            num_cols=num_cols,
+        )
+    )
+
+    X_train = (
+        validation_preprocessor
+        .fit_transform(
+            X_train_raw
+        )
+    )
+
+    X_val = (
+        validation_preprocessor
+        .transform(
+            X_val_raw
+        )
+    )
 
     print(
         "학습 데이터 shape     :",
@@ -505,32 +696,59 @@ def main():
     )
 
     # -----------------------------------------------------
-    # Validation 모델 생성
+    # Validation 모델
     # -----------------------------------------------------
 
-    model, estimator = create_model(
-        cat_cols=cat_cols,
-        num_cols=num_cols,
+    validation_model = (
+        create_validation_model()
     )
 
-    # -----------------------------------------------------
-    # Validation 학습
-    # -----------------------------------------------------
+    print("=" * 70)
+    print("XGBoost Validation 학습 시작")
+
+    print(
+        f"최대 iteration        : "
+        f"{MAX_ITERATIONS}"
+    )
+
+    print(
+        f"Early stopping rounds : "
+        f"{EARLY_STOPPING_ROUNDS}"
+    )
+
+    print(
+        "Early stopping metric : "
+        "Brier Score"
+    )
+
+    print(
+        "Device                : "
+        "CPU"
+    )
 
     print("=" * 70)
-    print("ExtraTrees Validation 학습 시작")
-    print("=" * 70)
 
-    start_time = time.time()
+    validation_start = (
+        time.time()
+    )
 
-    model.fit(
+    validation_model.fit(
         X_train,
         y_train,
+
+        eval_set=[
+            (
+                X_val,
+                y_val,
+            ),
+        ],
+
+        verbose=100,
     )
 
     validation_elapsed = (
         time.time()
-        - start_time
+        - validation_start
     )
 
     print(
@@ -539,12 +757,48 @@ def main():
     )
 
     # -----------------------------------------------------
+    # Best iteration
+    # -----------------------------------------------------
+
+    best_iteration = getattr(
+        validation_model,
+        "best_iteration",
+        None,
+    )
+
+    if (
+        best_iteration is None
+        or best_iteration < 0
+    ):
+        best_iteration = (
+            MAX_ITERATIONS - 1
+        )
+
+    # XGBoost best_iteration은 0-based
+    final_iterations = (
+        best_iteration + 1
+    )
+
+    print(
+        f"Best iteration       : "
+        f"{best_iteration}"
+    )
+
+    print(
+        f"Final iterations     : "
+        f"{final_iterations}"
+    )
+
+    # -----------------------------------------------------
     # Validation prediction
     # -----------------------------------------------------
 
-    val_pred = model.predict_proba(
-        X_val
-    )[:, 1]
+    val_pred = (
+        validation_model
+        .predict_proba(
+            X_val
+        )[:, 1]
+    )
 
     # -----------------------------------------------------
     # Validation prediction 검증
@@ -617,7 +871,7 @@ def main():
     )
 
     print("=" * 70)
-    print("ExtraTrees Validation 결과")
+    print("XGBoost Validation 결과")
     print("=" * 70)
 
     print(
@@ -633,6 +887,16 @@ def main():
     print(
         f"Validation Score     : "
         f"{validation_score:.4f}"
+    )
+
+    print(
+        f"Best iteration       : "
+        f"{best_iteration}"
+    )
+
+    print(
+        f"Final iterations     : "
+        f"{final_iterations}"
     )
 
     print(
@@ -668,7 +932,7 @@ def main():
 
     save_validation(
         experiment_name=EXPERIMENT_NAME,
-        estimator=estimator,
+        estimator=validation_model,
         model_params=MODEL_PARAMS,
         row_ids=val_row_id,
         y_true=y_val,
@@ -677,35 +941,82 @@ def main():
         baseline_brier=baseline_brier,
         bss=validation_score,
         output_root=VALIDATION_ROOT,
+        best_iteration=best_iteration,
     )
 
     # -----------------------------------------------------
-    # 전체 데이터 재학습용 모델 생성
+    # 전체 데이터용 Raw Feature
     # -----------------------------------------------------
 
-    final_model, _ = create_model(
-        cat_cols=cat_cols,
-        num_cols=num_cols,
+    X_full_raw = prepare_raw_features(
+        df=train,
+        features=features,
+        id_like_cols=id_like_cols,
+    )
+
+    y_full = train[
+        TARGET
+    ].copy()
+
+    # -----------------------------------------------------
+    # Final encoder
+    #
+    # Validation encoder를 재사용하지 않는다.
+    # -----------------------------------------------------
+
+    final_preprocessor = (
+        create_preprocessor(
+            cat_cols=cat_cols,
+            num_cols=num_cols,
+        )
+    )
+
+    X_full = (
+        final_preprocessor
+        .fit_transform(
+            X_full_raw
+        )
     )
 
     # -----------------------------------------------------
-    # 전체 데이터 재학습
+    # Final model
+    #
+    # Validation model을 재사용하지 않는다.
     # -----------------------------------------------------
 
+    final_model = (
+        create_final_model(
+            n_estimators=final_iterations,
+        )
+    )
+
     print("=" * 70)
-    print("ExtraTrees 전체 데이터 재학습 시작")
+    print("XGBoost 전체 데이터 재학습 시작")
+
+    print(
+        f"사용 iteration       : "
+        f"{final_iterations}"
+    )
+
+    print(
+        "Device               : CPU"
+    )
+
     print("=" * 70)
 
-    start_time = time.time()
+    final_start = (
+        time.time()
+    )
 
     final_model.fit(
-        train[features],
-        train[TARGET],
+        X_full,
+        y_full,
+        verbose=False,
     )
 
     final_elapsed = (
         time.time()
-        - start_time
+        - final_start
     )
 
     print(
@@ -714,7 +1025,43 @@ def main():
     )
 
     # -----------------------------------------------------
-    # 최종 모델 저장
+    # 최종 Model artifact
+    # -----------------------------------------------------
+
+    artifact = {
+        "model": final_model,
+        "preprocessor": final_preprocessor,
+
+        "features": features,
+        "cat_cols": cat_cols,
+        "id_like_cols": id_like_cols,
+        "num_cols": num_cols,
+
+        "best_iteration": int(
+            best_iteration
+        ),
+
+        "final_iterations": int(
+            final_iterations
+        ),
+
+        "validation_brier": float(
+            brier
+        ),
+
+        "validation_score": float(
+            validation_score
+        ),
+
+        "model_name": EXPERIMENT_NAME,
+
+        "xgboost_version": (
+            xgb.__version__
+        ),
+    }
+
+    # -----------------------------------------------------
+    # 모델 저장
     # -----------------------------------------------------
 
     MODEL_DIR.mkdir(
@@ -723,23 +1070,27 @@ def main():
     )
 
     joblib.dump(
-        final_model,
+        artifact,
         MODEL_PATH,
         compress=3,
     )
 
-    # 해당 모델을 생성한 train.py snapshot
     shutil.copy2(
         "./train.py",
         MODEL_DIR / "train.py",
     )
 
     print("=" * 70)
-    print("ExtraTrees 모델 저장 완료")
+    print("XGBoost 모델 저장 완료")
 
     print(
         f"저장 경로            : "
         f"{MODEL_PATH}"
+    )
+
+    print(
+        f"Final iterations     : "
+        f"{final_iterations}"
     )
 
     print(

@@ -1,4 +1,4 @@
-# script.py - ExtraTrees
+# script.py
 
 from pathlib import Path
 
@@ -39,7 +39,9 @@ def find_model():
     try:
         import train
 
-        model_path = Path(train.MODEL_PATH)
+        model_path = Path(
+            train.MODEL_PATH
+        )
 
         if model_path.exists():
             return model_path
@@ -53,7 +55,8 @@ def find_model():
 
     if len(model_files) == 0:
         raise FileNotFoundError(
-            f"모델 파일을 찾을 수 없습니다: {MODEL_DIR}"
+            f"모델 파일을 찾을 수 없습니다: "
+            f"{MODEL_DIR}"
         )
 
     if len(model_files) > 1:
@@ -105,21 +108,49 @@ def load_sample_submission(path):
 
 
 # =========================================================
-# Feature 생성
+# Raw Feature 준비
 # =========================================================
 
-def build_features(df):
+def prepare_raw_features(
+    df,
+    features,
+    id_like_cols,
+):
     """
-    train.py와 동일하게 row_id를 모델 입력에서 제외한다.
+    train.py와 동일하게 XGBoost 전처리 직전
+    Raw Feature DataFrame을 생성한다.
 
-    ExtraTrees 모델은 sklearn Pipeline으로 저장되어 있으므로
-    categorical encoding과 missing-value imputation은
-    저장된 모델 내부에서 자동 수행된다.
+    1. 학습 당시 Feature 순서 유지
+    2. ID 계열은 numeric으로 강제 변환
+    3. numeric NaN은 그대로 유지
     """
 
-    return df.drop(
-        columns=[ID_COL]
-    )
+    missing_features = [
+        col
+        for col in features
+        if col not in df.columns
+    ]
+
+    if missing_features:
+        raise ValueError(
+            "입력 데이터에 학습 Feature가 없습니다: "
+            + ", ".join(
+                missing_features
+            )
+        )
+
+    X = df[
+        features
+    ].copy()
+
+    for col in id_like_cols:
+        if col in X.columns:
+            X[col] = pd.to_numeric(
+                X[col],
+                errors="coerce",
+            )
+
+    return X
 
 
 # =========================================================
@@ -165,17 +196,122 @@ def build_submission(
 def main():
 
     # -----------------------------------------------------
-    # 모델 탐색 / 로드
+    # 모델 artifact 로드
     # -----------------------------------------------------
 
     model_path = find_model()
 
     print(
-        f"[Model] {model_path}"
+        f"[Model artifact] {model_path}"
     )
 
-    model = joblib.load(
+    artifact = joblib.load(
         model_path
+    )
+
+    # -----------------------------------------------------
+    # Artifact 검증
+    # -----------------------------------------------------
+
+    if not isinstance(
+        artifact,
+        dict,
+    ):
+        raise TypeError(
+            "XGBoost 모델 파일은 "
+            "artifact dictionary여야 합니다."
+        )
+
+    required_keys = {
+        "model",
+        "preprocessor",
+        "features",
+        "cat_cols",
+        "id_like_cols",
+        "num_cols",
+        "best_iteration",
+        "final_iterations",
+    }
+
+    missing_keys = (
+        required_keys
+        - set(artifact.keys())
+    )
+
+    if missing_keys:
+        raise ValueError(
+            "모델 artifact에 필요한 항목이 없습니다: "
+            + ", ".join(
+                sorted(missing_keys)
+            )
+        )
+
+    model = artifact[
+        "model"
+    ]
+
+    preprocessor = artifact[
+        "preprocessor"
+    ]
+
+    features = artifact[
+        "features"
+    ]
+
+    cat_cols = artifact[
+        "cat_cols"
+    ]
+
+    id_like_cols = artifact[
+        "id_like_cols"
+    ]
+
+    num_cols = artifact[
+        "num_cols"
+    ]
+
+    best_iteration = artifact[
+        "best_iteration"
+    ]
+
+    final_iterations = artifact[
+        "final_iterations"
+    ]
+
+    print(
+        f"model_name="
+        f"{artifact.get('model_name', '?')}"
+    )
+
+    print(
+        f"xgboost_version="
+        f"{artifact.get('xgboost_version', '?')}"
+    )
+
+    print(
+        f"best_iteration="
+        f"{best_iteration}"
+    )
+
+    print(
+        f"final_iterations="
+        f"{final_iterations}"
+    )
+
+    print(
+        f"features={len(features)}"
+    )
+
+    print(
+        f"categorical={cat_cols}"
+    )
+
+    print(
+        f"numeric_id={id_like_cols}"
+    )
+
+    print(
+        f"numeric={len(num_cols)}"
     )
 
     # -----------------------------------------------------
@@ -186,29 +322,47 @@ def main():
         TEST_PATH
     )
 
-    sample_submission = load_sample_submission(
-        SAMPLE_SUB_PATH
+    sample_submission = (
+        load_sample_submission(
+            SAMPLE_SUB_PATH
+        )
     )
 
     print(
         f"test={len(test)}"
-        f" | submission={len(sample_submission)}"
+        f" | submission="
+        f"{len(sample_submission)}"
     )
 
     # -----------------------------------------------------
-    # Feature 생성
+    # row_id 분리
     # -----------------------------------------------------
 
     ids = test[
         ID_COL
     ].to_numpy()
 
-    X = build_features(
-        test
+    # -----------------------------------------------------
+    # Raw Feature 생성
+    # -----------------------------------------------------
+
+    X_raw = prepare_raw_features(
+        df=test,
+        features=features,
+        id_like_cols=id_like_cols,
+    )
+
+    # -----------------------------------------------------
+    # 학습 당시 fitted preprocessor 적용
+    # -----------------------------------------------------
+
+    X = preprocessor.transform(
+        X_raw
     )
 
     print(
-        f"features={X.shape[1]}"
+        f"prepared features="
+        f"{X.shape[1]}"
     )
 
     # -----------------------------------------------------
@@ -244,17 +398,22 @@ def main():
         )
 
     print(
-        f"predictions={len(predictions)}"
+        f"predictions="
+        f"{len(predictions)}"
     )
 
     print(
-        f"prediction mean={predictions.mean():.6f}"
-        f" | std={predictions.std():.6f}"
+        f"prediction mean="
+        f"{predictions.mean():.6f}"
+        f" | std="
+        f"{predictions.std():.6f}"
     )
 
     print(
-        f"prediction min={predictions.min():.6f}"
-        f" | max={predictions.max():.6f}"
+        f"prediction min="
+        f"{predictions.min():.6f}"
+        f" | max="
+        f"{predictions.max():.6f}"
     )
 
     # -----------------------------------------------------
