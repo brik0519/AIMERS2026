@@ -1,0 +1,28 @@
+{
+  "experiment_name": "cb_v001",
+  "model_type": "CatBoostClassifier",
+  "model_params": {
+    "iterations": 800,
+    "learning_rate": 0.07,
+    "depth": 8,
+    "loss_function": "Logloss",
+    "l2_leaf_reg": 10.0,
+    "random_strength": 1.0,
+    "random_seed": 42,
+    "thread_count": -1,
+    "verbose": 100,
+    "allow_writing_files": false
+  },
+  "validation_season": 2024,
+  "n_validation": 253507,
+  "positive_rate": 0.4861049201797189,
+  "brier": 0.24825776270959732,
+  "baseline_brier": 0.24980692675678798,
+  "bss": 620.1445521560433,
+  "prediction_mean": 0.4946103353476008,
+  "prediction_std": 0.03940748536881467,
+  "prediction_min": 0.3477973710247222,
+  "prediction_max": 0.6285775075436637,
+  "best_iteration": 90,
+  "final_iterations": 91
+}

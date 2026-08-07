@@ -1,0 +1,33 @@
+{
+  "experiment_name": "lgb_v001",
+  "model_type": "LGBMClassifier",
+  "model_params": {
+    "objective": "binary",
+    "metric": "None",
+    "learning_rate": 0.03,
+    "num_leaves": 63,
+    "max_depth": -1,
+    "min_child_samples": 200,
+    "subsample": 0.85,
+    "subsample_freq": 1,
+    "colsample_bytree": 0.85,
+    "reg_alpha": 1.0,
+    "reg_lambda": 10.0,
+    "random_state": 42,
+    "n_jobs": -1,
+    "verbosity": -1
+  },
+  "max_iterations": 5000,
+  "early_stopping_rounds": 200,
+  "best_iteration": 150,
+  "validation_season": 2024,
+  "n_validation": 253507,
+  "positive_rate": 0.4861049201797189,
+  "brier": 0.24825919109053995,
+  "baseline_brier": 0.24980692675678798,
+  "bss": 619.5727581865262,
+  "prediction_mean": 0.49674979024401833,
+  "prediction_std": 0.038018393440797785,
+  "prediction_min": 0.3754708653523482,
+  "prediction_max": 0.6323598300816241
+}
