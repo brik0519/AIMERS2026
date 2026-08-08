@@ -1,6 +1,24 @@
-# script.py
+# ensemble_submit.py
+#
+# LG Aimers Phase2
+# CatBoostClassifier + XGBClassifier exact-weight ensemble 제출 생성
+#
+# Validation exact optimum:
+#   CatBoostClassifier = 0.5655685195400963
+#   XGBClassifier      = 0.43443148045990365
+#
+# XGBoost는 xgb_v001/train.py에서 저장한 artifact 구조를 그대로 사용:
+# {
+#   "model": final_model,
+#   "preprocessor": final_preprocessor,
+#   "features": features,
+#   "cat_cols": cat_cols,
+#   "id_like_cols": id_like_cols,
+#   "num_cols": num_cols,
+#   ...
+# }
 
-from pathlib import Path
+import os
 
 import joblib
 import numpy as np
@@ -8,64 +26,60 @@ import pandas as pd
 
 
 # =========================================================
-# 기본 설정
+# 설정
 # =========================================================
 
 ID_COL = "row_id"
 TARGET_COL = "control_success"
 
-DATA_DIR = Path("./data")
-MODEL_DIR = Path("./model")
-OUTPUT_DIR = Path("./output")
+CB_CAT_COLS = [
+    "top_bottom",
+    "game_type",
+    "base_state",
+    "pitcher_id",
+    "batter_id",
+    "pitcher_team_id",
+    "batter_team_id",
+    "pitcher_hand",
+    "batter_hand",
+]
 
-TEST_PATH = DATA_DIR / "test.csv"
-SAMPLE_SUB_PATH = DATA_DIR / "sample_submission.csv"
-OUTPUT_PATH = OUTPUT_DIR / "submission.csv"
+DATA_DIR = "./data"
+MODEL_ROOT = "./model"
+OUTPUT_DIR = "./output"
 
+TEST_PATH = os.path.join(
+    DATA_DIR,
+    "test.csv",
+)
 
-# =========================================================
-# 모델 탐색
-# =========================================================
+SAMPLE_SUB_PATH = os.path.join(
+    DATA_DIR,
+    "sample_submission.csv",
+)
 
-def find_model():
-    """
-    로컬 개발 환경:
-        project root의 train.py에서 MODEL_PATH를 가져온다.
+CB_EXPERIMENT = "cb_v001"
+XGB_EXPERIMENT = "xgb_v001"
 
-    제출 환경:
-        train.py가 없으므로 ./model/*.pkl 단일 파일을 자동 탐색한다.
-    """
+CB_MODEL_PATH = os.path.join(
+    MODEL_ROOT,
+    CB_EXPERIMENT,
+    f"{CB_EXPERIMENT}.pkl",
+)
 
-    try:
-        import train
+XGB_MODEL_PATH = os.path.join(
+    MODEL_ROOT,
+    XGB_EXPERIMENT,
+    f"{XGB_EXPERIMENT}.pkl",
+)
 
-        model_path = Path(
-            train.MODEL_PATH
-        )
+OUT_PATH = os.path.join(
+    OUTPUT_DIR,
+    "submission_cb_xgb_exact.csv",
+)
 
-        if model_path.exists():
-            return model_path
-
-    except ImportError:
-        pass
-
-    model_files = sorted(
-        MODEL_DIR.glob("*.pkl")
-    )
-
-    if len(model_files) == 0:
-        raise FileNotFoundError(
-            f"모델 파일을 찾을 수 없습니다: "
-            f"{MODEL_DIR}"
-        )
-
-    if len(model_files) > 1:
-        raise RuntimeError(
-            f"model/에 .pkl 파일이 여러 개 있습니다: "
-            f"{model_files}"
-        )
-
-    return model_files[0]
+CB_WEIGHT = 0.5655685195400963
+XGB_WEIGHT = 0.43443148045990365
 
 
 # =========================================================
@@ -81,6 +95,11 @@ def load_test(path):
     if ID_COL not in df.columns:
         raise ValueError(
             f"test 데이터에 {ID_COL} 컬럼이 없습니다."
+        )
+
+    if df[ID_COL].duplicated().any():
+        raise ValueError(
+            f"test 데이터의 {ID_COL}에 중복이 있습니다."
         )
 
     return df
@@ -99,30 +118,30 @@ def load_sample_submission(path):
 
     if list(df.columns) != expected_cols:
         raise ValueError(
-            f"sample_submission 컬럼이 "
-            f"{expected_cols}가 아닙니다: "
-            f"{list(df.columns)}"
+            "sample_submission 컬럼이 예상과 다릅니다.\n"
+            f"expected={expected_cols}\n"
+            f"actual={list(df.columns)}"
+        )
+
+    if df[ID_COL].duplicated().any():
+        raise ValueError(
+            f"sample_submission의 {ID_COL}에 중복이 있습니다."
         )
 
     return df
 
 
 # =========================================================
-# Raw Feature 준비
+# CatBoost 전처리
 # =========================================================
 
-def prepare_raw_features(
+def prepare_catboost_features(
     df,
     features,
-    id_like_cols,
+    cat_cols,
 ):
     """
-    train.py와 동일하게 XGBoost 전처리 직전
-    Raw Feature DataFrame을 생성한다.
-
-    1. 학습 당시 Feature 순서 유지
-    2. ID 계열은 numeric으로 강제 변환
-    3. numeric NaN은 그대로 유지
+    cb_v001 train.py와 동일한 CatBoost 전처리.
     """
 
     missing_features = [
@@ -133,10 +152,52 @@ def prepare_raw_features(
 
     if missing_features:
         raise ValueError(
-            "입력 데이터에 학습 Feature가 없습니다: "
-            + ", ".join(
-                missing_features
+            "CatBoost 입력 Feature가 없습니다: "
+            + ", ".join(missing_features)
+        )
+
+    X = df[
+        features
+    ].copy()
+
+    for col in cat_cols:
+        if col in X.columns:
+            X[col] = (
+                X[col]
+                .fillna("__MISSING__")
+                .astype(str)
             )
+
+    return X
+
+
+# =========================================================
+# XGBoost raw feature 전처리
+# =========================================================
+
+def prepare_xgb_raw_features(
+    df,
+    features,
+    id_like_cols,
+):
+    """
+    xgb_v001 train.py의 prepare_raw_features()와 동일.
+
+    1. 학습 Feature 순서 고정
+    2. ID 계열 numeric 강제 변환
+    3. 나머지 numeric NaN은 그대로 유지
+    """
+
+    missing_features = [
+        col
+        for col in features
+        if col not in df.columns
+    ]
+
+    if missing_features:
+        raise ValueError(
+            "XGBoost 입력 Feature가 없습니다: "
+            + ", ".join(missing_features)
         )
 
     X = df[
@@ -154,36 +215,114 @@ def prepare_raw_features(
 
 
 # =========================================================
-# Submission 생성
+# Prediction diagnostics
+# =========================================================
+
+def print_prediction_summary(
+    name,
+    pred,
+):
+    pred = np.asarray(
+        pred,
+        dtype=np.float64,
+    )
+
+    print(f"[{name}]")
+    print(
+        f"mean : {pred.mean():.6f}"
+    )
+    print(
+        f"std  : {pred.std():.6f}"
+    )
+    print(
+        f"min  : {pred.min():.6f}"
+    )
+    print(
+        f"max  : {pred.max():.6f}"
+    )
+    print()
+
+
+# =========================================================
+# 제출 생성
 # =========================================================
 
 def build_submission(
     sample_submission,
-    ids,
+    test_ids,
     predictions,
 ):
     pred_df = pd.DataFrame({
-        ID_COL: ids,
+        ID_COL: test_ids,
         TARGET_COL: predictions,
     })
 
-    submission = sample_submission[
-        [ID_COL]
-    ].merge(
-        pred_df,
-        on=ID_COL,
-        how="left",
-        validate="one_to_one",
+    if pred_df[ID_COL].duplicated().any():
+        raise ValueError(
+            "예측 row_id에 중복이 있습니다."
+        )
+
+    sample_ids = set(
+        sample_submission[ID_COL]
     )
 
-    n_missing = submission[
-        TARGET_COL
-    ].isna().sum()
+    pred_ids = set(
+        pred_df[ID_COL]
+    )
 
-    if n_missing > 0:
+    missing_ids = (
+        sample_ids
+        - pred_ids
+    )
+
+    extra_ids = (
+        pred_ids
+        - sample_ids
+    )
+
+    if missing_ids:
         raise ValueError(
-            f"예측값이 없는 row_id가 "
-            f"{n_missing}건 존재합니다."
+            "sample_submission에 있으나 prediction에 없는 "
+            f"row_id가 있습니다. count={len(missing_ids)}"
+        )
+
+    if extra_ids:
+        raise ValueError(
+            "prediction에는 있으나 sample_submission에 없는 "
+            f"row_id가 있습니다. count={len(extra_ids)}"
+        )
+
+    submission = (
+        sample_submission[
+            [ID_COL]
+        ]
+        .merge(
+            pred_df,
+            on=ID_COL,
+            how="left",
+            validate="one_to_one",
+        )
+    )
+
+    if submission[
+        TARGET_COL
+    ].isna().any():
+        raise ValueError(
+            "submission prediction에 NaN이 있습니다."
+        )
+
+    if not (
+        submission[
+            TARGET_COL
+        ]
+        .between(
+            0.0,
+            1.0,
+        )
+        .all()
+    ):
+        raise ValueError(
+            "submission prediction에 [0,1] 범위를 벗어난 값이 있습니다."
         )
 
     return submission
@@ -195,128 +334,137 @@ def build_submission(
 
 def main():
 
-    # -----------------------------------------------------
-    # 모델 artifact 로드
-    # -----------------------------------------------------
-
-    model_path = find_model()
+    print("=" * 68)
+    print("CatBoost + XGBoost Exact Ensemble Submission")
+    print("=" * 68)
 
     print(
-        f"[Model artifact] {model_path}"
+        f"CB weight  : {CB_WEIGHT:.10f}"
     )
 
-    artifact = joblib.load(
-        model_path
+    print(
+        f"XGB weight : {XGB_WEIGHT:.10f}"
     )
 
+    print()
+
     # -----------------------------------------------------
-    # Artifact 검증
+    # Weight sanity check
     # -----------------------------------------------------
+
+    if not np.isclose(
+        CB_WEIGHT + XGB_WEIGHT,
+        1.0,
+    ):
+        raise ValueError(
+            "앙상블 weight 합이 1이 아닙니다."
+        )
+
+    # -----------------------------------------------------
+    # 파일 존재 확인
+    # -----------------------------------------------------
+
+    for path in [
+        TEST_PATH,
+        SAMPLE_SUB_PATH,
+        CB_MODEL_PATH,
+        XGB_MODEL_PATH,
+    ]:
+        if not os.path.exists(
+            path
+        ):
+            raise FileNotFoundError(
+                f"파일을 찾을 수 없습니다: {path}"
+            )
+
+    # -----------------------------------------------------
+    # 모델 로드
+    # -----------------------------------------------------
+
+    print("[1] 모델 로드")
+
+    cb_model = joblib.load(
+        CB_MODEL_PATH
+    )
+
+    xgb_artifact = joblib.load(
+        XGB_MODEL_PATH
+    )
 
     if not isinstance(
-        artifact,
+        xgb_artifact,
         dict,
     ):
         raise TypeError(
-            "XGBoost 모델 파일은 "
-            "artifact dictionary여야 합니다."
+            "xgb_v001.pkl이 예상한 artifact dict 구조가 아닙니다."
         )
 
-    required_keys = {
+    required_xgb_keys = {
         "model",
         "preprocessor",
         "features",
         "cat_cols",
         "id_like_cols",
         "num_cols",
-        "best_iteration",
-        "final_iterations",
     }
 
     missing_keys = (
-        required_keys
-        - set(artifact.keys())
+        required_xgb_keys
+        - set(
+            xgb_artifact.keys()
+        )
     )
 
     if missing_keys:
-        raise ValueError(
-            "모델 artifact에 필요한 항목이 없습니다: "
+        raise KeyError(
+            "XGBoost artifact 필수 key가 없습니다: "
             + ", ".join(
-                sorted(missing_keys)
+                sorted(
+                    missing_keys
+                )
             )
         )
 
-    model = artifact[
-        "model"
-    ]
+    xgb_model = (
+        xgb_artifact["model"]
+    )
 
-    preprocessor = artifact[
-        "preprocessor"
-    ]
+    xgb_preprocessor = (
+        xgb_artifact[
+            "preprocessor"
+        ]
+    )
 
-    features = artifact[
-        "features"
-    ]
+    xgb_features = list(
+        xgb_artifact[
+            "features"
+        ]
+    )
 
-    cat_cols = artifact[
-        "cat_cols"
-    ]
-
-    id_like_cols = artifact[
-        "id_like_cols"
-    ]
-
-    num_cols = artifact[
-        "num_cols"
-    ]
-
-    best_iteration = artifact[
-        "best_iteration"
-    ]
-
-    final_iterations = artifact[
-        "final_iterations"
-    ]
-
-    print(
-        f"model_name="
-        f"{artifact.get('model_name', '?')}"
+    xgb_id_like_cols = list(
+        xgb_artifact[
+            "id_like_cols"
+        ]
     )
 
     print(
-        f"xgboost_version="
-        f"{artifact.get('xgboost_version', '?')}"
+        f"CatBoost model : {type(cb_model).__name__}"
     )
 
     print(
-        f"best_iteration="
-        f"{best_iteration}"
+        f"XGBoost model  : {type(xgb_model).__name__}"
     )
 
     print(
-        f"final_iterations="
-        f"{final_iterations}"
-    )
-
-    print(
-        f"features={len(features)}"
-    )
-
-    print(
-        f"categorical={cat_cols}"
-    )
-
-    print(
-        f"numeric_id={id_like_cols}"
-    )
-
-    print(
-        f"numeric={len(num_cols)}"
+        f"XGB preprocessor: {type(xgb_preprocessor).__name__}"
     )
 
     # -----------------------------------------------------
     # 데이터 로드
     # -----------------------------------------------------
+
+    print()
+    print("[2] Test / Submission 로드")
 
     test = load_test(
         TEST_PATH
@@ -329,122 +477,305 @@ def main():
     )
 
     print(
-        f"test={len(test)}"
-        f" | submission="
-        f"{len(sample_submission)}"
-    )
-
-    # -----------------------------------------------------
-    # row_id 분리
-    # -----------------------------------------------------
-
-    ids = test[
-        ID_COL
-    ].to_numpy()
-
-    # -----------------------------------------------------
-    # Raw Feature 생성
-    # -----------------------------------------------------
-
-    X_raw = prepare_raw_features(
-        df=test,
-        features=features,
-        id_like_cols=id_like_cols,
-    )
-
-    # -----------------------------------------------------
-    # 학습 당시 fitted preprocessor 적용
-    # -----------------------------------------------------
-
-    X = preprocessor.transform(
-        X_raw
+        f"test rows       : {len(test)}"
     )
 
     print(
-        f"prepared features="
-        f"{X.shape[1]}"
+        f"submission rows : {len(sample_submission)}"
+    )
+
+    # -----------------------------------------------------
+    # 공통 Feature 정책
+    # -----------------------------------------------------
+
+    test_features = [
+        col
+        for col in test.columns
+        if col != ID_COL
+    ]
+
+    cb_features = (
+        test_features
+    )
+
+    cb_cat_cols = [
+        col
+        for col in CB_CAT_COLS
+        if col in cb_features
+    ]
+
+    if xgb_features != test_features:
+        raise ValueError(
+            "저장된 XGBoost 학습 Feature 순서와 "
+            "현재 test.csv Feature 순서가 다릅니다.\n"
+            f"xgb_features={xgb_features}\n"
+            f"test_features={test_features}"
+        )
+
+    print()
+    print("[3] Feature 구성")
+
+    print(
+        f"Feature 수          : {len(test_features)}"
+    )
+
+    print(
+        f"CatBoost cat 수     : {len(cb_cat_cols)}"
+    )
+
+    print(
+        f"XGBoost cat 수      : {len(xgb_artifact['cat_cols'])}"
+    )
+
+    print(
+        f"XGBoost ID-like 수  : {len(xgb_id_like_cols)}"
+    )
+
+    # -----------------------------------------------------
+    # CatBoost Feature
+    # -----------------------------------------------------
+
+    X_cb = (
+        prepare_catboost_features(
+            df=test,
+            features=cb_features,
+            cat_cols=cb_cat_cols,
+        )
+    )
+
+    # 저장 모델 feature_names_와 일치 검증
+    cb_model_feature_names = getattr(
+        cb_model,
+        "feature_names_",
+        None,
+    )
+
+    if cb_model_feature_names:
+        cb_model_feature_names = list(
+            cb_model_feature_names
+        )
+
+        if (
+            cb_model_feature_names
+            != cb_features
+        ):
+            raise ValueError(
+                "CatBoost 저장 모델 Feature 순서와 "
+                "test Feature 순서가 다릅니다."
+            )
+
+    # -----------------------------------------------------
+    # XGBoost Feature
+    # -----------------------------------------------------
+
+    X_xgb_raw = (
+        prepare_xgb_raw_features(
+            df=test,
+            features=xgb_features,
+            id_like_cols=
+                xgb_id_like_cols,
+        )
+    )
+
+    X_xgb = (
+        xgb_preprocessor
+        .transform(
+            X_xgb_raw
+        )
+    )
+
+    if (
+        X_xgb.shape[0]
+        != len(test)
+    ):
+        raise RuntimeError(
+            "XGBoost 전처리 후 row 수가 test와 다릅니다."
+        )
+
+    print(
+        f"XGB transformed shape: {X_xgb.shape}"
     )
 
     # -----------------------------------------------------
     # Inference
     # -----------------------------------------------------
 
-    predictions = model.predict_proba(
-        X
-    )[:, 1]
+    print()
+    print("[4] Inference")
+
+    cb_pred = (
+        cb_model
+        .predict_proba(
+            X_cb
+        )[:, 1]
+    )
+
+    xgb_pred = (
+        xgb_model
+        .predict_proba(
+            X_xgb
+        )[:, 1]
+    )
+
+    cb_pred = np.asarray(
+        cb_pred,
+        dtype=np.float64,
+    )
+
+    xgb_pred = np.asarray(
+        xgb_pred,
+        dtype=np.float64,
+    )
+
+    for name, pred in [
+        (
+            "CatBoost",
+            cb_pred,
+        ),
+        (
+            "XGBoost",
+            xgb_pred,
+        ),
+    ]:
+        if len(pred) != len(test):
+            raise RuntimeError(
+                f"{name} prediction 길이가 test와 다릅니다."
+            )
+
+        if not np.isfinite(
+            pred
+        ).all():
+            raise RuntimeError(
+                f"{name} prediction에 NaN 또는 Inf가 있습니다."
+            )
+
+        if not (
+            (
+                pred >= 0.0
+            )
+            & (
+                pred <= 1.0
+            )
+        ).all():
+            raise RuntimeError(
+                f"{name} prediction이 [0,1] 범위를 벗어났습니다."
+            )
 
     # -----------------------------------------------------
-    # Prediction 검증
+    # Exact ensemble
     # -----------------------------------------------------
 
-    if len(predictions) != len(test):
-        raise RuntimeError(
-            "Test 예측 수와 입력 row 수가 다릅니다."
+    ensemble_pred = (
+        CB_WEIGHT
+        * cb_pred
+        + XGB_WEIGHT
+        * xgb_pred
+    )
+
+    ensemble_pred = np.clip(
+        ensemble_pred,
+        0.0,
+        1.0,
+    )
+
+    # -----------------------------------------------------
+    # Diagnostics
+    # -----------------------------------------------------
+
+    print()
+    print("[5] Prediction diagnostics")
+    print()
+
+    print_prediction_summary(
+        "CatBoost",
+        cb_pred,
+    )
+
+    print_prediction_summary(
+        "XGBoost",
+        xgb_pred,
+    )
+
+    print_prediction_summary(
+        "Ensemble",
+        ensemble_pred,
+    )
+
+    if len(test) > 1:
+        test_corr = float(
+            np.corrcoef(
+                cb_pred,
+                xgb_pred,
+            )[0, 1]
         )
 
-    if not np.isfinite(
-        predictions
-    ).all():
-        raise RuntimeError(
-            "예측값에 NaN 또는 무한대가 있습니다."
+        print(
+            "CB-XGB test prediction corr: "
+            f"{test_corr:.6f}"
         )
 
-    if not (
-        (predictions >= 0.0)
-        & (predictions <= 1.0)
-    ).all():
-        raise RuntimeError(
-            "예측값이 0~1 범위를 벗어났습니다."
+    # -----------------------------------------------------
+    # Submission
+    # -----------------------------------------------------
+
+    print()
+    print("[6] Submission 생성")
+
+    test_ids = (
+        test[
+            ID_COL
+        ]
+        .to_numpy()
+    )
+
+    submission = (
+        build_submission(
+            sample_submission=
+                sample_submission,
+            test_ids=
+                test_ids,
+            predictions=
+                ensemble_pred,
         )
-
-    print(
-        f"predictions="
-        f"{len(predictions)}"
     )
 
-    print(
-        f"prediction mean="
-        f"{predictions.mean():.6f}"
-        f" | std="
-        f"{predictions.std():.6f}"
-    )
-
-    print(
-        f"prediction min="
-        f"{predictions.min():.6f}"
-        f" | max="
-        f"{predictions.max():.6f}"
-    )
-
-    # -----------------------------------------------------
-    # Submission 생성
-    # -----------------------------------------------------
-
-    submission = build_submission(
-        sample_submission=sample_submission,
-        ids=ids,
-        predictions=predictions,
-    )
-
-    # -----------------------------------------------------
-    # 저장
-    # -----------------------------------------------------
-
-    OUTPUT_DIR.mkdir(
-        parents=True,
+    os.makedirs(
+        OUTPUT_DIR,
         exist_ok=True,
     )
 
     submission.to_csv(
-        OUTPUT_PATH,
+        OUT_PATH,
         index=False,
         encoding="utf-8-sig",
     )
 
     print()
-    print("[Submission 저장 완료]")
-    print(f"- {OUTPUT_PATH}")
-    print(f"- rows: {len(submission)}")
+    print("=" * 68)
+    print("제출 파일 저장 완료")
+    print(
+        f"- {OUT_PATH}"
+    )
+    print(
+        f"- rows: {len(submission)}"
+    )
+    print(
+        f"- prediction mean: "
+        f"{submission[TARGET_COL].mean():.6f}"
+    )
+    print(
+        f"- prediction std : "
+        f"{submission[TARGET_COL].std(ddof=0):.6f}"
+    )
+    print(
+        f"- prediction min : "
+        f"{submission[TARGET_COL].min():.6f}"
+    )
+    print(
+        f"- prediction max : "
+        f"{submission[TARGET_COL].max():.6f}"
+    )
+    print("=" * 68)
 
 
 if __name__ == "__main__":

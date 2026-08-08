@@ -1,196 +1,852 @@
-# 데이터 설명서
+# LG Aimers Phase2 Training / Inference / Packaging Pipeline
 
-## [배포용 데이터 구조]
+본 프로젝트는 각 머신러닝 실험을 다음 세 단계로 관리합니다.
 
-```text
-open.zip
+```.bash
+train.py
+    ↓
+모델 학습 및 저장
+    ↓
+script.py
+    ↓
+저장된 모델을 이용한 inference
+    ↓
+package.py
+    ↓
+제출에 필요한 파일 수집 및 ZIP 생성
+```
+각 파일의 역할은 명확하게 분리합니다.
 
-baseline_submit.zip : 베이스라인 코드 기반 리더보드 제출 파일(zip) 예시 (참고용)
-data/
-  - train.csv : 학습 입력 및 정답 데이터 (1,475,092행 x 49컬럼)
+|파일|역할|
+|---|--|
+|train.py	|모델 학습, Validation, 최종 모델 저장|
+|script.py	|저장된 모델을 로드하여 Test 데이터 추론|
+|package.py	|모델, script.py, requirements.txt를 모아 제출 ZIP 생성|
 
-  - test.csv : 평가 입력 데이터 (형식 확인용 5건 샘플, 48컬럼)
+train.py가 하나의 실험을 정의하고 모델을 생성하면, script.py는 해당 모델의 학습 규약을 따라 inference를 수행합니다.
 
-  - sample_submission.csv : 제출 양식 파일 (형식 확인용 5행 x 2컬럼)
+마지막으로 package.py는 제출에 필요한 파일들을 정해진 구조로 묶습니다.
 
-  - trackman_history.csv : 2019~2024년 Trackman 과거 로그 (1,793,078행 x 30컬럼)
+만약 새로운 모델을 테스트해보고 싶다면,
+model/base_v001 경로의 train.py와
+validation/base_v001 경로의 validation.py를
+생성형 AI에게 주고 새로운 모델을 적용해달라 요청하면 됩니다.
 
-data_description.md : 데이터 설명서
+이후 
+```
+python train.py
+↓
+python script.py
+↓
+python package.py
+```
+순서대로 실행하면 자동으로 압축된 제출물 파일이
+submits 하위 경로에 들어 있습니다.
+그대로 업로드하시면 됩니다.
+
+## 1. Project Directory Structure
+
+현재 프로젝트는 다음과 같은 구조를 사용합니다.
+```.bash
+.
+├── baseline/
+│   ├── Baseline_Inference.ipynb
+│   ├── Baseline_Train.ipynb
+│   └── requirements.txt
+│
+├── data/
+│   ├── sample_submission.csv
+│   ├── test.csv
+│   ├── trackman_history.csv
+│   └── train.csv
+│
+├── model/
+│   ├── cb_reg_v001/
+│   ├── cb_v001/
+│   ├── ensemble_v001/
+│   ├── et_v001/
+│   ├── lgb_v001/
+│   ├── rf_v001/
+│   └── xgb_v001/
+│
+├── output/
+│   └── submission.csv
+│
+├── submits/
+│   ├── baseline(549.64)/
+│   ├── cb_v001(783.26)/
+│   ├── ensemble_v001(807.34)/
+│   ├── et_v001(510.49)/
+│   ├── lgb_v002(748.22)/
+│   └── xgb_v001(759.36)/
+│
+├── validation/
+│   ├── cb_reg_v001/
+│   ├── cb_v001/
+│   ├── ensemble_v001/
+│   ├── et_v001/
+│   ├── lgb_v001/
+│   ├── rf_v001/
+│   └── xgb_v001/
+│
+├── package.py
+├── README.md
+├── requirements.txt
+├── script.py
+└── train.py
 ```
 
-※ `test.csv`는 배포본에 형식 확인용 5건만 포함됩니다. 실제 평가 데이터는 비공개이며, 제출용 파일(zip)을 리더보드 평가에 제출하면 평가 서버에서 동일한 경로와 동일한 컬럼 구조의 실제 평가 데이터로 교체되어 처리됩니다.
+각 디렉터리는 다음 역할을 가집니다.
 
-※ `sample_submission.csv` 역시 형식 확인용 5건 샘플입니다. 실제 평가 시에는 평가 서버의 `test.csv` 행 수와 동일한 제출 양식을 생성해 제출해야 합니다.
 
-※ 모든 데이터 파일은 CSV 형식입니다. `trackman_history.csv`는 메인 학습/평가 데이터와 1:1로 결합하는 정답 테이블이 아니라, 참가자가 과거 이력 기반 피처를 만들 때 참고할 수 있는 로그 데이터입니다.
+### data/
 
-## [세부 설명]
+학습 및 추론에 사용하는 원본 데이터입니다.
 
-### 1) 학습/추론 데이터: `train.csv` · `test.csv`
+```
+data/
+├── train.csv
+├── test.csv
+├── sample_submission.csv
+└── trackman_history.csv
+```
 
-각 행은 한 개의 투구 시점 상태를 나타냅니다. 참가자는 투구 직전까지 알 수 있는 경기 상황, 선수/팀 정보, 과거 이력 피처를 바탕으로 해당 투구의 제구 성공 확률을 예측합니다.
+train.py는 주로 train.csv와 test.csv를 사용합니다.
 
-`train.csv`와 `test.csv`의 입력 피처 구조는 동일합니다. 단, `train.csv`에는 학습 정답인 `control_success`가 포함되고, `test.csv`에는 정답 컬럼이 포함되지 않습니다.
+script.py는 실제 제출 inference 과정에서 다음 파일을 사용합니다.
 
-#### 기본 식별자 및 경기 정보
+test.csv
+sample_submission.csv
 
-| 컬럼 | 설명 |
-| --- | --- |
-| `row_id` | 샘플 고유 식별자입니다. 제출 파일과 매칭하는 데 사용합니다. |
-| `season` | 시즌 연도입니다. |
-| `game_month` | 경기 월입니다. |
-| `game_dayofweek` | 경기 요일입니다. 월요일은 0, 일요일은 6입니다. |
-| `inning` | 투구 직전 이닝입니다. |
-| `top_bottom` | 초/말 구분입니다. `T`는 초, `B`는 말을 의미합니다. |
-| `game_type` | 경기 유형 코드입니다. |
 
-#### 투구 직전 카운트 및 점수 상황
+### model/
 
-| 컬럼 | 설명 |
-| --- | --- |
-| `balls_before` | 투구 직전 볼 카운트입니다. |
-| `strikes_before` | 투구 직전 스트라이크 카운트입니다. |
-| `outs_before` | 투구 직전 아웃 카운트입니다. |
-| `run_top_before` | 투구 직전 초 공격 팀의 점수입니다. |
-| `run_bot_before` | 투구 직전 말 공격 팀의 점수입니다. |
-| `run_total_before` | 투구 직전 양 팀 합산 점수입니다. |
-| `score_diff_home` | 투구 직전 홈 팀 기준 점수 차입니다. |
-| `score_diff_pitcher_team` | 투구 직전 투수 소속 팀 기준 점수 차입니다. |
+각 실험의 최종 학습 모델을 저장합니다.
+```
+model/
+├── cb_v001/
+├── xgb_v001/
+├── lgb_v001/
+└── ...
+```
 
-#### 주자 및 상황 중요도
+예를 들어
 
-| 컬럼 | 설명 |
-| --- | --- |
-| `runner_on_1b` | 투구 직전 1루 주자 여부입니다. `1`은 있음, `0`은 없음을 의미합니다. |
-| `runner_on_2b` | 투구 직전 2루 주자 여부입니다. `1`은 있음, `0`은 없음을 의미합니다. |
-| `runner_on_3b` | 투구 직전 3루 주자 여부입니다. `1`은 있음, `0`은 없음을 의미합니다. |
-| `num_runners_on` | 투구 직전 출루 주자 수입니다. |
-| `base_state` | 투구 직전 주자 상황입니다. `___`=주자 없음, `1__`=1루, `_2_`=2루, `__3`=3루, `12_`=1/2루, `1_3`=1/3루, `_23`=2/3루, `123`=만루입니다. |
-| `home_win_expectancy` | 투구 직전 경기 상황에서 홈 팀의 기대 승률입니다. 0~100 범위의 값입니다. |
-| `away_win_expectancy` | 투구 직전 경기 상황에서 원정 팀의 기대 승률입니다. 0~100 범위의 값입니다. |
-| `li` | 투구 직전 상황 중요도 지표입니다. 값이 클수록 경기 흐름에 미치는 영향이 큰 상황을 의미합니다. |
+EXPERIMENT_NAME = "cb_v001"
 
-#### 선수 및 팀 정보
+이면 train.py는 다음 경로를 생성합니다.
 
-| 컬럼 | 설명 |
-| --- | --- |
-| `pitcher_id` | 투수 익명 ID입니다. |
-| `batter_id` | 타자 익명 ID입니다. |
-| `pitcher_hand` | 투수의 좌우 유형 코드입니다. |
-| `batter_hand` | 타자의 좌우 유형 코드입니다. |
-| `pitcher_team_id` | 투수 소속 팀 ID입니다. |
-| `batter_team_id` | 타자 소속 팀 ID입니다. |
+```
+model/
+└── cb_v001/
+    ├── cb_v001.pkl
+    └── train.py
+```
 
-#### 투구 직전 기준 과거 이력 피처
+cb_v001.pkl은 전체 학습 데이터를 이용하여 최종적으로 다시 학습한 모델입니다.
 
-`asof_*` 컬럼은 해당 행의 투구 직전까지 확인 가능한 과거 기록으로 사전 계산된 피처입니다. 현재 투구 이후에 확정되는 정보는 사용하지 않았습니다.
+같이 저장되는 train.py는 해당 모델을 생성한 학습 코드를 보존하기 위한 용도입니다.
 
-| 컬럼 | 설명 |
-| --- | --- |
-| `asof_pitcher_n` | 해당 투구 직전까지 해당 투수의 누적 투구 수입니다. |
-| `asof_pitcher_success_rate` | 해당 투구 직전까지 해당 투수의 제구 성공률입니다. |
-| `asof_pitcher_reverse_rate` | 해당 투구 직전까지 해당 투수의 의도 반대성 투구 비율입니다. |
-| `asof_pitcher_middle_rate` | 해당 투구 직전까지 해당 투수의 가운데 또는 위험 코스 비율입니다. |
-| `asof_pitcher_ball_rate` | 해당 투구 직전까지 해당 투수의 볼성 결과 비율입니다. |
-| `asof_pitcher_strike_rate` | 해당 투구 직전까지 해당 투수의 스트라이크성 결과 비율입니다. |
-| `asof_pitcher_prev1_game_success_rate` | 해당 투수의 직전 1경기 제구 성공률입니다. |
-| `asof_pitcher_prev3_game_success_rate` | 해당 투수의 직전 3경기 제구 성공률입니다. |
-| `asof_pitcher_prev5_game_success_rate` | 해당 투수의 직전 5경기 제구 성공률입니다. |
-| `asof_pitcher_prev1_game_middle_rate` | 해당 투수의 직전 1경기 가운데 또는 위험 코스 비율입니다. |
-| `asof_pitcher_prev3_game_middle_rate` | 해당 투수의 직전 3경기 가운데 또는 위험 코스 비율입니다. |
-| `asof_pitcher_prev5_game_middle_rate` | 해당 투수의 직전 5경기 가운데 또는 위험 코스 비율입니다. |
-| `asof_batter_n` | 해당 투구 직전까지 해당 타자가 상대한 누적 투구 수입니다. |
-| `asof_batter_success_rate` | 해당 투구 직전까지 해당 타자가 상대한 투구의 제구 성공률입니다. |
-| `asof_batter_middle_rate` | 해당 투구 직전까지 해당 타자가 상대한 투구의 가운데 또는 위험 코스 비율입니다. |
-| `asof_pitcher_pitchmix_n` | 해당 투구 직전까지 해당 투수의 구종 사용 이력 표본 수입니다. |
-| `asof_pitcher_fastball_rate` | 해당 투구 직전까지 해당 투수의 fastball 계열 사용 비율입니다. |
-| `asof_pitcher_breaking_rate` | 해당 투구 직전까지 해당 투수의 breaking 계열 사용 비율입니다. |
-| `asof_pitcher_offspeed_rate` | 해당 투구 직전까지 해당 투수의 offspeed 계열 사용 비율입니다. |
 
-※ 표본 수가 0인 경우 일부 rate 컬럼은 결측값일 수 있습니다. 이런 cold-start 상황의 결측 처리, smoothing, fallback 전략은 참가자가 자유롭게 설계할 수 있습니다.
+### validation/
 
-### 2) 학습 정답 데이터: `train.csv`의 `control_success`
+각 실험의 Validation 결과를 저장합니다.
 
-`train.csv`에는 아래 정답 컬럼이 포함됩니다.
+예를 들어
 
-| 컬럼 | 설명 |
-| --- | --- |
-| `control_success` | 예측 대상입니다. `1`은 제구 성공, `0`은 제구 실패를 의미합니다. |
+```
+validation/
+└── cb_v001/
+    ├── pred.csv
+    ├── validation.npz
+    └── metadata.json
+```
 
-`control_success`는 운영 기준에 따라 산출된 제구 성공 여부입니다. Target 산출에 사용되는 현재 투구의 사후 정보는 입력 피처로 제공되지 않습니다.
+이 생성됩니다.
 
-### 3) 과거 Trackman 로그: `trackman_history.csv`
+각 파일의 역할은 다음과 같습니다.
 
-`trackman_history.csv`는 2019~2024년 Trackman 과거 로그입니다. 2025년 Trackman 데이터는 제공되지 않습니다.
+#### pred.csv
 
-참가자는 이 파일을 이용해 과거 투구 특성, 구종 특성, 투수 단위 요약값 등 추가 피처를 만들 수 있습니다. 단, 이 파일은 `train.csv` 또는 `test.csv`와 1:1로 직접 결합되는 테이블이 아니며, 평가 시점 이후 정보를 포함하는 방식으로 사용할 수 없습니다.
+Validation row별 실제 target과 prediction을 저장합니다.
 
-| 컬럼 | 설명 |
-| --- | --- |
-| `trackman_id` | Trackman 과거 로그의 행 식별자입니다. |
-| `season` | Trackman 투구가 속한 시즌입니다. 2019~2024만 포함됩니다. |
-| `game_date` | Trackman 투구의 경기 날짜입니다. |
-| `game_month` | Trackman 투구의 경기 월입니다. |
-| `game_dayofweek` | Trackman 투구의 경기 요일입니다. 월요일은 0, 일요일은 6입니다. |
-| `trackman_game_id` | Trackman 기준 경기 ID입니다. 메인 데이터의 `row_id`와 직접 대응하지 않습니다. |
-| `pitch_no` | Trackman 기준 경기 내 투구 번호입니다. |
-| `inning` | Trackman 로그의 이닝입니다. |
-| `top_bottom` | Trackman 로그의 초/말 표기입니다. |
-| `balls_before` | 투구 직전 볼 카운트입니다. |
-| `strikes_before` | 투구 직전 스트라이크 카운트입니다. |
-| `outs_before` | 투구 직전 아웃 카운트입니다. |
-| `pitch_of_pa` | 해당 타석에서의 투구 순번입니다. |
-| `pitcher_trackman_id` | Trackman 기준 투수 ID입니다. |
-| `batter_trackman_id` | Trackman 기준 타자 ID입니다. |
-| `pitcher_hand` | 투수의 좌우 유형 코드입니다. |
-| `batter_hand` | 타자의 좌우 유형 코드입니다. |
-| `pitcher_team` | 투수 소속 팀입니다. |
-| `batter_team` | 타자 소속 팀입니다. |
-| `tagged_pitch_type` | 수동 또는 태깅 기반 구종명입니다. |
-| `auto_pitch_type` | 자동 분류 기반 구종명입니다. |
-| `pitch_type_group` | 구종을 `fastball`, `breaking`, `offspeed`, `other`로 단순화한 구종군입니다. |
-| `rel_speed` | 릴리스 시점의 구속입니다. |
-| `spin_rate` | 투구 회전수입니다. |
-| `induced_vert_break` | 유도 수직 무브먼트입니다. |
-| `horz_break` | 수평 무브먼트입니다. |
-| `extension` | 릴리스 확장 거리입니다. |
-| `rel_height` | 릴리스 높이입니다. |
-| `rel_side` | 릴리스 좌우 위치입니다. |
-| `zone_speed` | 홈플레이트 근처 구속입니다. |
+row_id,target,prediction
+...
 
-### 4) 모델 추론 결과 양식 파일: `sample_submission.csv`
+앙상블 분석에서도 이 파일을 사용합니다.
 
-| 컬럼 | 설명 |
-| --- | --- |
-| `row_id` | 평가 데이터 `test.csv`의 샘플 식별자입니다. |
-| `control_success` | 예측값입니다. 해당 투구가 제구에 성공할 확률을 0 이상 1 이하의 실수로 입력합니다. |
+#### validation.npz
 
-※ 제출 시 `row_id` 값은 평가 서버에서 제공되는 `test.csv`와 정확히 일치해야 합니다.
+Validation 결과를 NumPy 형식으로 압축 저장합니다.
 
-### 5) 평가 데이터 예측 원칙
+row_id
+target
+prediction
 
-평가 데이터의 각 행은 독립적으로 예측해야 합니다. 평가 서버에서 실제 `test.csv` 전체가 주어지더라도, 참가자는 `test.csv`의 다른 행을 이용해 현재 행의 피처를 만들 수 없습니다.
+#### metadata.json
 
-금지되는 예시는 다음과 같습니다.
+실험에 대한 수치 정보를 저장합니다.
 
-- `test.csv` 내부 행들을 이용한 선수별, 팀별, 월별 누적 통계
-- `test.csv` 내부 빈도값 또는 분포 통계
-- `test.csv` 내부 target encoding
-- `test.csv` 행 순서 기반 rolling 또는 expanding feature
-- 평가 데이터 전체를 보고 만든 사후 보정값
+예를 들어 다음과 같은 정보가 포함됩니다.
 
-운영 측에서 제공한 `asof_*` 컬럼은 각 행의 투구 직전 시점까지의 과거 기록만으로 계산된 공식 입력 피처이므로 사용할 수 있습니다.
+```
+experiment_name
+model_type
+model_params
+validation_season
+n_validation
+positive_rate
+brier
+baseline_brier
+bss
+prediction_mean
+prediction_std
+prediction_min
+prediction_max
+best_iteration
+final_iterations
+```
 
-### 6) 사용 금지 정보
+따라서 validation/은 단순히 score를 기록하는 디렉터리가 아니라, 이후 모델 비교·앙상블·Error Analysis를 위한 실험 결과 저장소입니다.
 
-공정한 평가를 위해 다음 정보는 입력으로 사용할 수 없습니다.
 
-- 현재 투구 이후에 확정되는 모든 정보
-- 현재 투구의 실제 위치 또는 코스 정보
-- 현재 투구의 실제 판정, 결과, 제구 성공 여부
-- 현재 투구의 실제 구종
-- 현재 투구의 Trackman 측정값
-- 2025년 Trackman 데이터
-- 평가 데이터 내부의 다른 행을 이용해 만든 누적, 빈도, 분포, rolling, target encoding 피처
 
-제공된 `train.csv`, 평가 환경의 `test.csv`, 2019~2024년 `trackman_history.csv`, 그리고 대회 규칙상 허용되는 외부 데이터만 사용할 수 있습니다.
+### output/
+
+script.py가 inference 결과를 저장하는 위치입니다.
+
+```
+output/
+└── submission.csv
+```
+
+최종적으로 대회 평가 시스템에서 필요한 예측 결과가 이 위치에 생성됩니다.
+
+
+### submits/
+
+package.py가 생성한 제출 패키지를 관리합니다.
+
+예를 들어
+
+```
+submits/
+└── cb_v001/
+    ├── model/
+    │   └── cb_v001.pkl
+    ├── script.py
+    └── requirements.txt
+```
+
+와 같은 구조가 만들어집니다.
+
+Leaderboard 제출 이후에는 실험 결과를 쉽게 확인하기 위해 다음과 같이 점수를 디렉터리 이름에 기록할 수 있습니다.
+
+```
+cb_v001(783.26)
+xgb_v001(759.36)
+ensemble_v001(807.34)
+```
+
+이 디렉터리는 제출 당시 사용한 모델과 inference 코드를 함께 보존하는 역할도 합니다.
+
+
+## 2. train.py
+
+train.py는 하나의 머신러닝 실험 전체를 담당합니다.
+
+CatBoost를 예로 들면 다음과 같습니다.
+```
+DATA_DIR = Path("./data")
+ID = "row_id"
+TARGET = "control_success"
+EXPERIMENT_NAME = "cb_v001"
+MODEL_ROOT = Path("./model")
+MODEL_DIR = MODEL_ROOT / EXPERIMENT_NAME
+MODEL_PATH = MODEL_DIR / f"{EXPERIMENT_NAME}.pkl"
+VALIDATION_ROOT = Path("./validation")
+VALIDATION_DIR = VALIDATION_ROOT / EXPERIMENT_NAME
+```
+
+이 값들이 현재 실험의 데이터셋 위치와 저장 위치를 결정합니다.
+
+
+
+## 3. EXPERIMENT_NAME: 수행한 모델 실험의 약칭(구분명)
+
+현재 단일 모델 실험에서 가장 중요한 변수는
+
+EXPERIMENT_NAME = "cb_v001"
+
+입니다.
+
+이 하나의 값으로 모델과 Validation 결과가 연결됩니다.
+
+```
+EXPERIMENT_NAME
+      │
+      ├── model/cb_v001/
+      │
+      └── validation/cb_v001/
+```
+
+모델 파일 이름 역시 동일한 실험명을 사용합니다.
+
+```
+MODEL_DIR = MODEL_ROOT / EXPERIMENT_NAME
+MODEL_PATH = (
+    MODEL_DIR
+    / f"{EXPERIMENT_NAME}.pkl"
+)
+```
+
+따라서 최종 결과는
+
+```
+cb_v001
+│
+├── model/
+│   └── cb_v001/
+│       └── cb_v001.pkl
+│
+└── validation/
+    └── cb_v001/
+        ├── pred.csv
+        ├── validation.npz
+        └── metadata.json
+```
+
+이 됩니다.
+
+이 구조를 통해 특정 Validation 결과가 어떤 최종 모델과 연결되는지를 실험 이름만으로 추적할 수 있습니다.
+
+
+## 4. Validation
+Validation 이후
+전체 데이터로 최종 모델을 다시 학습합니다.
+
+2019 ~ 2023 Train
++
+2024 Validation
+        ↓
+전체 Train 데이터
+        ↓
+Final Model
+
+## 5. 최종 모델 저장
+
+전체 데이터 재학습이 완료되면
+
+```
+joblib.dump(
+    final_model,
+    MODEL_PATH,
+    compress=3,
+)
+```
+을 통해 모델을 저장합니다.
+
+예를 들어
+
+EXPERIMENT_NAME = "cb_v001"
+
+이면
+```
+model/
+└── cb_v001/
+    ├── cb_v001.pkl
+    └── train.py
+```
+이 생성됩니다.
+
+여기서
+
+cb_v001.pkl
+
+이 실제 script.py에서 사용해야 하는 inference model입니다.
+
+## 5. train.py에서 script.py로 전달되는 정보
+
+중요한 점은 script.py가 train.py를 직접 import하지 않는다는 것입니다.
+
+즉 다음과 같은 자동 연결은 존재하지 않습니다.
+
+train.py 변수
+     ↓
+Python import
+     ↓
+script.py
+
+대신 script.py는 train.py에서 정의된 학습 규약을 동일하게 구현해야 합니다.
+
+논리적으로 전달되는 주요 정보는 다음과 같습니다.
+
+|train.py|script.py에서 대응되어야 하는 내용|
+|--|--|
+|ID = "row_id"|	ID_COL = "row_id"|
+|TARGET = "control_success"	|TARGET_COL = "control_success"|
+|features	|Test에서 row_id를 제외한 입력 Feature|
+|CAT_COLS	|동일한 CatBoost 범주형 Feature|
+|prepare_features()	|동일한 inference 전처리|
+|MODEL_PATH	|실제 제출 패키지 내부 모델 경로|
+|predict_proba()[:, 1]	|동일한 확률 예측 방식|
+
+즉 데이터 흐름은 다음과 같습니다.
+```
+train.py
+│
+├── ID = row_id
+├── TARGET = control_success
+├── Feature 정의
+├── Categorical Feature 정의
+├── 전처리 규칙
+└── 학습된 *.pkl
+        │
+        ▼
+script.py
+│
+├── 동일한 ID/TARGET 규약
+├── 동일한 Feature 구성
+├── 동일한 전처리
+├── *.pkl 로드
+└── predict_proba()[:, 1]
+        │
+        ▼
+output/submission.csv
+```
+
+
+## 6. script.py에서 package.py로의 연결
+
+package.py에서는
+
+SCRIPT_PATH = Path("./script.py")
+
+로 현재 프로젝트 루트의 script.py를 선택하고
+
+shutil.copy2(
+    SCRIPT_PATH,
+    SUBMIT_DIR / "script.py",
+)
+
+로 제출 디렉터리에 복사합니다.
+
+## 7. train.py에서 package.py로 직접 전달되는 변수
+
+package.py는 train.py를 직접 import합니다.
+
+import train
+
+그리고 다음 두 값을 직접 사용합니다.
+
+EXPERIMENT_NAME = train.EXPERIMENT_NAME
+MODEL_PATH = Path(
+    train.MODEL_PATH
+)
+
+따라서 현재 단일 모델 구조에서 train.py → package.py로 직접 연결되는 변수는 정확히 두 개입니다.
+
+train.EXPERIMENT_NAME
+train.MODEL_PATH
+
+⸻
+
+EXPERIMENT_NAME
+
+train.py:
+
+EXPERIMENT_NAME = "cb_v001"
+
+package.py:
+
+EXPERIMENT_NAME = train.EXPERIMENT_NAME
+
+따라서 제출 디렉터리는 자동으로
+
+submits/cb_v001/
+
+가 됩니다.
+
+⸻
+
+MODEL_PATH
+
+train.py:
+
+MODEL_PATH = (
+    MODEL_DIR
+    / f"{EXPERIMENT_NAME}.pkl"
+)
+
+결과:
+
+model/cb_v001/cb_v001.pkl
+
+package.py:
+
+MODEL_PATH = Path(
+    train.MODEL_PATH
+)
+
+따라서 package.py가 별도로 모델 경로를 다시 작성할 필요가 없습니다.
+
+⸻
+
+17. 전체 변수 연결 관계
+
+단일 CatBoost 실험을 기준으로 전체 연결 관계를 정리하면 다음과 같습니다.
+
+```
+train.py
+│
+├── EXPERIMENT_NAME = "cb_v001"
+│       │
+│       ├───────────────┐
+│       ▼               ▼
+│ model/cb_v001/   validation/cb_v001/
+│       │
+│       ▼
+│ cb_v001.pkl
+│       │
+│       │
+│       └──────────────────────────┐
+│                                  │
+├── ID = "row_id"                  │
+│       │                          │
+│       └──── logical sync ──► script.py
+│                                  │
+├── TARGET = "control_success"     │
+│       │                          │
+│       └──── logical sync ──► script.py
+│                                  │
+├── Feature 규칙                   │
+│       └──── logical sync ──► script.py
+│                                  │
+├── CAT_COLS                       │
+│       └──── logical sync ──► script.py
+│                                  │
+├── prepare_features()             │
+│       └──── logical sync ──► script.py
+│                                  │
+│                                  │
+└── MODEL_PATH ────────────────────┼────► package.py
+                                   │
+script.py                          │
+│                                  │
+├── 모델 로드 ◄────────────────────┘
+├── Test inference
+└── output/submission.csv
+package.py
+│
+├── train.EXPERIMENT_NAME
+├── train.MODEL_PATH
+├── ./script.py
+└── ./requirements.txt
+        │
+        ▼
+submits/cb_v001/
+├── model/
+│   └── cb_v001.pkl
+├── script.py
+└── requirements.txt
+        │
+        ▼
+submits/cb_v001.zip
+```
+
+
+## 8. package.py
+
+package.py의 책임은 단순합니다.
+
+"현재 실험에 필요한 제출 파일을 모아 ZIP 파일을 생성한다."
+
+다음과 같은 모델 평가 기능은 수행하지 않습니다.
+
+모델 성능 검증
+Inference 결과 검증
+환경 재현성 검증
+ZIP 용량 검증
+
+패키징에 필요한 파일이 존재하는지만 확인합니다.
+
+## 9. Packaging Input
+
+현재 package.py가 필요로 하는 입력은 세 가지입니다.
+
+1. train.MODEL_PATH
+2. ./script.py
+3. ./requirements.txt
+
+코드에서는
+```
+MODEL_PATH = Path(
+    train.MODEL_PATH
+)
+SCRIPT_PATH = Path(
+    "./script.py"
+)
+REQUIREMENTS_PATH = Path(
+    "./requirements.txt"
+)
+```
+
+로 정의합니다.
+
+## 10. Packaging 과정
+
+package.py를 실행하면
+
+```
+python package.py
+```
+
+다음 순서로 동작합니다.
+
+```
+train.py import
+        ↓
+EXPERIMENT_NAME 확인
+MODEL_PATH 확인
+        ↓
+requirements.txt 내용 출력
+        ↓
+동일한 Submit 디렉터리 존재 여부 확인
+        ↓
+필수 파일 존재 여부 확인
+        ↓
+submits/{EXPERIMENT_NAME}/ 생성
+        ↓
+model/ 생성
+        ↓
+모델 복사
+script.py 복사
+requirements.txt 복사
+        ↓
+ZIP 생성
+```
+
+## 11. Packaging 결과
+
+예를 들어
+
+EXPERIMENT_NAME = "cb_v001"
+
+이면 다음 디렉터리가 생성됩니다.
+
+```
+submits/
+└── cb_v001/
+    ├── model/
+    │   └── cb_v001.pkl
+    ├── script.py
+    └── requirements.txt
+```
+
+그리고 동일한 내용을 가진 ZIP 파일이 생성됩니다.
+
+```
+submits/
+└── cb_v001.zip
+```
+
+ZIP 내부 구조는 다음과 같습니다.
+
+```
+model/
+└── cb_v001.pkl
+script.py
+requirements.txt
+```
+
+실험 이름을 감싸는 추가 상위 디렉터리는 ZIP 내부에 포함되지 않습니다.
+
+또한 requirements.txt 내부에 어떤 패키지가
+들어있는지를 package.py 실행 시 표시해주는 기능이
+들어있습니다.
+
+만약 본인이 사용한 패키지가 뜨지 않는 경우,
+requirements.txt를 수정 후 다시 실행해주세요.
+
+## 12. Experiment Lifecycle
+
+하나의 단일 모델 실험은 다음 lifecycle을 가집니다.
+
+예를 들어
+
+cb_v001
+
+실험을 수행한다고 가정합니다.
+
+### 1. 실험 정의
+
+EXPERIMENT_NAME = "cb_v001"
+
+### 2. Validation
+
+2019~2023 → Train
+
+2024 → Validation
+
+#### 결과:
+
+```
+validation/cb_v001/
+├── pred.csv
+├── validation.npz
+└── metadata.json
+```
+
+### 3. 전체 데이터 재학습
+
+Validation에서 얻은 최적 iteration을 이용하여 전체 데이터를 다시 학습합니다.
+
+결과:
+```
+model/cb_v001/
+├── cb_v001.pkl
+└── train.py
+```
+
+4. Inference 규약 반영
+
+script.py에서
+```
+ID
+TARGET
+Feature
+Categorical Feature
+전처리
+모델 경로
+Prediction 방식
+```
+
+을 해당 모델에 맞게 사용합니다.
+
+5. Packaging
+```
+python package.py
+```
+
+결과:
+
+```
+submits/cb_v001/
+submits/cb_v001.zip
+```
+
+6. Leaderboard 기록
+
+제출 후 필요하면 결과를 디렉터리 이름에 기록합니다.
+
+예:
+
+cb_v001 → cb_v001(783.26)
+
+따라서
+
+실험명
+→ Validation
+→ Model
+→ Submission
+→ Leaderboard
+
+를 하나의 흐름으로 추적할 수 있습니다.
+
+## 13. 전체 프로젝트 데이터 흐름
+
+최종적으로 프로젝트 전체 흐름은 다음과 같습니다.
+
+                     data/
+                       │
+              ┌────────┴────────┐
+              │                 │
+          train.csv          test.csv
+              │                 │
+              ▼                 │
+           train.py             │
+              │                 │
+      ┌───────┴────────┐        │
+      │                │        │
+      ▼                ▼        │
+ validation/         model/     │
+      │                │        │
+      │                └────┐   │
+      │                     ▼   ▼
+      │                   script.py
+      │                     │
+      │                     ▼
+      │              output/submission.csv
+      │
+      │
+      └── 모델 비교 / 앙상블 분석 등에 활용
+ train.py ── EXPERIMENT_NAME ──┐
+                               │
+ train.py ── MODEL_PATH ───────┤
+                               ▼
+                           package.py
+                               ▲
+                               │
+                ┌──────────────┴────────────┐
+                │                           │
+            script.py               requirements.txt
+                │                           │
+                └──────────────┬────────────┘
+                               ▼
+                     submits/{experiment}/
+                               │
+                               ▼
+                     submits/{experiment}.zip
+
+
+## 14. 핵심 설계 원칙
+
+현재 단일 모델 Pipeline에서는 EXPERIMENT_NAME을 중심으로 실험 결과를 관리합니다.
+
+EXPERIMENT_NAME
+       │
+       ├── validation/
+       ├── model/
+       └── submits/
+
+이를 통해
+
+어떤 Validation 결과가 어떤 모델을 만들었고, 어떤 모델이 어떤 제출 파일에 사용되었는가
+
+를 추적할 수 있습니다.
+
+각 프로그램의 책임도 분리합니다.
+
+train.py
+→ 학습과 Validation
+script.py
+→ Inference
+package.py
+→ Packaging
+
+특히 package.py는 단순히
+
+필요한 파일 확인
+        ↓
+파일 복사
+        ↓
+제출 디렉터리 생성
+        ↓
+ZIP 생성
+
+만을 담당하도록 유지합니다.
+
+## 15. 현재 단일 모델 기준 정리
+
+현재 CatBoost 실험을 예로 들면 전체 연결은 다음 한 줄로 정리할 수 있습니다.
+
+cb_v001
+→ validation/cb_v001/
+→ model/cb_v001/cb_v001.pkl
+→ script.py에서 해당 모델 추론
+→ package.py
+→ submits/cb_v001.zip
+
+이 구조를 기반으로 CatBoost, XGBoost, LightGBM 등 각 단일 모델 실험을 독립적으로 관리합니다.
+
+앙상블은 하나의 제출이 여러 개의 모델 artifact를 사용한다는 점에서 단일 모델과 구조가 다르므로, 별도의 제출 구조로 확장하여 관리할 예정에 있습니다.

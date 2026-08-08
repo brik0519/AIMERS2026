@@ -1,387 +1,1139 @@
-# train.py
+# ensemble_search_v002.py
+#
+# LG Aimers Phase2 Validation ensemble 분석 확장 버전
+#
+# 추가 기능:
+# 1. Prediction correlation
+# 2. Residual correlation
+# 3. Pair grid search
+# 4. Pair exact optimum (Brier / squared error 기준 해석적 최적해)
+# 5. Pair 비교 요약 저장
+# 6. Triple grid search 유지
+# 7. 전체 최적 ensemble prediction 저장
+#
+# 현재 주요 모델:
+# - CatBoostClassifier
+# - CatBoostRegressor
+# - XGBClassifier
 
 import json
-import shutil
-import time
+from itertools import combinations
 from pathlib import Path
 
-import joblib
 import numpy as np
 import pandas as pd
-import xgboost as xgb
-from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import OrdinalEncoder
-from xgboost import XGBClassifier
 
 
 # =========================================================
-# 실험 설정
+# 설정
 # =========================================================
-
-DATA_DIR = Path("./data")
-
-ID = "row_id"
-TARGET = "control_success"
-
-# 실험마다 이 값만 변경
-EXPERIMENT_NAME = "xgb_v001"
-
-MODEL_ROOT = Path("./model")
-MODEL_DIR = MODEL_ROOT / EXPERIMENT_NAME
-MODEL_PATH = MODEL_DIR / f"{EXPERIMENT_NAME}.pkl"
 
 VALIDATION_ROOT = Path("./validation")
-VALIDATION_DIR = VALIDATION_ROOT / EXPERIMENT_NAME
 
+OUTPUT_ROOT = Path("./ensemble")
+EXPERIMENT_NAME = "ensemble_v002"
 
-# =========================================================
-# 학습 설정
-# =========================================================
+OUTPUT_DIR = OUTPUT_ROOT / EXPERIMENT_NAME
 
-MAX_ITERATIONS = 5000
-EARLY_STOPPING_ROUNDS = 200
-RANDOM_STATE = 42
-
-
-# =========================================================
-# Feature 정책
-# =========================================================
-
-# 저카디널리티 명목형만 categorical encoding
-CAT_COLS = [
-    "top_bottom",
-    "game_type",
-    "base_state",
-    "pitcher_hand",
-    "batter_hand",
-]
-
-# 고카디널리티 ID는 categorical encoding하지 않고
-# numeric 값으로 유지
-ID_LIKE_COLS = [
-    "pitcher_id",
-    "batter_id",
-    "pitcher_team_id",
-    "batter_team_id",
-]
-
-
-# =========================================================
-# XGBoost 모델 파라미터
-# =========================================================
-
-MODEL_PARAMS = {
-    "objective": "binary:logistic",
-
-    "learning_rate": 0.03,
-
-    "max_depth": 8,
-    "min_child_weight": 10.0,
-
-    "subsample": 0.85,
-    "colsample_bytree": 0.85,
-
-    "reg_alpha": 1.0,
-    "reg_lambda": 10.0,
-
-    "tree_method": "hist",
-    "device": "cpu",
-
-    "random_state": RANDOM_STATE,
-    "n_jobs": -1,
+MODEL_CONFIG = {
+    "cb_cls": {
+        "path": VALIDATION_ROOT / "cb_v001" / "pred.csv",
+        "prediction_candidates": [
+            "prediction",
+        ],
+    },
+    "cb_reg": {
+        "path": VALIDATION_ROOT / "cb_reg_v001" / "pred.csv",
+        "prediction_candidates": [
+            "prediction_clip",
+            "prediction_raw",
+            "prediction",
+        ],
+    },
+    "xgb_cls": {
+        "path": VALIDATION_ROOT / "xgb_v001" / "pred.csv",
+        "prediction_candidates": [
+            "prediction",
+        ],
+    },
 }
 
+PAIR_WEIGHT_STEP = 0.01
+TRIPLE_WEIGHT_STEP = 0.02
+
 
 # =========================================================
-# Brier Score
+# Metric
 # =========================================================
 
-def brier_metric(
-    y_true,
-    y_pred,
-):
-    """
-    XGBoost validation용 Brier Score.
-
-    callable eval_metric은 cost function으로 사용되며
-    값이 작을수록 좋다.
-    """
-
+def calculate_brier_metrics(y_true, y_pred):
     y_true = np.asarray(
-        y_true
+        y_true,
+        dtype=np.float64,
     )
 
     y_pred = np.asarray(
-        y_pred
+        y_pred,
+        dtype=np.float64,
     )
 
-    return float(
+    if len(y_true) != len(y_pred):
+        raise ValueError(
+            "y_true와 y_pred 길이가 다릅니다."
+        )
+
+    if not np.isfinite(y_pred).all():
+        raise ValueError(
+            "prediction에 NaN 또는 Inf가 있습니다."
+        )
+
+    r = float(
+        np.mean(y_true)
+    )
+
+    brier = float(
         np.mean(
             (y_pred - y_true) ** 2
         )
     )
 
+    baseline_brier = float(
+        r * (1.0 - r)
+    )
 
-# =========================================================
-# Raw Feature 준비
-# =========================================================
-
-def prepare_raw_features(
-    df,
-    features,
-    id_like_cols,
-):
-    """
-    XGBoost 전처리 직전 DataFrame을 생성한다.
-
-    1. 학습 Feature 순서 고정
-    2. ID 계열은 numeric으로 강제 변환
-    3. 나머지 numeric NaN은 그대로 유지
-       → XGBoost가 직접 처리
-    """
-
-    missing_features = [
-        col
-        for col in features
-        if col not in df.columns
-    ]
-
-    if missing_features:
+    if baseline_brier <= 0:
         raise ValueError(
-            "입력 데이터에 학습 Feature가 없습니다: "
-            + ", ".join(
-                missing_features
-            )
+            "baseline_brier가 0 이하입니다."
         )
 
-    X = df[
-        features
+    bss = float(
+        max(
+            0.0,
+            100000.0 * (
+                1.0
+                - brier / baseline_brier
+            ),
+        )
+    )
+
+    return (
+        brier,
+        baseline_brier,
+        bss,
+    )
+
+
+# =========================================================
+# Prediction load
+# =========================================================
+
+def detect_prediction_column(
+    df,
+    candidates,
+    model_name,
+):
+    for col in candidates:
+        if col in df.columns:
+            return col
+
+    raise ValueError(
+        f"{model_name}: prediction 컬럼을 찾지 못했습니다.\n"
+        f"columns={list(df.columns)}\n"
+        f"candidates={candidates}"
+    )
+
+
+def load_prediction(
+    model_name,
+    config,
+):
+    path = Path(
+        config["path"]
+    )
+
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{model_name} prediction 파일이 없습니다: {path}"
+        )
+
+    df = pd.read_csv(
+        path,
+        encoding="utf-8-sig",
+    )
+
+    required_cols = {
+        "row_id",
+        "target",
+    }
+
+    missing_cols = (
+        required_cols
+        - set(df.columns)
+    )
+
+    if missing_cols:
+        raise ValueError(
+            f"{model_name}: 필수 컬럼 누락: {missing_cols}"
+        )
+
+    if df["row_id"].duplicated().any():
+        raise ValueError(
+            f"{model_name}: row_id 중복이 있습니다."
+        )
+
+    pred_col = (
+        detect_prediction_column(
+            df=df,
+            candidates=config[
+                "prediction_candidates"
+            ],
+            model_name=model_name,
+        )
+    )
+
+    out = df[
+        [
+            "row_id",
+            "target",
+            pred_col,
+        ]
     ].copy()
 
-    for col in id_like_cols:
-        if col in X.columns:
-            X[col] = pd.to_numeric(
-                X[col],
-                errors="coerce",
-            )
-
-    return X
-
-
-# =========================================================
-# 전처리 생성
-# =========================================================
-
-def create_preprocessor(
-    cat_cols,
-    num_cols,
-):
-    """
-    새로운 OrdinalEncoder를 포함하는
-    XGBoost 전처리 객체를 매번 생성한다.
-
-    Validation과 Final model이 서로 독립된
-    fitted encoder를 갖도록 한다.
-
-    categorical:
-        "__MISSING__" 사용
-        unseen category → -1
-
-    numeric:
-        그대로 통과
-        NaN도 그대로 XGBoost에 전달
-    """
-
-    return ColumnTransformer(
-        transformers=[
-            (
-                "cat",
-                OrdinalEncoder(
-                    handle_unknown="use_encoded_value",
-                    unknown_value=-1,
-                    encoded_missing_value=-1,
-                ),
-                cat_cols,
-            ),
-            (
-                "num",
-                "passthrough",
-                num_cols,
-            ),
-        ],
-        remainder="drop",
+    out = out.rename(
+        columns={
+            pred_col: model_name,
+        }
     )
 
-
-# =========================================================
-# Validation 모델 생성
-# =========================================================
-
-def create_validation_model():
-    """
-    Brier Score 기반 early stopping을 사용하는
-    Validation용 XGBClassifier를 생성한다.
-    """
-
-    return XGBClassifier(
-        n_estimators=MAX_ITERATIONS,
-
-        eval_metric=brier_metric,
-        early_stopping_rounds=EARLY_STOPPING_ROUNDS,
-
-        **MODEL_PARAMS,
+    out[model_name] = pd.to_numeric(
+        out[model_name],
+        errors="raise",
     )
 
-
-# =========================================================
-# Final 모델 생성
-# =========================================================
-
-def create_final_model(
-    n_estimators,
-):
-    """
-    Validation에서 찾은 best iteration만큼
-    전체 데이터로 다시 학습할 Final 모델.
-
-    Final 모델에는 eval_metric callable과
-    early stopping 설정을 넣지 않는다.
-
-    이렇게 해야 저장된 model.pkl이
-    script.py의 함수 정의에 의존하지 않는다.
-    """
-
-    return XGBClassifier(
-        n_estimators=n_estimators,
-        **MODEL_PARAMS,
-    )
-
-
-# =========================================================
-# Validation 결과 저장
-# =========================================================
-
-def save_validation(
-    experiment_name,
-    estimator,
-    model_params,
-    row_ids,
-    y_true,
-    y_pred,
-    brier,
-    baseline_brier,
-    bss,
-    output_root,
-    best_iteration,
-):
-    row_ids = np.asarray(
-        row_ids
-    )
-
-    y_true = np.asarray(
-        y_true
-    )
-
-    y_pred = np.asarray(
-        y_pred
-    )
-
-    assert (
-        len(row_ids)
-        == len(y_true)
-        == len(y_pred)
-    )
-
-    output_dir = (
-        Path(output_root)
-        / experiment_name
-    )
-
-    if output_dir.exists():
-        raise FileExistsError(
-            f"Validation experiment already exists: "
-            f"{output_dir}"
+    if not np.isfinite(
+        out[model_name].to_numpy()
+    ).all():
+        raise ValueError(
+            f"{model_name}: prediction에 NaN 또는 Inf가 있습니다."
         )
 
-    output_dir.mkdir(
+    print(
+        f"[로드] {model_name:<10} "
+        f"| rows={len(out):,} "
+        f"| column={pred_col} "
+        f"| path={path}"
+    )
+
+    return out
+
+
+# =========================================================
+# Merge / validation
+# =========================================================
+
+def merge_predictions(
+    model_config,
+):
+    merged = None
+    expected_n = None
+
+    for model_name, config in (
+        model_config.items()
+    ):
+        df = load_prediction(
+            model_name,
+            config,
+        )
+
+        if expected_n is None:
+            expected_n = len(df)
+        elif len(df) != expected_n:
+            raise ValueError(
+                "모델별 validation row 수가 다릅니다. "
+                f"expected={expected_n}, "
+                f"{model_name}={len(df)}"
+            )
+
+        df = df.rename(
+            columns={
+                "target":
+                    f"target__{model_name}"
+            }
+        )
+
+        if merged is None:
+            merged = df
+        else:
+            merged = merged.merge(
+                df,
+                on="row_id",
+                how="inner",
+                validate="one_to_one",
+            )
+
+    if merged is None:
+        raise ValueError(
+            "로드된 모델이 없습니다."
+        )
+
+    if len(merged) != expected_n:
+        raise ValueError(
+            "모델 간 row_id 집합이 다릅니다. "
+            f"expected={expected_n}, merged={len(merged)}"
+        )
+
+    target_cols = [
+        c
+        for c in merged.columns
+        if c.startswith("target__")
+    ]
+
+    base_target = (
+        merged[target_cols[0]]
+        .to_numpy()
+    )
+
+    for col in target_cols[1:]:
+        other_target = (
+            merged[col]
+            .to_numpy()
+        )
+
+        if not np.array_equal(
+            base_target,
+            other_target,
+        ):
+            mismatch = int(
+                np.sum(
+                    base_target
+                    != other_target
+                )
+            )
+
+            raise ValueError(
+                f"target 불일치: "
+                f"{target_cols[0]} vs {col}, "
+                f"mismatch={mismatch}"
+            )
+
+    merged["target"] = (
+        base_target
+    )
+
+    merged = merged.drop(
+        columns=target_cols
+    )
+
+    merged = merged.sort_values(
+        "row_id"
+    ).reset_index(
+        drop=True
+    )
+
+    return merged
+
+
+# =========================================================
+# Single model summary
+# =========================================================
+
+def evaluate_single_models(
+    df,
+    model_names,
+):
+    records = []
+
+    y_true = (
+        df["target"]
+        .to_numpy(
+            dtype=np.float64
+        )
+    )
+
+    baseline_brier = None
+
+    for model_name in model_names:
+        pred = (
+            df[model_name]
+            .to_numpy(
+                dtype=np.float64
+            )
+        )
+
+        (
+            brier,
+            this_baseline_brier,
+            bss,
+        ) = calculate_brier_metrics(
+            y_true,
+            pred,
+        )
+
+        if baseline_brier is None:
+            baseline_brier = (
+                this_baseline_brier
+            )
+
+        records.append({
+            "model": model_name,
+            "brier": brier,
+            "bss": bss,
+            "prediction_mean":
+                float(np.mean(pred)),
+            "prediction_std":
+                float(np.std(pred)),
+            "prediction_min":
+                float(np.min(pred)),
+            "prediction_max":
+                float(np.max(pred)),
+        })
+
+    result = pd.DataFrame(
+        records
+    ).sort_values(
+        "brier"
+    ).reset_index(
+        drop=True
+    )
+
+    return (
+        result,
+        baseline_brier,
+    )
+
+
+# =========================================================
+# Correlation
+# =========================================================
+
+def calculate_correlations(
+    df,
+    model_names,
+):
+    """
+    Prediction correlation과 residual correlation 계산.
+
+    residual = prediction - target
+    """
+
+    prediction_corr = (
+        df[model_names]
+        .corr(
+            method="pearson"
+        )
+    )
+
+    residual_df = pd.DataFrame(
+        index=df.index
+    )
+
+    y_true = (
+        df["target"]
+        .to_numpy(
+            dtype=np.float64
+        )
+    )
+
+    for model_name in model_names:
+        residual_df[model_name] = (
+            df[model_name]
+            .to_numpy(
+                dtype=np.float64
+            )
+            - y_true
+        )
+
+    residual_corr = (
+        residual_df
+        .corr(
+            method="pearson"
+        )
+    )
+
+    return (
+        prediction_corr,
+        residual_corr,
+    )
+
+
+# =========================================================
+# Pair grid search
+# =========================================================
+
+def search_pair_grid(
+    df,
+    model_a,
+    model_b,
+    step,
+):
+    y_true = (
+        df["target"]
+        .to_numpy(
+            dtype=np.float64
+        )
+    )
+
+    pred_a = (
+        df[model_a]
+        .to_numpy(
+            dtype=np.float64
+        )
+    )
+
+    pred_b = (
+        df[model_b]
+        .to_numpy(
+            dtype=np.float64
+        )
+    )
+
+    n_steps = int(
+        round(
+            1.0 / step
+        )
+    )
+
+    weights = (
+        np.arange(
+            n_steps + 1,
+            dtype=np.float64,
+        )
+        * step
+    )
+
+    records = []
+    best = None
+
+    for w_a in weights:
+        w_a = float(
+            np.clip(
+                w_a,
+                0.0,
+                1.0,
+            )
+        )
+
+        w_b = float(
+            1.0 - w_a
+        )
+
+        pred = (
+            w_a * pred_a
+            + w_b * pred_b
+        )
+
+        pred = np.clip(
+            pred,
+            0.0,
+            1.0,
+        )
+
+        (
+            brier,
+            baseline_brier,
+            bss,
+        ) = calculate_brier_metrics(
+            y_true,
+            pred,
+        )
+
+        record = {
+            "model_a": model_a,
+            "model_b": model_b,
+            "weight_a": w_a,
+            "weight_b": w_b,
+            "brier": brier,
+            "bss": bss,
+        }
+
+        records.append(
+            record
+        )
+
+        if (
+            best is None
+            or brier < best["brier"]
+        ):
+            best = {
+                **record,
+                "prediction":
+                    pred.copy(),
+                "baseline_brier":
+                    baseline_brier,
+            }
+
+    result = pd.DataFrame(
+        records
+    ).sort_values(
+        "brier"
+    ).reset_index(
+        drop=True
+    )
+
+    return (
+        result,
+        best,
+    )
+
+
+# =========================================================
+# Pair exact optimum
+# =========================================================
+
+def search_pair_exact(
+    df,
+    model_a,
+    model_b,
+):
+    """
+    Brier Score를 최소화하는 2-model convex ensemble의
+    exact optimum weight 계산.
+
+    ensemble:
+        p = w * p_a + (1-w) * p_b
+
+    unconstrained optimum:
+        w* = sum((p_a-p_b)(y-p_b))
+             / sum((p_a-p_b)^2)
+
+    최종적으로 convex ensemble 조건을 위해 [0,1]로 clip.
+    """
+
+    y_true = (
+        df["target"]
+        .to_numpy(
+            dtype=np.float64
+        )
+    )
+
+    pred_a = (
+        df[model_a]
+        .to_numpy(
+            dtype=np.float64
+        )
+    )
+
+    pred_b = (
+        df[model_b]
+        .to_numpy(
+            dtype=np.float64
+        )
+    )
+
+    delta = (
+        pred_a
+        - pred_b
+    )
+
+    denominator = float(
+        np.dot(
+            delta,
+            delta,
+        )
+    )
+
+    if denominator <= 0:
+        # 두 prediction이 완전히 같다면 모든 weight가 동일.
+        w_unconstrained = 0.5
+    else:
+        numerator = float(
+            np.dot(
+                delta,
+                y_true - pred_b,
+            )
+        )
+
+        w_unconstrained = (
+            numerator
+            / denominator
+        )
+
+    w_a = float(
+        np.clip(
+            w_unconstrained,
+            0.0,
+            1.0,
+        )
+    )
+
+    w_b = float(
+        1.0 - w_a
+    )
+
+    pred = (
+        w_a * pred_a
+        + w_b * pred_b
+    )
+
+    pred = np.clip(
+        pred,
+        0.0,
+        1.0,
+    )
+
+    (
+        brier,
+        baseline_brier,
+        bss,
+    ) = calculate_brier_metrics(
+        y_true,
+        pred,
+    )
+
+    return {
+        "model_a": model_a,
+        "model_b": model_b,
+        "weight_a_unconstrained":
+            float(w_unconstrained),
+        "weight_a": w_a,
+        "weight_b": w_b,
+        "brier": brier,
+        "bss": bss,
+        "baseline_brier":
+            baseline_brier,
+        "prediction":
+            pred.copy(),
+    }
+
+
+# =========================================================
+# Triple grid search
+# =========================================================
+
+def search_triple_grid(
+    df,
+    model_a,
+    model_b,
+    model_c,
+    step,
+):
+    y_true = (
+        df["target"]
+        .to_numpy(
+            dtype=np.float64
+        )
+    )
+
+    pred_a = (
+        df[model_a]
+        .to_numpy(
+            dtype=np.float64
+        )
+    )
+
+    pred_b = (
+        df[model_b]
+        .to_numpy(
+            dtype=np.float64
+        )
+    )
+
+    pred_c = (
+        df[model_c]
+        .to_numpy(
+            dtype=np.float64
+        )
+    )
+
+    n_steps = int(
+        round(
+            1.0 / step
+        )
+    )
+
+    records = []
+    best = None
+
+    for i in range(
+        n_steps + 1
+    ):
+        for j in range(
+            n_steps - i + 1
+        ):
+            k = (
+                n_steps
+                - i
+                - j
+            )
+
+            w_a = (
+                i / n_steps
+            )
+
+            w_b = (
+                j / n_steps
+            )
+
+            w_c = (
+                k / n_steps
+            )
+
+            pred = (
+                w_a * pred_a
+                + w_b * pred_b
+                + w_c * pred_c
+            )
+
+            pred = np.clip(
+                pred,
+                0.0,
+                1.0,
+            )
+
+            (
+                brier,
+                baseline_brier,
+                bss,
+            ) = calculate_brier_metrics(
+                y_true,
+                pred,
+            )
+
+            record = {
+                "model_a": model_a,
+                "model_b": model_b,
+                "model_c": model_c,
+                "weight_a":
+                    float(w_a),
+                "weight_b":
+                    float(w_b),
+                "weight_c":
+                    float(w_c),
+                "brier":
+                    brier,
+                "bss":
+                    bss,
+            }
+
+            records.append(
+                record
+            )
+
+            if (
+                best is None
+                or brier < best["brier"]
+            ):
+                best = {
+                    **record,
+                    "prediction":
+                        pred.copy(),
+                    "baseline_brier":
+                        baseline_brier,
+                }
+
+    result = pd.DataFrame(
+        records
+    ).sort_values(
+        "brier"
+    ).reset_index(
+        drop=True
+    )
+
+    return (
+        result,
+        best,
+    )
+
+
+# =========================================================
+# Pair comparison
+# =========================================================
+
+def build_pair_comparison(
+    pair_grid_best,
+    pair_exact_best,
+    prediction_corr,
+    residual_corr,
+):
+    records = []
+
+    exact_lookup = {
+        (
+            x["model_a"],
+            x["model_b"],
+        ): x
+        for x in pair_exact_best
+    }
+
+    for grid in pair_grid_best:
+        key = (
+            grid["model_a"],
+            grid["model_b"],
+        )
+
+        exact = (
+            exact_lookup[key]
+        )
+
+        model_a = (
+            grid["model_a"]
+        )
+
+        model_b = (
+            grid["model_b"]
+        )
+
+        records.append({
+            "model_a": model_a,
+            "model_b": model_b,
+
+            "prediction_correlation":
+                float(
+                    prediction_corr.loc[
+                        model_a,
+                        model_b,
+                    ]
+                ),
+
+            "residual_correlation":
+                float(
+                    residual_corr.loc[
+                        model_a,
+                        model_b,
+                    ]
+                ),
+
+            "grid_weight_a":
+                float(
+                    grid["weight_a"]
+                ),
+            "grid_weight_b":
+                float(
+                    grid["weight_b"]
+                ),
+            "grid_brier":
+                float(
+                    grid["brier"]
+                ),
+            "grid_bss":
+                float(
+                    grid["bss"]
+                ),
+
+            "exact_weight_a_unconstrained":
+                float(
+                    exact[
+                        "weight_a_unconstrained"
+                    ]
+                ),
+            "exact_weight_a":
+                float(
+                    exact["weight_a"]
+                ),
+            "exact_weight_b":
+                float(
+                    exact["weight_b"]
+                ),
+            "exact_brier":
+                float(
+                    exact["brier"]
+                ),
+            "exact_bss":
+                float(
+                    exact["bss"]
+                ),
+
+            "exact_brier_gain_vs_grid":
+                float(
+                    grid["brier"]
+                    - exact["brier"]
+                ),
+
+            "exact_bss_gain_vs_grid":
+                float(
+                    exact["bss"]
+                    - grid["bss"]
+                ),
+        })
+
+    result = pd.DataFrame(
+        records
+    ).sort_values(
+        "exact_brier"
+    ).reset_index(
+        drop=True
+    )
+
+    return result
+
+
+# =========================================================
+# Save
+# =========================================================
+
+def save_outputs(
+    df,
+    single_summary,
+    prediction_corr,
+    residual_corr,
+    pair_grid_all,
+    pair_grid_best,
+    pair_exact_best,
+    pair_comparison,
+    triple_result,
+    triple_best,
+    global_best,
+):
+    if OUTPUT_DIR.exists():
+        raise FileExistsError(
+            f"Ensemble experiment already exists: {OUTPUT_DIR}\n"
+            "EXPERIMENT_NAME을 변경하세요."
+        )
+
+    OUTPUT_DIR.mkdir(
         parents=True,
         exist_ok=False,
     )
 
-    # -----------------------------------------------------
-    # pred.csv
-    # -----------------------------------------------------
-
-    pred_df = pd.DataFrame({
-        "row_id": row_ids,
-        "target": y_true,
-        "prediction": y_pred,
-    })
-
-    pred_df.to_csv(
-        output_dir / "pred.csv",
+    df.to_csv(
+        OUTPUT_DIR
+        / "validation_predictions.csv",
         index=False,
         encoding="utf-8-sig",
     )
 
-    # -----------------------------------------------------
-    # validation.npz
-    # -----------------------------------------------------
-
-    np.savez_compressed(
-        output_dir / "validation.npz",
-        row_id=row_ids,
-        target=y_true,
-        prediction=y_pred,
+    single_summary.to_csv(
+        OUTPUT_DIR
+        / "single_model_summary.csv",
+        index=False,
+        encoding="utf-8-sig",
     )
 
-    # -----------------------------------------------------
-    # metadata.json
-    # -----------------------------------------------------
+    prediction_corr.to_csv(
+        OUTPUT_DIR
+        / "prediction_correlation.csv",
+        encoding="utf-8-sig",
+    )
+
+    residual_corr.to_csv(
+        OUTPUT_DIR
+        / "residual_correlation.csv",
+        encoding="utf-8-sig",
+    )
+
+    pair_grid_all.to_csv(
+        OUTPUT_DIR
+        / "pair_grid_search.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    pd.DataFrame(
+        pair_grid_best
+    ).sort_values(
+        "brier"
+    ).to_csv(
+        OUTPUT_DIR
+        / "pair_grid_best.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    exact_save_records = []
+
+    for item in pair_exact_best:
+        exact_save_records.append({
+            k: v
+            for k, v in item.items()
+            if k not in {
+                "prediction",
+                "baseline_brier",
+            }
+        })
+
+    pd.DataFrame(
+        exact_save_records
+    ).sort_values(
+        "brier"
+    ).to_csv(
+        OUTPUT_DIR
+        / "pair_exact_optimum.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    pair_comparison.to_csv(
+        OUTPUT_DIR
+        / "pair_comparison.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    triple_result.to_csv(
+        OUTPUT_DIR
+        / "triple_grid_search.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    best_pred_df = pd.DataFrame({
+        "row_id":
+            df["row_id"],
+        "target":
+            df["target"],
+        "prediction":
+            global_best[
+                "prediction"
+            ],
+    })
+
+    best_pred_df.to_csv(
+        OUTPUT_DIR
+        / "best_prediction.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    np.savez_compressed(
+        OUTPUT_DIR
+        / "best_prediction.npz",
+        row_id=df[
+            "row_id"
+        ].to_numpy(),
+        target=df[
+            "target"
+        ].to_numpy(),
+        prediction=global_best[
+            "prediction"
+        ],
+    )
 
     metadata = {
-        "experiment_name": experiment_name,
-        "model_type": type(estimator).__name__,
-        "model_params": model_params,
-
-        "max_iterations": MAX_ITERATIONS,
-        "early_stopping_rounds": EARLY_STOPPING_ROUNDS,
-        "best_iteration": int(best_iteration),
-
-        "validation_season": 2024,
-        "n_validation": int(len(y_true)),
-
-        "positive_rate": float(
-            np.mean(y_true)
-        ),
-
-        "brier": float(brier),
-        "baseline_brier": float(
-            baseline_brier
-        ),
-        "bss": float(bss),
-
-        "prediction_mean": float(
-            np.mean(y_pred)
-        ),
-
-        "prediction_std": float(
-            np.std(y_pred)
-        ),
-
-        "prediction_min": float(
-            np.min(y_pred)
-        ),
-
-        "prediction_max": float(
-            np.max(y_pred)
-        ),
-
-        "xgboost_version": xgb.__version__,
+        "experiment_name":
+            EXPERIMENT_NAME,
+        "n_validation":
+            int(len(df)),
+        "pair_weight_step":
+            PAIR_WEIGHT_STEP,
+        "triple_weight_step":
+            TRIPLE_WEIGHT_STEP,
+        "single_models":
+            single_summary.to_dict(
+                orient="records"
+            ),
+        "pair_comparison":
+            pair_comparison.to_dict(
+                orient="records"
+            ),
+        "triple_best": {
+            k: v
+            for k, v in (
+                triple_best.items()
+            )
+            if k != "prediction"
+        },
+        "global_best": {
+            k: v
+            for k, v in (
+                global_best.items()
+            )
+            if k != "prediction"
+        },
     }
 
     with open(
-        output_dir / "metadata.json",
+        OUTPUT_DIR
+        / "metadata.json",
         "w",
         encoding="utf-8",
     ) as f:
@@ -392,18 +1144,6 @@ def save_validation(
             ensure_ascii=False,
         )
 
-    print()
-    print("[Validation 저장 완료]")
-    print(
-        f"- {output_dir / 'pred.csv'}"
-    )
-    print(
-        f"- {output_dir / 'validation.npz'}"
-    )
-    print(
-        f"- {output_dir / 'metadata.json'}"
-    )
-
 
 # =========================================================
 # Main
@@ -411,704 +1151,418 @@ def save_validation(
 
 def main():
 
-    # -----------------------------------------------------
-    # 덮어쓰기 방지
-    # -----------------------------------------------------
-
-    if VALIDATION_DIR.exists():
-        raise FileExistsError(
-            f"Validation experiment already exists: "
-            f"{VALIDATION_DIR}\n"
-            "새 EXPERIMENT_NAME을 사용하세요."
-        )
-
-    if MODEL_DIR.exists():
-        raise FileExistsError(
-            f"Model experiment already exists: "
-            f"{MODEL_DIR}\n"
-            "새 EXPERIMENT_NAME을 사용하세요."
-        )
+    print("=" * 76)
+    print("Validation Ensemble Search V2")
+    print("=" * 76)
 
     # -----------------------------------------------------
-    # 경로
+    # Load
     # -----------------------------------------------------
 
-    TEST_PATH = (
-        DATA_DIR
-        / "test.csv"
+    print()
+    print("[1] Prediction 로드")
+
+    df = merge_predictions(
+        MODEL_CONFIG
     )
 
-    TRAIN_PATH = (
-        DATA_DIR
-        / "train.csv"
+    model_names = list(
+        MODEL_CONFIG.keys()
+    )
+
+    print()
+    print(
+        f"Validation rows: {len(df):,}"
+    )
+
+    print(
+        f"Positive rate  : "
+        f"{df['target'].mean():.6f}"
     )
 
     # -----------------------------------------------------
-    # 데이터 파일 검증
+    # Single
     # -----------------------------------------------------
 
-    if not TEST_PATH.exists():
-        raise FileNotFoundError(
-            f"test.csv를 찾을 수 없습니다: "
-            f"{TEST_PATH}"
-        )
+    print()
+    print("[2] Single model 성능")
 
-    if not TRAIN_PATH.exists():
-        raise FileNotFoundError(
-            f"train.csv를 찾을 수 없습니다: "
-            f"{TRAIN_PATH}"
-        )
-
-    # -----------------------------------------------------
-    # test.csv 기준 Feature 결정
-    # -----------------------------------------------------
-
-    test_cols = pd.read_csv(
-        TEST_PATH,
-        encoding="utf-8-sig",
-        nrows=0,
-    ).columns.tolist()
-
-    if ID not in test_cols:
-        raise ValueError(
-            f"test.csv에 ID 컬럼 "
-            f"'{ID}'가 없습니다."
-        )
-
-    features = [
-        col
-        for col in test_cols
-        if col != ID
-    ]
-
-    cat_cols = [
-        col
-        for col in CAT_COLS
-        if col in features
-    ]
-
-    id_like_cols = [
-        col
-        for col in ID_LIKE_COLS
-        if col in features
-    ]
-
-    num_cols = [
-        col
-        for col in features
-        if col not in cat_cols
-    ]
-
-    # -----------------------------------------------------
-    # 학습 데이터 로드
-    # -----------------------------------------------------
-
-    train = pd.read_csv(
-        TRAIN_PATH,
-        encoding="utf-8-sig",
-        usecols=[
-            ID,
-            *features,
-            TARGET,
-        ],
+    (
+        single_summary,
+        baseline_brier,
+    ) = evaluate_single_models(
+        df,
+        model_names,
     )
 
-    required_columns = {
-        ID,
-        "season",
-        TARGET,
-    }
-
-    missing_columns = (
-        required_columns
-        - set(train.columns)
+    print()
+    print(
+        single_summary.to_string(
+            index=False,
+            float_format=lambda x:
+                f"{x:.8f}",
+        )
     )
 
-    if missing_columns:
-        raise ValueError(
-            "train.csv에 필요한 컬럼이 없습니다: "
-            + ", ".join(
-                sorted(missing_columns)
+    print()
+    print(
+        f"Baseline Brier: "
+        f"{baseline_brier:.8f}"
+    )
+
+    # -----------------------------------------------------
+    # Correlations
+    # -----------------------------------------------------
+
+    print()
+    print("[3] Prediction / Residual correlation")
+
+    (
+        prediction_corr,
+        residual_corr,
+    ) = calculate_correlations(
+        df,
+        model_names,
+    )
+
+    print()
+    print("[Prediction correlation]")
+    print(
+        prediction_corr.to_string(
+            float_format=lambda x:
+                f"{x:.6f}",
+        )
+    )
+
+    print()
+    print("[Residual correlation]")
+    print(
+        residual_corr.to_string(
+            float_format=lambda x:
+                f"{x:.6f}",
+        )
+    )
+
+    # -----------------------------------------------------
+    # Pair grid / exact
+    # -----------------------------------------------------
+
+    print()
+    print("[4] Pair ensemble grid + exact optimum")
+
+    pair_grid_results = []
+    pair_grid_best = []
+    pair_exact_best = []
+
+    for (
+        model_a,
+        model_b,
+    ) in combinations(
+        model_names,
+        2,
+    ):
+        (
+            grid_result,
+            grid_best,
+        ) = search_pair_grid(
+            df=df,
+            model_a=model_a,
+            model_b=model_b,
+            step=PAIR_WEIGHT_STEP,
+        )
+
+        exact_best = (
+            search_pair_exact(
+                df=df,
+                model_a=model_a,
+                model_b=model_b,
             )
         )
 
-    if train[TARGET].isna().any():
+        pair_grid_results.append(
+            grid_result
+        )
+
+        pair_grid_best.append({
+            k: v
+            for k, v in grid_best.items()
+            if k not in {
+                "prediction",
+                "baseline_brier",
+            }
+        })
+
+        pair_exact_best.append(
+            exact_best
+        )
+
+        print()
+        print(
+            f"{model_a} + {model_b}"
+        )
+
+        print(
+            "  [Grid]"
+        )
+
+        print(
+            f"  weights: "
+            f"{model_a}={grid_best['weight_a']:.4f}, "
+            f"{model_b}={grid_best['weight_b']:.4f}"
+        )
+
+        print(
+            f"  Brier={grid_best['brier']:.10f}"
+        )
+
+        print(
+            f"  BSS={grid_best['bss']:.4f}"
+        )
+
+        print(
+            "  [Exact]"
+        )
+
+        print(
+            f"  unconstrained "
+            f"{model_a} weight="
+            f"{exact_best['weight_a_unconstrained']:.8f}"
+        )
+
+        print(
+            f"  weights: "
+            f"{model_a}={exact_best['weight_a']:.8f}, "
+            f"{model_b}={exact_best['weight_b']:.8f}"
+        )
+
+        print(
+            f"  Brier={exact_best['brier']:.10f}"
+        )
+
+        print(
+            f"  BSS={exact_best['bss']:.4f}"
+        )
+
+        print(
+            f"  gain vs grid: "
+            f"Brier "
+            f"{grid_best['brier'] - exact_best['brier']:.12f}, "
+            f"BSS "
+            f"{exact_best['bss'] - grid_best['bss']:.6f}"
+        )
+
+        print(
+            f"  pred corr="
+            f"{prediction_corr.loc[model_a, model_b]:.6f}"
+        )
+
+        print(
+            f"  residual corr="
+            f"{residual_corr.loc[model_a, model_b]:.6f}"
+        )
+
+    pair_grid_all = pd.concat(
+        pair_grid_results,
+        ignore_index=True,
+    ).sort_values(
+        "brier"
+    ).reset_index(
+        drop=True
+    )
+
+    pair_comparison = (
+        build_pair_comparison(
+            pair_grid_best=
+                pair_grid_best,
+            pair_exact_best=
+                pair_exact_best,
+            prediction_corr=
+                prediction_corr,
+            residual_corr=
+                residual_corr,
+        )
+    )
+
+    # -----------------------------------------------------
+    # Triple
+    # -----------------------------------------------------
+
+    print()
+    print("[5] Triple ensemble grid")
+
+    if len(model_names) != 3:
         raise ValueError(
-            f"타깃 컬럼 '{TARGET}'에 "
-            "결측값이 있습니다."
+            "현재 triple grid는 3개 모델 기준입니다."
         )
 
-    print("=" * 70)
-    print("XGBoost 데이터 로드 완료")
-    print("=" * 70)
+    (
+        model_a,
+        model_b,
+        model_c,
+    ) = model_names
 
-    print(
-        "XGBoost version      :",
-        xgb.__version__,
+    (
+        triple_result,
+        triple_best,
+    ) = search_triple_grid(
+        df=df,
+        model_a=model_a,
+        model_b=model_b,
+        model_c=model_c,
+        step=TRIPLE_WEIGHT_STEP,
     )
 
+    print()
     print(
-        "Train shape          :",
-        train.shape,
-    )
-
-    print(
-        "Feature 수           :",
-        len(features),
-    )
-
-    print(
-        "Categorical 수       :",
-        len(cat_cols),
-    )
-
-    print(
-        "Numeric 수           :",
-        len(num_cols),
-    )
-
-    print(
-        "Categorical Feature  :",
-        cat_cols,
+        f"weights: "
+        f"{model_a}="
+        f"{triple_best['weight_a']:.2f}, "
+        f"{model_b}="
+        f"{triple_best['weight_b']:.2f}, "
+        f"{model_c}="
+        f"{triple_best['weight_c']:.2f}"
     )
 
     print(
-        "Numeric ID Feature   :",
-        id_like_cols,
+        f"Brier="
+        f"{triple_best['brier']:.10f}"
     )
 
     print(
-        "시즌 범위            :",
-        train["season"].min(),
-        "~",
-        train["season"].max(),
-    )
-
-    print(
-        f"전체 제구 성공률      : "
-        f"{train[TARGET].mean():.6f}"
-    )
-
-    print(
-        "Device               : cpu"
-    )
-
-    print("=" * 70)
-
-    # -----------------------------------------------------
-    # 2024 Validation 분할
-    # -----------------------------------------------------
-
-    is_val = (
-        train["season"]
-        == 2024
-    )
-
-    if not is_val.any():
-        raise ValueError(
-            "2024 시즌 Validation 데이터가 없습니다."
-        )
-
-    if is_val.all():
-        raise ValueError(
-            "2024년 이전 학습 데이터가 없습니다."
-        )
-
-    train_df = train.loc[
-        ~is_val
-    ].copy()
-
-    val_df = train.loc[
-        is_val
-    ].copy()
-
-    y_train = train_df[
-        TARGET
-    ].copy()
-
-    y_val = val_df[
-        TARGET
-    ].copy()
-
-    val_row_id = val_df[
-        ID
-    ].copy()
-
-    # -----------------------------------------------------
-    # Validation raw features
-    # -----------------------------------------------------
-
-    X_train_raw = prepare_raw_features(
-        df=train_df,
-        features=features,
-        id_like_cols=id_like_cols,
-    )
-
-    X_val_raw = prepare_raw_features(
-        df=val_df,
-        features=features,
-        id_like_cols=id_like_cols,
+        f"BSS="
+        f"{triple_best['bss']:.4f}"
     )
 
     # -----------------------------------------------------
-    # Validation encoder
+    # Global best
     # -----------------------------------------------------
 
-    validation_preprocessor = (
-        create_preprocessor(
-            cat_cols=cat_cols,
-            num_cols=num_cols,
-        )
+    candidates = []
+
+    for exact in (
+        pair_exact_best
+    ):
+        candidates.append({
+            **exact,
+            "ensemble_type":
+                "pair_exact",
+        })
+
+    candidates.append({
+        **triple_best,
+        "ensemble_type":
+            "triple_grid",
+    })
+
+    global_best = min(
+        candidates,
+        key=lambda x:
+            x["brier"],
     )
 
-    X_train = (
-        validation_preprocessor
-        .fit_transform(
-            X_train_raw
-        )
-    )
-
-    X_val = (
-        validation_preprocessor
-        .transform(
-            X_val_raw
-        )
-    )
+    print()
+    print("=" * 76)
+    print("Global Best Ensemble")
+    print("=" * 76)
 
     print(
-        "학습 데이터 shape     :",
-        X_train.shape,
-    )
-
-    print(
-        "검증 데이터 shape     :",
-        X_val.shape,
-    )
-
-    print(
-        f"학습 Target 평균      : "
-        f"{y_train.mean():.6f}"
-    )
-
-    print(
-        f"검증 Target 평균      : "
-        f"{y_val.mean():.6f}"
-    )
-
-    # -----------------------------------------------------
-    # Validation 모델
-    # -----------------------------------------------------
-
-    validation_model = (
-        create_validation_model()
-    )
-
-    print("=" * 70)
-    print("XGBoost Validation 학습 시작")
-
-    print(
-        f"최대 iteration        : "
-        f"{MAX_ITERATIONS}"
-    )
-
-    print(
-        f"Early stopping rounds : "
-        f"{EARLY_STOPPING_ROUNDS}"
-    )
-
-    print(
-        "Early stopping metric : "
-        "Brier Score"
-    )
-
-    print(
-        "Device                : "
-        "CPU"
-    )
-
-    print("=" * 70)
-
-    validation_start = (
-        time.time()
-    )
-
-    validation_model.fit(
-        X_train,
-        y_train,
-
-        eval_set=[
-            (
-                X_val,
-                y_val,
-            ),
-        ],
-
-        verbose=100,
-    )
-
-    validation_elapsed = (
-        time.time()
-        - validation_start
-    )
-
-    print(
-        f"Validation 학습 완료 : "
-        f"{validation_elapsed:.1f}초"
-    )
-
-    # -----------------------------------------------------
-    # Best iteration
-    # -----------------------------------------------------
-
-    best_iteration = getattr(
-        validation_model,
-        "best_iteration",
-        None,
+        f"Type  : "
+        f"{global_best['ensemble_type']}"
     )
 
     if (
-        best_iteration is None
-        or best_iteration < 0
+        global_best[
+            "ensemble_type"
+        ]
+        == "pair_exact"
     ):
-        best_iteration = (
-            MAX_ITERATIONS - 1
+        print(
+            f"Models: "
+            f"{global_best['model_a']} "
+            f"+ {global_best['model_b']}"
         )
 
-    # XGBoost best_iteration은 0-based
-    final_iterations = (
-        best_iteration + 1
-    )
-
-    print(
-        f"Best iteration       : "
-        f"{best_iteration}"
-    )
-
-    print(
-        f"Final iterations     : "
-        f"{final_iterations}"
-    )
-
-    # -----------------------------------------------------
-    # Validation prediction
-    # -----------------------------------------------------
-
-    val_pred = (
-        validation_model
-        .predict_proba(
-            X_val
-        )[:, 1]
-    )
-
-    # -----------------------------------------------------
-    # Validation prediction 검증
-    # -----------------------------------------------------
-
-    if len(val_pred) != len(y_val):
-        raise RuntimeError(
-            "Validation 예측 수와 "
-            "정답 수가 다릅니다."
+        print(
+            f"Weights: "
+            f"{global_best['weight_a']:.8f}, "
+            f"{global_best['weight_b']:.8f}"
         )
 
-    if not np.isfinite(
-        val_pred
-    ).all():
-        raise RuntimeError(
-            "Validation 예측에 "
-            "NaN 또는 무한대가 있습니다."
+    else:
+        print(
+            f"Models: "
+            f"{global_best['model_a']} "
+            f"+ {global_best['model_b']} "
+            f"+ {global_best['model_c']}"
         )
 
-    if not (
-        (val_pred >= 0.0)
-        & (val_pred <= 1.0)
-    ).all():
-        raise RuntimeError(
-            "Validation 예측이 "
-            "0~1 범위를 벗어났습니다."
+        print(
+            f"Weights: "
+            f"{global_best['weight_a']:.4f}, "
+            f"{global_best['weight_b']:.4f}, "
+            f"{global_best['weight_c']:.4f}"
         )
 
+    print(
+        f"Brier : "
+        f"{global_best['brier']:.10f}"
+    )
+
+    print(
+        f"BSS   : "
+        f"{global_best['bss']:.4f}"
+    )
+
     # -----------------------------------------------------
-    # Brier Skill Score
+    # Save
     # -----------------------------------------------------
 
-    y_val_array = (
-        y_val.to_numpy()
+    save_outputs(
+        df=df,
+        single_summary=
+            single_summary,
+        prediction_corr=
+            prediction_corr,
+        residual_corr=
+            residual_corr,
+        pair_grid_all=
+            pair_grid_all,
+        pair_grid_best=
+            pair_grid_best,
+        pair_exact_best=
+            pair_exact_best,
+        pair_comparison=
+            pair_comparison,
+        triple_result=
+            triple_result,
+        triple_best=
+            triple_best,
+        global_best=
+            global_best,
     )
 
-    brier = np.mean(
-        (
-            val_pred
-            - y_val_array
-        ) ** 2
-    )
+    print()
+    print("[저장 완료]")
 
-    validation_rate = float(
-        y_val.mean()
-    )
-
-    baseline_brier = (
-        validation_rate
-        * (
-            1.0
-            - validation_rate
+    for name in [
+        "validation_predictions.csv",
+        "single_model_summary.csv",
+        "prediction_correlation.csv",
+        "residual_correlation.csv",
+        "pair_grid_search.csv",
+        "pair_grid_best.csv",
+        "pair_exact_optimum.csv",
+        "pair_comparison.csv",
+        "triple_grid_search.csv",
+        "best_prediction.csv",
+        "best_prediction.npz",
+        "metadata.json",
+    ]:
+        print(
+            f"- {OUTPUT_DIR / name}"
         )
-    )
 
-    if baseline_brier <= 0:
-        raise RuntimeError(
-            "Baseline Brier Score가 "
-            "0 이하입니다."
-        )
-
-    validation_score = max(
-        0.0,
-        100000.0
-        * (
-            1.0
-            - brier
-            / baseline_brier
-        ),
-    )
-
-    print("=" * 70)
-    print("XGBoost Validation 결과")
-    print("=" * 70)
-
-    print(
-        f"Brier Score          : "
-        f"{brier:.10f}"
-    )
-
-    print(
-        f"Baseline Brier       : "
-        f"{baseline_brier:.10f}"
-    )
-
-    print(
-        f"Validation Score     : "
-        f"{validation_score:.4f}"
-    )
-
-    print(
-        f"Best iteration       : "
-        f"{best_iteration}"
-    )
-
-    print(
-        f"Final iterations     : "
-        f"{final_iterations}"
-    )
-
-    print(
-        f"Target mean          : "
-        f"{y_val_array.mean():.6f}"
-    )
-
-    print(
-        f"Prediction mean      : "
-        f"{val_pred.mean():.6f}"
-    )
-
-    print(
-        f"Prediction std       : "
-        f"{val_pred.std():.6f}"
-    )
-
-    print(
-        f"Prediction min       : "
-        f"{val_pred.min():.6f}"
-    )
-
-    print(
-        f"Prediction max       : "
-        f"{val_pred.max():.6f}"
-    )
-
-    print("=" * 70)
-
-    # -----------------------------------------------------
-    # Validation artifact 저장
-    # -----------------------------------------------------
-
-    save_validation(
-        experiment_name=EXPERIMENT_NAME,
-        estimator=validation_model,
-        model_params=MODEL_PARAMS,
-        row_ids=val_row_id,
-        y_true=y_val,
-        y_pred=val_pred,
-        brier=brier,
-        baseline_brier=baseline_brier,
-        bss=validation_score,
-        output_root=VALIDATION_ROOT,
-        best_iteration=best_iteration,
-    )
-
-    # -----------------------------------------------------
-    # 전체 데이터용 Raw Feature
-    # -----------------------------------------------------
-
-    X_full_raw = prepare_raw_features(
-        df=train,
-        features=features,
-        id_like_cols=id_like_cols,
-    )
-
-    y_full = train[
-        TARGET
-    ].copy()
-
-    # -----------------------------------------------------
-    # Final encoder
-    #
-    # Validation encoder를 재사용하지 않는다.
-    # -----------------------------------------------------
-
-    final_preprocessor = (
-        create_preprocessor(
-            cat_cols=cat_cols,
-            num_cols=num_cols,
-        )
-    )
-
-    X_full = (
-        final_preprocessor
-        .fit_transform(
-            X_full_raw
-        )
-    )
-
-    # -----------------------------------------------------
-    # Final model
-    #
-    # Validation model을 재사용하지 않는다.
-    # -----------------------------------------------------
-
-    final_model = (
-        create_final_model(
-            n_estimators=final_iterations,
-        )
-    )
-
-    print("=" * 70)
-    print("XGBoost 전체 데이터 재학습 시작")
-
-    print(
-        f"사용 iteration       : "
-        f"{final_iterations}"
-    )
-
-    print(
-        "Device               : CPU"
-    )
-
-    print("=" * 70)
-
-    final_start = (
-        time.time()
-    )
-
-    final_model.fit(
-        X_full,
-        y_full,
-        verbose=False,
-    )
-
-    final_elapsed = (
-        time.time()
-        - final_start
-    )
-
-    print(
-        f"전체 데이터 재학습 완료: "
-        f"{final_elapsed:.1f}초"
-    )
-
-    # -----------------------------------------------------
-    # 최종 Model artifact
-    # -----------------------------------------------------
-
-    artifact = {
-        "model": final_model,
-        "preprocessor": final_preprocessor,
-
-        "features": features,
-        "cat_cols": cat_cols,
-        "id_like_cols": id_like_cols,
-        "num_cols": num_cols,
-
-        "best_iteration": int(
-            best_iteration
-        ),
-
-        "final_iterations": int(
-            final_iterations
-        ),
-
-        "validation_brier": float(
-            brier
-        ),
-
-        "validation_score": float(
-            validation_score
-        ),
-
-        "model_name": EXPERIMENT_NAME,
-
-        "xgboost_version": (
-            xgb.__version__
-        ),
-    }
-
-    # -----------------------------------------------------
-    # 모델 저장
-    # -----------------------------------------------------
-
-    MODEL_DIR.mkdir(
-        parents=True,
-        exist_ok=False,
-    )
-
-    joblib.dump(
-        artifact,
-        MODEL_PATH,
-        compress=3,
-    )
-
-    shutil.copy2(
-        "./train.py",
-        MODEL_DIR / "train.py",
-    )
-
-    print("=" * 70)
-    print("XGBoost 모델 저장 완료")
-
-    print(
-        f"저장 경로            : "
-        f"{MODEL_PATH}"
-    )
-
-    print(
-        f"Final iterations     : "
-        f"{final_iterations}"
-    )
-
-    print(
-        f"Validation Brier     : "
-        f"{brier:.10f}"
-    )
-
-    print(
-        f"Validation Score     : "
-        f"{validation_score:.4f}"
-    )
-
-    print(
-        f"train.py snapshot    : "
-        f"{MODEL_DIR / 'train.py'}"
-    )
-
-    print("=" * 70)
+    print("=" * 76)
 
 
 if __name__ == "__main__":

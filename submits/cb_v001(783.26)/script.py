@@ -13,7 +13,7 @@ import pandas as pd
 ID_COL = "row_id"
 TARGET_COL = "control_success"
 
-DATA_DIR = Path("./data")
+DATA_DIR = Path("../../data")
 MODEL_DIR = Path("./model")
 OUTPUT_DIR = Path("./output")
 
