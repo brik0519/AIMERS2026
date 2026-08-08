@@ -1,4 +1,4 @@
-# LG Aimers Phase2 Training / Inference / Packaging Pipeline
+# AIMERS2026
 
 본 프로젝트는 각 머신러닝 실험을 다음 세 단계로 관리합니다.
 
