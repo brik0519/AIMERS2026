@@ -1,0 +1,2 @@
+﻿experiment,train_seasons,validation_season,raw_features,added_features,exp1_total_features,base_brier,exp1_brier,brier_delta,brier_improvement,result,baseline_brier,base_bss,exp1_bss,catboost_weight,xgboost_weight,base_training_seconds,exp1_training_seconds
+EXP-1 Core FE - 2024 Validation,2019-2023,2024,47,11,58,0.24827047811647032,0.24823873998224721,-3.173813422310823e-05,3.173813422310823e-05,IMPROVED,0.24980692675678798,615.0544583631734,627.7595240853917,0.5655685,0.4344315,40.75585675239563,47.21743679046631

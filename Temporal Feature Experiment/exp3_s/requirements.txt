@@ -1,0 +1,5 @@
+scikit-learn==1.8.0
+joblib==1.5.3
+pandas==2.3.3
+catboost
+xgboost

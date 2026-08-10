@@ -1,0 +1,2 @@
+﻿train_season,validation_season,n_train,n_validation,brier,baseline_brier,validation_score,catboost_weight,xgboost_weight
+2019-2022,2023,976060,245525,0.25359526905190144,0.24999999817111176,0,0.5655685,0.4344315

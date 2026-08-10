@@ -1,0 +1,2 @@
+﻿experiment,train_season,validation_season,raw_features,added_features,total_features,base_brier,exp1_brier,brier_delta,brier_improvement,result,baseline_brier,validation_score,catboost_weight,xgboost_weight,training_seconds
+EXP-1 Core FE,2019-2022,2023,47,11,58,0.253595,0.2534905308680993,-0.0001044691319007085,0.0001044691319007085,IMPROVED,0.24999999817111176,0,0.5655685,0.4344315,37.80568718910217
