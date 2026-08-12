@@ -1,0 +1,23 @@
+{
+  "experiment_name": "skill_v001",
+  "ablation": "BASELINE",
+  "features_added": [],
+  "model_params": {
+    "iterations": 800,
+    "learning_rate": 0.07,
+    "depth": 8,
+    "loss_function": "Logloss",
+    "l2_leaf_reg": 10.0,
+    "random_strength": 1.0,
+    "random_seed": 42,
+    "thread_count": -1,
+    "verbose": 100,
+    "allow_writing_files": false
+  },
+  "validation_season": 2024,
+  "brier": 0.24825776270959732,
+  "baseline_brier": 0.24980692675678798,
+  "bss": 620.1445521560433,
+  "best_iteration": 90,
+  "final_iterations": 91
+}

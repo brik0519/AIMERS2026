@@ -1,0 +1,70 @@
+{
+  "experiment_name": "skill_v001",
+  "ablation": "A_LONG_TERM",
+  "description": "Count-aware long-term pitcher skill only",
+  "features_added": [
+    "pitcher_skill_post_mean"
+  ],
+  "prior_mean": 0.5,
+  "prior_strength": 50.0,
+  "model_params": {
+    "iterations": 800,
+    "learning_rate": 0.07,
+    "depth": 8,
+    "loss_function": "Logloss",
+    "l2_leaf_reg": 10.0,
+    "random_strength": 1.0,
+    "random_seed": 42,
+    "thread_count": -1,
+    "verbose": 100,
+    "allow_writing_files": false
+  },
+  "validation_season": 2024,
+  "name": "A_LONG_TERM",
+  "n_features_added": 1,
+  "brier": 0.248250802120459,
+  "baseline_brier": 0.24980692675678798,
+  "bss": 622.930939718902,
+  "delta_brier": -6.96058913832176e-06,
+  "delta_bss": 2.7863875628586356,
+  "best_iteration": 108,
+  "final_iterations": 109,
+  "training_seconds": 202.69937419891357,
+  "subgroup_brier": [
+    {
+      "bucket": "n=0",
+      "n_rows": 81,
+      "baseline_brier": 0.25285650060943404,
+      "candidate_brier": 0.24701776907810086,
+      "delta_brier": -0.0058387315313331856
+    },
+    {
+      "bucket": "1-50",
+      "n_rows": 3979,
+      "baseline_brier": 0.24706728240169498,
+      "candidate_brier": 0.24696916916291586,
+      "delta_brier": -9.811323877911837e-05
+    },
+    {
+      "bucket": "51-200",
+      "n_rows": 10553,
+      "baseline_brier": 0.24791285638817404,
+      "candidate_brier": 0.24804668860358103,
+      "delta_brier": 0.0001338322154069982
+    },
+    {
+      "bucket": "201-1000",
+      "n_rows": 44121,
+      "baseline_brier": 0.24806411687177507,
+      "candidate_brier": 0.24811596750777234,
+      "delta_brier": 5.1850635997274797e-05
+    },
+    {
+      "bucket": "1001+",
+      "n_rows": 194773,
+      "baseline_brier": 0.24834272349880215,
+      "candidate_brier": 0.24831909978545602,
+      "delta_brier": -2.3623713346132558e-05
+    }
+  ]
+}

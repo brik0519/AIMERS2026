@@ -1,0 +1,72 @@
+{
+  "experiment_name": "skill_v001",
+  "ablation": "B_UNCERTAINTY",
+  "description": "Long-term skill + posterior-style uncertainty",
+  "features_added": [
+    "pitcher_skill_post_mean",
+    "pitcher_skill_post_sd",
+    "pitcher_skill_shrink_gap"
+  ],
+  "prior_mean": 0.5,
+  "prior_strength": 50.0,
+  "model_params": {
+    "iterations": 800,
+    "learning_rate": 0.07,
+    "depth": 8,
+    "loss_function": "Logloss",
+    "l2_leaf_reg": 10.0,
+    "random_strength": 1.0,
+    "random_seed": 42,
+    "thread_count": -1,
+    "verbose": 100,
+    "allow_writing_files": false
+  },
+  "validation_season": 2024,
+  "name": "B_UNCERTAINTY",
+  "n_features_added": 3,
+  "brier": 0.2482490018826389,
+  "baseline_brier": 0.24980692675678798,
+  "bss": 623.6515914011753,
+  "delta_brier": -8.760826958414958e-06,
+  "delta_bss": 3.5070392451319776,
+  "best_iteration": 86,
+  "final_iterations": 87,
+  "training_seconds": 178.64910054206848,
+  "subgroup_brier": [
+    {
+      "bucket": "n=0",
+      "n_rows": 81,
+      "baseline_brier": 0.25285650060943404,
+      "candidate_brier": 0.24633536684864327,
+      "delta_brier": -0.006521133760790776
+    },
+    {
+      "bucket": "1-50",
+      "n_rows": 3979,
+      "baseline_brier": 0.24706728240169498,
+      "candidate_brier": 0.24673520779892844,
+      "delta_brier": -0.00033207460276654666
+    },
+    {
+      "bucket": "51-200",
+      "n_rows": 10553,
+      "baseline_brier": 0.24791285638817404,
+      "candidate_brier": 0.24794915079360647,
+      "delta_brier": 3.62944054324299e-05
+    },
+    {
+      "bucket": "201-1000",
+      "n_rows": 44121,
+      "baseline_brier": 0.24806411687177507,
+      "candidate_brier": 0.24804954231422477,
+      "delta_brier": -1.4574557550300904e-05
+    },
+    {
+      "bucket": "1001+",
+      "n_rows": 194773,
+      "baseline_brier": 0.24834272349880215,
+      "candidate_brier": 0.2483421517301917,
+      "delta_brier": -5.717686104578235e-07
+    }
+  ]
+}

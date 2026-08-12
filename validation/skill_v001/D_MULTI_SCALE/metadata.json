@@ -1,0 +1,78 @@
+{
+  "experiment_name": "skill_v001",
+  "ablation": "D_MULTI_SCALE",
+  "description": "Long-term + uncertainty + recent form + multi-scale recent trend",
+  "features_added": [
+    "pitcher_skill_post_mean",
+    "pitcher_skill_post_sd",
+    "pitcher_skill_shrink_gap",
+    "pitcher_form_prev1_minus_long",
+    "pitcher_form_prev3_minus_long",
+    "pitcher_form_prev5_minus_long",
+    "pitcher_form_prev1_minus_prev3",
+    "pitcher_form_prev3_minus_prev5",
+    "pitcher_recent_window_range"
+  ],
+  "prior_mean": 0.5,
+  "prior_strength": 50.0,
+  "model_params": {
+    "iterations": 800,
+    "learning_rate": 0.07,
+    "depth": 8,
+    "loss_function": "Logloss",
+    "l2_leaf_reg": 10.0,
+    "random_strength": 1.0,
+    "random_seed": 42,
+    "thread_count": -1,
+    "verbose": 100,
+    "allow_writing_files": false
+  },
+  "validation_season": 2024,
+  "name": "D_MULTI_SCALE",
+  "n_features_added": 9,
+  "brier": 0.24832472595455737,
+  "baseline_brier": 0.24980692675678798,
+  "bss": 593.338552086542,
+  "delta_brier": 6.696324496005546e-05,
+  "delta_bss": -26.80600006950135,
+  "best_iteration": 135,
+  "final_iterations": 136,
+  "training_seconds": 235.81393241882324,
+  "subgroup_brier": [
+    {
+      "bucket": "n=0",
+      "n_rows": 81,
+      "baseline_brier": 0.25285650060943404,
+      "candidate_brier": 0.2443012628260804,
+      "delta_brier": -0.008555237783353653
+    },
+    {
+      "bucket": "1-50",
+      "n_rows": 3979,
+      "baseline_brier": 0.24706728240169498,
+      "candidate_brier": 0.24742592801210903,
+      "delta_brier": 0.0003586456104140434
+    },
+    {
+      "bucket": "51-200",
+      "n_rows": 10553,
+      "baseline_brier": 0.24791285638817404,
+      "candidate_brier": 0.24817034323655054,
+      "delta_brier": 0.00025748684837650915
+    },
+    {
+      "bucket": "201-1000",
+      "n_rows": 44121,
+      "baseline_brier": 0.24806411687177507,
+      "candidate_brier": 0.24843206594047884,
+      "delta_brier": 0.0003679490687037712
+    },
+    {
+      "bucket": "1001+",
+      "n_rows": 194773,
+      "baseline_brier": 0.24834272349880215,
+      "candidate_brier": 0.24832881004645269,
+      "delta_brier": -1.3913452349467725e-05
+    }
+  ]
+}
