@@ -1,0 +1,9 @@
+﻿experiment_id,date,author,branch,commit,category,features,model,validation,score,lb_score,seed,status,notes
+tfe_001,2026-08-13,sujeong,experiment/feature-temporal-ablation,,ensemble,raw47,CatBoost+XGBoost,2019-2023 -> 2024,615.05,829.4690,42,baseline,Basic ensemble baseline
+tfe_002,2026-08-13,sujeong,experiment/feature-temporal-ablation,,feature,raw47+temporal10+count_state,CatBoost+XGBoost,2019-2023 -> 2024,,819.8670,42,drop,EXP1; no Public LB improvement in current ensemble setting
+tfe_003,2026-08-13,sujeong,experiment/feature-temporal-ablation,,feature,raw47+temporal10,CatBoost+XGBoost,2019-2023 -> 2024,,840.9992,42,test,"EXP3; Public LB improved in ensemble, cause not yet isolated"
+tfe_004,2026-08-13,sujeong,experiment/feature-temporal-ablation,,feature,raw47+count_state,CatBoost+XGBoost,2019-2023 -> 2024,,818.2141,42,drop,EXP4; no Public LB improvement in current ensemble setting
+tfe_005,2026-08-13,sujeong,experiment/feature-temporal-ablation,,model,raw47,CatBoost,2019-2023 -> 2024,595.83,783.26,42,baseline,CatBoost single-model baseline
+tfe_006,2026-08-13,sujeong,experiment/feature-temporal-ablation,,feature,raw47+temporal10,CatBoost,2019-2023 -> 2024,577.49,779.298875032,42,test,EXP3 single-model verification; no improvement over CatBoost Basic
+tfe_007,2026-08-13,sujeong,experiment/feature-temporal-ablation,,model,raw47,XGBoost,2019-2023 -> 2024,,759.36,42,baseline,XGBoost single-model baseline
+tfe_008,2026-08-13,sujeong,experiment/feature-temporal-ablation,,feature,raw47+temporal10,XGBoost,2019-2023 -> 2024,,714.1430189509,42,test,EXP3 single-model verification; no improvement over XGBoost Basic
