@@ -1,0 +1,110 @@
+{
+  "experiment_name": "ensemble_v001",
+  "n_validation": 253507,
+  "pair_weight_step": 0.01,
+  "triple_weight_step": 0.02,
+  "single_models": [
+    {
+      "model": "cb_cls",
+      "brier": 0.24825776270959732,
+      "bss": 620.1445521560433,
+      "prediction_mean": 0.4946103353476008,
+      "prediction_std": 0.03940748536881468,
+      "prediction_min": 0.3477973710247222,
+      "prediction_max": 0.6285775075436637
+    },
+    {
+      "model": "cb_reg",
+      "brier": 0.24830711768485333,
+      "bss": 600.3873036694696,
+      "prediction_mean": 0.49517707812759615,
+      "prediction_std": 0.0379198391262117,
+      "prediction_min": 0.3581321758771379,
+      "prediction_max": 0.6312452701669811
+    },
+    {
+      "model": "xgb_cls",
+      "brier": 0.2483300674421455,
+      "bss": 591.2003056986248,
+      "prediction_mean": 0.4977245940474228,
+      "prediction_std": 0.03901359090335093,
+      "prediction_min": 0.35832196,
+      "prediction_max": 0.63823205
+    }
+  ],
+  "pair_comparison": [
+    {
+      "model_a": "cb_cls",
+      "model_b": "xgb_cls",
+      "prediction_correlation": 0.823889590570703,
+      "residual_correlation": 0.998908762394209,
+      "grid_weight_a": 0.5700000000000001,
+      "grid_weight_b": 0.42999999999999994,
+      "grid_brier": 0.24815371351211676,
+      "grid_bss": 661.796398576564,
+      "exact_weight_a_unconstrained": 0.5655685195400963,
+      "exact_weight_a": 0.5655685195400963,
+      "exact_weight_b": 0.43443148045990365,
+      "exact_brier": 0.24815370268434664,
+      "exact_bss": 661.8007330320808,
+      "exact_brier_gain_vs_grid": 1.0827770124954839e-08,
+      "exact_bss_gain_vs_grid": 0.0043344555167550425
+    },
+    {
+      "model_a": "cb_reg",
+      "model_b": "xgb_cls",
+      "prediction_correlation": 0.8249693347304637,
+      "residual_correlation": 0.9989543683632551,
+      "grid_weight_a": 0.52,
+      "grid_weight_b": 0.48,
+      "grid_brier": 0.24818695303261634,
+      "grid_bss": 648.4903141812604,
+      "exact_weight_a_unconstrained": 0.5218334960591862,
+      "exact_weight_a": 0.5218334960591862,
+      "exact_weight_b": 0.47816650394081384,
+      "exact_brier": 0.24818695126582696,
+      "exact_bss": 648.4910214432205,
+      "exact_brier_gain_vs_grid": 1.7667893814632407e-09,
+      "exact_bss_gain_vs_grid": 0.0007072619600876351
+    },
+    {
+      "model_a": "cb_cls",
+      "model_b": "cb_reg",
+      "prediction_correlation": 0.9628505017042929,
+      "residual_correlation": 0.9997718854155206,
+      "grid_weight_a": 0.72,
+      "grid_weight_b": 0.28,
+      "grid_brier": 0.24824868816991688,
+      "grid_bss": 623.7771734761366,
+      "exact_weight_a_unconstrained": 0.7173056748126877,
+      "exact_weight_a": 0.7173056748126877,
+      "exact_weight_b": 0.2826943251873123,
+      "exact_brier": 0.2482486873455323,
+      "exact_bss": 623.7775034848347,
+      "exact_brier_gain_vs_grid": 8.243845883715295e-10,
+      "exact_bss_gain_vs_grid": 0.00033000869814259204
+    }
+  ],
+  "triple_best": {
+    "model_a": "cb_cls",
+    "model_b": "cb_reg",
+    "model_c": "xgb_cls",
+    "weight_a": 0.54,
+    "weight_b": 0.02,
+    "weight_c": 0.44,
+    "brier": 0.24815370750151028,
+    "bss": 661.7988046773715,
+    "baseline_brier": 0.24980692675678798
+  },
+  "global_best": {
+    "model_a": "cb_cls",
+    "model_b": "xgb_cls",
+    "weight_a_unconstrained": 0.5655685195400963,
+    "weight_a": 0.5655685195400963,
+    "weight_b": 0.43443148045990365,
+    "brier": 0.24815370268434664,
+    "bss": 661.8007330320808,
+    "baseline_brier": 0.24980692675678798,
+    "ensemble_type": "pair_exact"
+  }
+}

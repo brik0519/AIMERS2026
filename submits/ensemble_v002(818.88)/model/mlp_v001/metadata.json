@@ -1,0 +1,38 @@
+{
+  "experiment_name": "mlp_v001",
+  "model_type": "TabularMLP",
+  "validation": "2019-2023 Train / 2024 Validation",
+  "best_epoch": 6,
+  "validation_metrics": {
+    "brier": 0.24885478578899486,
+    "baseline_brier": 0.24980692675678798,
+    "bss": 381.1507471608744,
+    "positive_rate": 0.4861049201797189,
+    "logloss": 0.6908676425544185,
+    "prediction_mean": 0.48481489254720445,
+    "prediction_std": 0.04478781532497341,
+    "prediction_min": 0.33744311332702637,
+    "prediction_max": 0.7525742053985596
+  },
+  "training_config": {
+    "seed": 42,
+    "batch_size": 4096,
+    "max_epochs": 50,
+    "early_stopping_patience": 5,
+    "learning_rate": 0.001,
+    "weight_decay": 1e-05,
+    "hidden_dims": [
+      256,
+      256,
+      128
+    ],
+    "dropout": 0.15,
+    "loss": "BCEWithLogitsLoss",
+    "scheduler": "CosineAnnealingLR",
+    "primary_metric": "Brier Score"
+  },
+  "feature_engineering": false,
+  "skill_v001_features": false,
+  "same_raw_feature_set_as_cb_v001": true,
+  "full_training_seconds": 115.09170150756836
+}

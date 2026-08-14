@@ -1,0 +1,31 @@
+{
+  "experiment_name": "mlp_v002",
+  "model_type": "TabularMLP",
+  "variant": "processed",
+  "validation": "2019-2023 Train / 2024 Validation",
+  "best_epoch": 5,
+  "training_config": {
+    "seed": 42,
+    "batch_size": 4096,
+    "learning_rate": 0.001,
+    "weight_decay": 1e-05,
+    "hidden_dims": [
+      256,
+      256,
+      128
+    ],
+    "dropout": 0.15,
+    "loss": "BCEWithLogitsLoss",
+    "scheduler": "CosineAnnealingLR",
+    "primary_metric": "Brier Score"
+  },
+  "preprocessing": {
+    "source": "mlp_preprocess.py",
+    "variant": "processed",
+    "count_state": true,
+    "raw_count_features_retained": false,
+    "unknown_index": 0,
+    "missing_index": 1
+  },
+  "full_training_seconds": 230.79393768310547
+}
