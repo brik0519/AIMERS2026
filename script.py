@@ -19,7 +19,7 @@ import torch.nn as nn
 # 실험 설정
 # =========================================================
 
-EXPERIMENT_NAME = "ensemble_v004"
+EXPERIMENT_NAME = "ensemble_v005"
 
 DATA_DIR = Path("./data")
 
@@ -101,9 +101,9 @@ def get_device() -> torch.device:
 # 아래 고정 weight만 사용한다.
 #
 ENSEMBLE_WEIGHTS = {
-    "cb_v002": 0.8816030312134018,
-    "xgb_v002": 0.09966192032785524,
-    "mlp_v003": 0.01873504845874298,
+    "cb_v002": 0.857980818205651,
+    "xgb_v002": 0.09536337329674678,
+    "mlp_v003": 0.046655808497602244,
 }
 
 
@@ -117,8 +117,8 @@ def load_ensemble_weights() -> dict[str, float]:
 
         if raw_weight is None:
             raise ValueError(
-                "ensemble_v004 weight가 아직 확정되지 않았습니다. "
-                "train_ensemble_v004.py 실행 후 "
+                "ensemble_v005 weight가 아직 확정되지 않았습니다. "
+                "train_ensemble_v005.py 실행 후 "
                 "metadata.json의 global_best.weights를 "
                 "ENSEMBLE_WEIGHTS에 입력하세요."
             )
@@ -1209,7 +1209,7 @@ def main() -> None:
     device = get_device()
 
     print("=" * 80)
-    print("LG Aimers Ensemble v004 Inference")
+    print("LG Aimers Ensemble v005 Inference")
     print("=" * 80)
     print(f"Rows       : {len(test):,}")
     print(f"Device     : {device}")

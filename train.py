@@ -10,7 +10,7 @@ import pandas as pd
 # =========================================================
 # 경로 / 설정
 # =========================================================
-EXPERIMENT_NAME = "ensemble_v004"
+EXPERIMENT_NAME = "ensemble_v005"
 
 VALIDATION_ROOT = Path("./validation")
 VALIDATION_DIR = VALIDATION_ROOT / EXPERIMENT_NAME
@@ -38,6 +38,17 @@ TRIPLE_MODELS = (*BASELINE_PAIR, INCREMENTAL_MODEL)
 PAIR_WEIGHT_STEP = 0.01
 TRIPLE_WEIGHT_STEP = 0.02
 EPS = 1e-12
+
+# 2023은 weight optimization에서만 제외한다.
+# 최종 고정 weight 평가는 2021~2024 전체 OOF에서 다시 수행한다.
+EXCLUDED_OPTIMIZATION_SEASONS = [2023]
+
+# ensemble_v004와 weight 변화 비교용.
+V004_WEIGHTS = {
+    "cb_v002": 0.8816030312134018,
+    "xgb_v002": 0.09966192032785524,
+    "mlp_v003": 0.01873504845874298,
+}
 
 
 # =========================================================
@@ -1233,8 +1244,10 @@ def json_safe(obj):
 
 
 def save_outputs(
-    df,
-    single_summary,
+    full_df,
+    search_df,
+    full_single_summary,
+    optimization_single_summary,
     fold_single_summary,
     prediction_corr,
     residual_corr,
@@ -1250,12 +1263,14 @@ def save_outputs(
     incremental_value,
     fold_exact_optimum,
     fold_ensemble_performance,
-    global_best,
+    weight_comparison,
+    optimization_best,
+    full_oof_metrics,
+    full_prediction,
 ):
     if OUTPUT_DIR.exists():
         raise FileExistsError(
-            f"Ensemble experiment already exists: "
-            f"{OUTPUT_DIR}"
+            f"Ensemble experiment already exists: {OUTPUT_DIR}"
         )
 
     OUTPUT_DIR.mkdir(
@@ -1263,56 +1278,71 @@ def save_outputs(
         exist_ok=False,
     )
 
-    df.to_csv(
-        OUTPUT_DIR
-        / "validation_predictions.csv",
+    # -----------------------------------------------------
+    # OOF source / optimization subset
+    # -----------------------------------------------------
+    full_df.to_csv(
+        OUTPUT_DIR / "validation_predictions.csv",
         index=False,
         encoding="utf-8-sig",
     )
 
-    single_summary.to_csv(
-        OUTPUT_DIR
-        / "single_model_summary.csv",
+    search_df.to_csv(
+        OUTPUT_DIR / "optimization_predictions.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    full_single_summary.to_csv(
+        OUTPUT_DIR / "single_model_summary.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    optimization_single_summary.to_csv(
+        OUTPUT_DIR / "optimization_single_model_summary.csv",
         index=False,
         encoding="utf-8-sig",
     )
 
     fold_single_summary.to_csv(
-        OUTPUT_DIR
-        / "fold_single_model_summary.csv",
+        OUTPUT_DIR / "fold_single_model_summary.csv",
         index=False,
         encoding="utf-8-sig",
     )
 
+    # -----------------------------------------------------
+    # Correlation
+    # optimization correlation은 2023 제외 OOF 기준.
+    # Fold correlation은 전체 OOF 기준.
+    # -----------------------------------------------------
     prediction_corr.to_csv(
-        OUTPUT_DIR
-        / "prediction_correlation.csv",
+        OUTPUT_DIR / "prediction_correlation.csv",
         encoding="utf-8-sig",
     )
 
     residual_corr.to_csv(
-        OUTPUT_DIR
-        / "residual_correlation.csv",
+        OUTPUT_DIR / "residual_correlation.csv",
         encoding="utf-8-sig",
     )
 
     fold_prediction_corr.to_csv(
-        OUTPUT_DIR
-        / "fold_prediction_correlation.csv",
+        OUTPUT_DIR / "fold_prediction_correlation.csv",
         index=False,
         encoding="utf-8-sig",
     )
 
     fold_residual_corr.to_csv(
-        OUTPUT_DIR
-        / "fold_residual_correlation.csv",
+        OUTPUT_DIR / "fold_residual_correlation.csv",
         index=False,
         encoding="utf-8-sig",
     )
 
+    # -----------------------------------------------------
+    # Pair / Triple optimization
+    # -----------------------------------------------------
     pair_grid_all.to_csv(
-        OUTPUT_DIR
-        / "pair_grid_search.csv",
+        OUTPUT_DIR / "pair_grid_search.csv",
         index=False,
         encoding="utf-8-sig",
     )
@@ -1322,8 +1352,7 @@ def save_outputs(
     ).sort_values(
         "brier"
     ).to_csv(
-        OUTPUT_DIR
-        / "pair_grid_best.csv",
+        OUTPUT_DIR / "pair_grid_best.csv",
         index=False,
         encoding="utf-8-sig",
     )
@@ -1333,9 +1362,7 @@ def save_outputs(
         for item in pair_exact_best
     ]).sort_values(
         "brier"
-    ).reset_index(
-        drop=True
-    )
+    ).reset_index(drop=True)
 
     pair_exact_df.insert(
         0,
@@ -1347,22 +1374,19 @@ def save_outputs(
     )
 
     pair_exact_df.to_csv(
-        OUTPUT_DIR
-        / "pair_exact_optimum.csv",
+        OUTPUT_DIR / "pair_exact_optimum.csv",
         index=False,
         encoding="utf-8-sig",
     )
 
     pair_comparison.to_csv(
-        OUTPUT_DIR
-        / "pair_comparison.csv",
+        OUTPUT_DIR / "pair_comparison.csv",
         index=False,
         encoding="utf-8-sig",
     )
 
     triple_grid_result.to_csv(
-        OUTPUT_DIR
-        / "triple_grid_search.csv",
+        OUTPUT_DIR / "triple_grid_search.csv",
         index=False,
         encoding="utf-8-sig",
     )
@@ -1372,8 +1396,7 @@ def save_outputs(
             triple_grid_best
         )
     ]).to_csv(
-        OUTPUT_DIR
-        / "triple_grid_best.csv",
+        OUTPUT_DIR / "triple_grid_best.csv",
         index=False,
         encoding="utf-8-sig",
     )
@@ -1383,8 +1406,7 @@ def save_outputs(
             triple_exact
         )
     ]).to_csv(
-        OUTPUT_DIR
-        / "triple_exact_optimum.csv",
+        OUTPUT_DIR / "triple_exact_optimum.csv",
         index=False,
         encoding="utf-8-sig",
     )
@@ -1392,59 +1414,77 @@ def save_outputs(
     pd.DataFrame([
         incremental_value
     ]).to_csv(
-        OUTPUT_DIR
-        / "incremental_value.csv",
+        OUTPUT_DIR / "incremental_value.csv",
         index=False,
         encoding="utf-8-sig",
     )
 
+    # -----------------------------------------------------
+    # Temporal diagnostics
+    # -----------------------------------------------------
     fold_exact_optimum.to_csv(
-        OUTPUT_DIR
-        / "fold_exact_optimum.csv",
+        OUTPUT_DIR / "fold_exact_optimum.csv",
         index=False,
         encoding="utf-8-sig",
     )
 
     fold_ensemble_performance.to_csv(
-        OUTPUT_DIR
-        / "fold_ensemble_performance.csv",
+        OUTPUT_DIR / "fold_ensemble_performance.csv",
         index=False,
         encoding="utf-8-sig",
     )
 
+    weight_comparison.to_csv(
+        OUTPUT_DIR / "weight_comparison.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    # -----------------------------------------------------
+    # 새 weight를 전체 2021~2024 OOF에 고정 적용한 결과
+    # -----------------------------------------------------
     pd.DataFrame({
-        "row_id":
-            df["row_id"],
-        "target":
-            df["target"],
+        "row_id": full_df["row_id"],
+        "target": full_df["target"],
         "validation_season":
-            df["validation_season"],
-        "prediction":
-            global_best[
-                "prediction"
-            ],
+            full_df["validation_season"],
+        "prediction": full_prediction,
     }).to_csv(
-        OUTPUT_DIR
-        / "best_prediction.csv",
+        OUTPUT_DIR / "best_prediction.csv",
         index=False,
         encoding="utf-8-sig",
     )
 
     np.savez_compressed(
-        OUTPUT_DIR
-        / "best_prediction.npz",
-        row_id=df[
+        OUTPUT_DIR / "best_prediction.npz",
+        row_id=full_df[
             "row_id"
         ].to_numpy(),
-        target=df[
+        target=full_df[
             "target"
         ].to_numpy(),
-        validation_season=df[
+        validation_season=full_df[
             "validation_season"
         ].to_numpy(),
-        prediction=global_best[
-            "prediction"
-        ],
+        prediction=full_prediction,
+    )
+
+    optimization_seasons = sorted(
+        [
+            int(value)
+            for value in search_df[
+                "validation_season"
+            ].unique()
+        ]
+    )
+
+    evaluation_seasons = sorted(
+        [
+            int(value)
+            for value in full_df[
+                "validation_season"
+            ].unique()
+        ]
     )
 
     metadata = {
@@ -1452,20 +1492,30 @@ def save_outputs(
             EXPERIMENT_NAME,
         "validation_method":
             "expanding_oof",
-        "validation_seasons":
-            sorted(
-                [
-                    int(value)
-                    for value in df[
-                        "validation_season"
-                    ].unique()
-                ]
-            ),
-        "n_validation":
-            int(len(df)),
-        "target_mean":
+        "optimization_policy":
+            "exclude_validation_season",
+        "optimization_seasons":
+            optimization_seasons,
+        "excluded_optimization_seasons": [
+            int(value)
+            for value
+            in EXCLUDED_OPTIMIZATION_SEASONS
+        ],
+        "evaluation_seasons":
+            evaluation_seasons,
+        "n_optimization":
+            int(len(search_df)),
+        "n_evaluation":
+            int(len(full_df)),
+        "optimization_target_mean":
             float(
-                df[
+                search_df[
+                    "target"
+                ].mean()
+            ),
+        "evaluation_target_mean":
+            float(
+                full_df[
                     "target"
                 ].mean()
             ),
@@ -1487,8 +1537,12 @@ def save_outputs(
             for model_name, config
             in MODEL_CONFIG.items()
         },
-        "single_models":
-            single_summary.to_dict(
+        "single_models_full_oof":
+            full_single_summary.to_dict(
+                orient="records"
+            ),
+        "single_models_optimization":
+            optimization_single_summary.to_dict(
                 orient="records"
             ),
         "pair_comparison":
@@ -1506,21 +1560,69 @@ def save_outputs(
         "incremental_value":
             incremental_value,
         "global_best": {
-            key: value
-            for key, value
-            in global_best.items()
-            if key != "prediction"
+            "ensemble_type":
+                optimization_best[
+                    "ensemble_type"
+                ],
+            "models":
+                optimization_best[
+                    "models"
+                ],
+            "weights":
+                optimization_best[
+                    "weights"
+                ],
+            "optimization_brier":
+                float(
+                    optimization_best[
+                        "brier"
+                    ]
+                ),
+            "optimization_raw_skill":
+                float(
+                    optimization_best[
+                        "raw_skill"
+                    ]
+                ),
+            "optimization_competition_bss":
+                float(
+                    optimization_best[
+                        "competition_bss"
+                    ]
+                ),
+            "full_oof_brier":
+                float(
+                    full_oof_metrics[
+                        "brier"
+                    ]
+                ),
+            "full_oof_raw_skill":
+                float(
+                    full_oof_metrics[
+                        "raw_skill"
+                    ]
+                ),
+            "full_oof_competition_bss":
+                float(
+                    full_oof_metrics[
+                        "competition_bss"
+                    ]
+                ),
         },
+        "v004_reference_weights":
+            V004_WEIGHTS,
+        "weight_comparison":
+            weight_comparison.to_dict(
+                orient="records"
+            ),
         "fold_ensemble_performance":
-            fold_ensemble_performance
-            .to_dict(
+            fold_ensemble_performance.to_dict(
                 orient="records"
             ),
     }
 
     with open(
-        OUTPUT_DIR
-        / "metadata.json",
+        OUTPUT_DIR / "metadata.json",
         "w",
         encoding="utf-8",
     ) as file:
@@ -1540,15 +1642,17 @@ def save_outputs(
 def main():
 
     print("=" * 80)
-    print("LG Aimers Phase2 Ensemble v004 Search")
+    print("LG Aimers Phase2 Ensemble v005 Search")
     print("=" * 80)
 
-    # 1. Load / alignment audit
+    # -----------------------------------------------------
+    # 1. 전체 OOF 로드
+    # -----------------------------------------------------
     print(
         "\n[1] Expanding OOF 로드 / alignment audit"
     )
 
-    df = merge_predictions(
+    full_df = merge_predictions(
         MODEL_CONFIG
     )
 
@@ -1556,19 +1660,25 @@ def main():
         MODEL_CONFIG.keys()
     )
 
-    print(
-        f"OOF rows        : "
-        f"{len(df):,}"
+    full_seasons = sorted(
+        full_df[
+            "validation_season"
+        ].unique().tolist()
     )
 
     print(
-        f"Positive rate   : "
-        f"{df['target'].mean():.6f}"
+        f"Full OOF rows        : "
+        f"{len(full_df):,}"
     )
 
     print(
-        f"Seasons         : "
-        f"{sorted(df['validation_season'].unique().tolist())}"
+        f"Full positive rate   : "
+        f"{full_df['target'].mean():.6f}"
+    )
+
+    print(
+        f"Evaluation seasons   : "
+        f"{full_seasons}"
     )
 
     print(
@@ -1576,21 +1686,85 @@ def main():
         "validation_season alignment"
     )
 
-    # 2. Single model
-    print(
-        "\n[2] Single model 전체 OOF 성능"
+    # -----------------------------------------------------
+    # 2. 2023은 optimization에서만 제외
+    # -----------------------------------------------------
+    search_df = full_df[
+        ~full_df[
+            "validation_season"
+        ].isin(
+            EXCLUDED_OPTIMIZATION_SEASONS
+        )
+    ].copy()
+
+    optimization_seasons = sorted(
+        search_df[
+            "validation_season"
+        ].unique().tolist()
     )
 
-    single_summary = (
+    if len(search_df) == 0:
+        raise ValueError(
+            "Optimization OOF가 비어 있습니다."
+        )
+
+    if (
+        set(
+            EXCLUDED_OPTIMIZATION_SEASONS
+        )
+        & set(
+            optimization_seasons
+        )
+    ):
+        raise RuntimeError(
+            "제외 시즌이 optimization data에 "
+            "남아 있습니다."
+        )
+
+    print()
+    print(
+        "[2] Optimization subset"
+    )
+
+    print(
+        f"Excluded seasons     : "
+        f"{EXCLUDED_OPTIMIZATION_SEASONS}"
+    )
+
+    print(
+        f"Optimization seasons : "
+        f"{optimization_seasons}"
+    )
+
+    print(
+        f"Optimization rows    : "
+        f"{len(search_df):,}"
+    )
+
+    # -----------------------------------------------------
+    # 3. Single model
+    # -----------------------------------------------------
+    print(
+        "\n[3] Single model 비교"
+    )
+
+    full_single_summary = (
         evaluate_single_models(
-            df,
+            full_df,
+            model_names,
+        )
+    )
+
+    optimization_single_summary = (
+        evaluate_single_models(
+            search_df,
             model_names,
         )
     )
 
     fold_single_summary = (
         evaluate_single_models_by_fold(
-            df,
+            full_df,
             model_names,
         )
     )
@@ -1600,14 +1774,16 @@ def main():
         "brier",
         "raw_skill",
         "competition_bss",
-        "logloss",
         "bias",
-        "prediction_mean",
         "prediction_std",
     ]
 
     print(
-        single_summary[
+        "\n[전체 2021~2024 OOF]"
+    )
+
+    print(
+        full_single_summary[
             display_cols
         ].to_string(
             index=False,
@@ -1616,16 +1792,35 @@ def main():
         )
     )
 
-    # 3. Correlation
     print(
-        "\n[3] Prediction / Residual correlation"
+        "\n[2023 제외 Optimization OOF]"
+    )
+
+    print(
+        optimization_single_summary[
+            display_cols
+        ].to_string(
+            index=False,
+            float_format=lambda value:
+                f"{value:.8f}",
+        )
+    )
+
+    # -----------------------------------------------------
+    # 4. Correlation
+    #
+    # Weight 탐색용 correlation은 search_df.
+    # Fold별 diagnostic은 full_df.
+    # -----------------------------------------------------
+    print(
+        "\n[4] Optimization Prediction / Residual correlation"
     )
 
     (
         prediction_corr,
         residual_corr,
     ) = calculate_correlations(
-        df,
+        search_df,
         model_names,
     )
 
@@ -1633,7 +1828,7 @@ def main():
         fold_prediction_corr,
         fold_residual_corr,
     ) = calculate_fold_correlations(
-        df,
+        full_df,
         model_names,
     )
 
@@ -1659,9 +1854,12 @@ def main():
         )
     )
 
-    # 4. Pair
+    # -----------------------------------------------------
+    # 5. Pair Search - search_df only
+    # -----------------------------------------------------
     print(
-        "\n[4] Pair grid + exact optimum"
+        "\n[5] Pair grid + exact optimum "
+        "(2023 제외)"
     )
 
     pair_grid_results = []
@@ -1676,7 +1874,7 @@ def main():
             grid_result,
             grid_best,
         ) = search_pair_grid(
-            df,
+            search_df,
             model_a,
             model_b,
             PAIR_WEIGHT_STEP,
@@ -1684,7 +1882,7 @@ def main():
 
         exact_best = (
             search_pair_exact(
-                df,
+                search_df,
                 model_a,
                 model_b,
             )
@@ -1742,13 +1940,16 @@ def main():
             pair_exact_best,
             prediction_corr,
             residual_corr,
-            single_summary,
+            optimization_single_summary,
         )
     )
 
-    # 5. Triple grid
+    # -----------------------------------------------------
+    # 6. Triple Search - search_df only
+    # -----------------------------------------------------
     print(
-        "\n[5] Triple grid"
+        "\n[6] Triple grid "
+        "(2023 제외)"
     )
 
     (
@@ -1761,7 +1962,7 @@ def main():
         triple_grid_result,
         triple_grid_best,
     ) = search_triple_grid(
-        df,
+        search_df,
         model_a,
         model_b,
         model_c,
@@ -1783,14 +1984,14 @@ def main():
         f"{triple_grid_best['brier']:.10f}"
     )
 
-    # 6. Triple exact
     print(
-        "\n[6] Triple exact convex optimum"
+        "\n[7] Triple exact convex optimum "
+        "(2023 제외)"
     )
 
     triple_exact = (
         search_triple_exact(
-            df,
+            search_df,
             model_a,
             model_b,
             model_c,
@@ -1816,9 +2017,12 @@ def main():
         f"{triple_exact['competition_bss']:.6f}"
     )
 
-    # 7. Incremental value
+    # -----------------------------------------------------
+    # 8. MLP incremental value - search_df 기준
+    # -----------------------------------------------------
     print(
-        f"\n[7] {INCREMENTAL_MODEL} incremental value"
+        f"\n[8] {INCREMENTAL_MODEL} "
+        "incremental value"
     )
 
     baseline_pair = (
@@ -1844,11 +2048,14 @@ def main():
             f"{key}: {value}"
         )
 
-    # 8. Global best
+    # -----------------------------------------------------
+    # 9. Optimization global best
+    # -----------------------------------------------------
     global_candidates = []
 
     for _, row in (
-        single_summary.iterrows()
+        optimization_single_summary
+        .iterrows()
     ):
         model = row["model"]
 
@@ -1877,7 +2084,7 @@ def main():
                 model: 1.0
             },
             "prediction":
-                df[
+                search_df[
                     model
                 ].to_numpy(
                     dtype=np.float64
@@ -1960,66 +2167,102 @@ def main():
             ],
     })
 
-    global_best = min(
+    optimization_best = min(
         global_candidates,
         key=lambda item:
             item["brier"],
     )
 
     print(
-        "\n[8] Global best OOF"
+        "\n[9] Optimization global best"
     )
 
     print(
         f"Type    : "
-        f"{global_best['ensemble_type']}"
+        f"{optimization_best['ensemble_type']}"
     )
 
     print(
         f"Models  : "
-        f"{global_best['models']}"
+        f"{optimization_best['models']}"
     )
 
     print(
         f"Weights : "
-        f"{global_best['weights']}"
+        f"{optimization_best['weights']}"
     )
 
     print(
         f"Brier   : "
-        f"{global_best['brier']:.10f}"
+        f"{optimization_best['brier']:.10f}"
+    )
+
+    # -----------------------------------------------------
+    # 10. 새 고정 weight를 전체 OOF에 재적용
+    # -----------------------------------------------------
+    full_prediction = (
+        apply_fixed_weights(
+            full_df,
+            optimization_best[
+                "weights"
+            ],
+        )
+    )
+
+    full_oof_metrics = (
+        calculate_metrics(
+            full_df[
+                "target"
+            ].to_numpy(
+                dtype=np.float64
+            ),
+            full_prediction,
+        )
     )
 
     print(
-        f"RawSkill: "
-        f"{global_best['raw_skill']:.6f}"
+        "\n[10] Full 2021~2024 OOF 재평가"
     )
 
     print(
-        f"BSS     : "
-        f"{global_best['competition_bss']:.6f}"
+        f"Optimization Brier : "
+        f"{optimization_best['brier']:.10f}"
     )
 
-    # 9. Fold analysis
     print(
-        "\n[9] Fold temporal robustness"
+        f"Full OOF Brier     : "
+        f"{full_oof_metrics['brier']:.10f}"
     )
 
+    print(
+        f"Full OOF BSS       : "
+        f"{full_oof_metrics['competition_bss']:.6f}"
+    )
+
+    # -----------------------------------------------------
+    # 11. Fold robustness
+    # -----------------------------------------------------
     fold_exact_optimum = (
         search_fold_exact_optimum(
-            df,
+            full_df,
             model_names,
         )
     )
 
     fold_ensemble_performance = (
         evaluate_fixed_weights_by_fold(
-            df,
-            global_best[
+            full_df,
+            optimization_best[
                 "weights"
             ],
-            label="global_best_fixed_weights",
+            label=(
+                "exclude_2023_fixed_weights"
+            ),
         )
+    )
+
+    print(
+        "\n[11] Fold temporal robustness"
     )
 
     print(
@@ -2038,11 +2281,79 @@ def main():
         )
     )
 
-    # 10. Save
+    # -----------------------------------------------------
+    # 12. v004 weight 비교
+    # -----------------------------------------------------
+    new_weights = {
+        model_name:
+            float(
+                optimization_best[
+                    "weights"
+                ].get(
+                    model_name,
+                    0.0,
+                )
+            )
+        for model_name in model_names
+    }
+
+    weight_comparison = pd.DataFrame([
+        {
+            "model": model_name,
+            "v004_weight":
+                float(
+                    V004_WEIGHTS.get(
+                        model_name,
+                        0.0,
+                    )
+                ),
+            "v005_weight":
+                float(
+                    new_weights[
+                        model_name
+                    ]
+                ),
+            "delta":
+                float(
+                    new_weights[
+                        model_name
+                    ]
+                    - V004_WEIGHTS.get(
+                        model_name,
+                        0.0,
+                    )
+                ),
+        }
+        for model_name in model_names
+    ])
+
+    print(
+        "\n[12] v004 → v005 weight 변화"
+    )
+
+    print(
+        weight_comparison.to_string(
+            index=False,
+            float_format=lambda value:
+                f"{value:.8f}",
+        )
+    )
+
+    # -----------------------------------------------------
+    # 13. Save
+    # -----------------------------------------------------
     save_outputs(
-        df=df,
-        single_summary=(
-            single_summary
+        full_df=(
+            full_df
+        ),
+        search_df=(
+            search_df
+        ),
+        full_single_summary=(
+            full_single_summary
+        ),
+        optimization_single_summary=(
+            optimization_single_summary
         ),
         fold_single_summary=(
             fold_single_summary
@@ -2089,8 +2400,17 @@ def main():
         fold_ensemble_performance=(
             fold_ensemble_performance
         ),
-        global_best=(
-            global_best
+        weight_comparison=(
+            weight_comparison
+        ),
+        optimization_best=(
+            optimization_best
+        ),
+        full_oof_metrics=(
+            full_oof_metrics
+        ),
+        full_prediction=(
+            full_prediction
         ),
     )
 
