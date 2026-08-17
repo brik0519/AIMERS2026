@@ -1,0 +1,39 @@
+{
+  "experiment_name": "cb_v002",
+  "fold": 2,
+  "train_seasons": [
+    2019,
+    2020,
+    2021
+  ],
+  "validation_season": 2022,
+  "n_train": 728588,
+  "n_validation": 247472,
+  "model_type": "CatBoostClassifier",
+  "model_params": {
+    "iterations": 800,
+    "learning_rate": 0.07,
+    "depth": 8,
+    "loss_function": "Logloss",
+    "l2_leaf_reg": 10.0,
+    "random_strength": 1.0,
+    "random_seed": 42,
+    "max_ctr_complexity": 1,
+    "thread_count": -1,
+    "verbose": 100,
+    "allow_writing_files": false
+  },
+  "positive_rate": 0.5289204435249241,
+  "brier": 0.24346601560064687,
+  "baseline_brier": 0.24916360794632167,
+  "bss_raw": 2286.6872063043165,
+  "bss": 2286.6872063043165,
+  "prediction_mean": 0.532111844094854,
+  "prediction_std": 0.06887812548066108,
+  "prediction_min": 0.3783005560769274,
+  "prediction_max": 0.7940303848704294,
+  "elapsed_seconds": 50.33692193031311,
+  "model_path": "model/cb_v002/fold_2022/cb_v002_fold_2022.pkl",
+  "best_iteration": 75,
+  "final_iterations": 76
+}
