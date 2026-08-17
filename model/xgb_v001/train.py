@@ -1,1114 +1,1152 @@
-# train.py
+"""Train a PyTorch tabular MLP from NumPy artifacts created by mlp_preprocess.py.
 
+Workflow
+--------
+1) Validation preprocessing
+   python mlp_preprocess.py --mode validation --variant processed
+
+2) Validation training
+   python train.py --mode validation
+
+3) After selecting the variant, final preprocessing
+   python mlp_preprocess.py --mode final --variant processed
+
+4) Final training using the best validation epoch
+   python train.py --mode final --best-epoch <BEST_EPOCH>
+
+The script intentionally does not read train.csv/test.csv. Feature engineering and
+preprocessing are owned by mlp_preprocess.py; this file only consumes the saved
+NumPy arrays and preprocessor.json.
+"""
+
+from __future__ import annotations
+
+import argparse
 import json
+import math
+import random
 import shutil
 import time
 from pathlib import Path
+from typing import Any
 
 import joblib
 import numpy as np
 import pandas as pd
-import xgboost as xgb
-from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import OrdinalEncoder
-from xgboost import XGBClassifier
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader
+
+from mlp_dataset import TabularNpyDataset
 
 
 # =========================================================
 # 실험 설정
 # =========================================================
-
-DATA_DIR = Path("./data")
+EXPERIMENT_NAME = "mlp_v002"
+VARIANT = "processed"  # "processed" or "hybrid"
 
 ID = "row_id"
 TARGET = "control_success"
+VALIDATION_SEASON = 2024
 
-# 실험마다 이 값만 변경
-EXPERIMENT_NAME = "xgb_v001"
+SEED = 42
+BATCH_SIZE = 4096
+VALID_BATCH_SIZE = 4096
+MAX_EPOCHS = 50
+EARLY_STOPPING_PATIENCE = 5
 
-MODEL_ROOT = Path("./model")
-MODEL_DIR = MODEL_ROOT / EXPERIMENT_NAME
-MODEL_PATH = MODEL_DIR / f"{EXPERIMENT_NAME}.pkl"
+LEARNING_RATE = 1e-3
+WEIGHT_DECAY = 1e-5
+HIDDEN_DIMS = [256, 256, 128]
+DROPOUT = 0.15
+NUM_WORKERS = 0
+
+
+# =========================================================
+# 경로
+# =========================================================
+DATA_DIR = Path("./data")
+MODEL_DIR = Path("./model")
+MODEL_PATH = MODEL_DIR / EXPERIMENT_NAME / f"{EXPERIMENT_NAME}.pkl"
 
 VALIDATION_ROOT = Path("./validation")
 VALIDATION_DIR = VALIDATION_ROOT / EXPERIMENT_NAME
 
+OUTPUT_DIR = Path("./output")
+TEST_PATH = DATA_DIR / "test.csv"
+SAMPLE_SUB_PATH = DATA_DIR / "sample_submission.csv"
+OUTPUT_PATH = OUTPUT_DIR / "submission.csv"
 
-# =========================================================
-# 학습 설정
-# =========================================================
-
-MAX_ITERATIONS = 5000
-EARLY_STOPPING_ROUNDS = 200
-RANDOM_STATE = 42
-
-
-# =========================================================
-# Feature 정책
-# =========================================================
-
-# 저카디널리티 명목형만 categorical encoding
-CAT_COLS = [
-    "top_bottom",
-    "game_type",
-    "base_state",
-    "pitcher_hand",
-    "batter_hand",
-]
-
-# 고카디널리티 ID는 categorical encoding하지 않고
-# numeric 값으로 유지
-ID_LIKE_COLS = [
-    "pitcher_id",
-    "batter_id",
-    "pitcher_team_id",
-    "batter_team_id",
-]
+MLP_DATA_DIR = DATA_DIR / "mlp" / VARIANT
+VALIDATION_DATA_DIR = MLP_DATA_DIR / "validation"
+FINAL_DATA_DIR = MLP_DATA_DIR / "final"
 
 
 # =========================================================
-# XGBoost 모델 파라미터
+# CLI
 # =========================================================
-
-MODEL_PARAMS = {
-    "objective": "binary:logistic",
-
-    "learning_rate": 0.03,
-
-    "max_depth": 8,
-    "min_child_weight": 10.0,
-
-    "subsample": 0.85,
-    "colsample_bytree": 0.85,
-
-    "reg_alpha": 1.0,
-    "reg_lambda": 10.0,
-
-    "tree_method": "hist",
-    "device": "cpu",
-
-    "random_state": RANDOM_STATE,
-    "n_jobs": -1,
-}
-
-
-# =========================================================
-# Brier Score
-# =========================================================
-
-def brier_metric(
-    y_true,
-    y_pred,
-):
-    """
-    XGBoost validation용 Brier Score.
-
-    callable eval_metric은 cost function으로 사용되며
-    값이 작을수록 좋다.
-    """
-
-    y_true = np.asarray(
-        y_true
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--mode",
+        choices=["validation", "final"],
+        default="validation",
+        help=(
+            "validation: 2019-2023 train / 2024 validation; "
+            "final: train on all preprocessed training rows"
+        ),
     )
-
-    y_pred = np.asarray(
-        y_pred
+    parser.add_argument(
+        "--best-epoch",
+        type=int,
+        default=None,
+        help="Required in final mode. Use the best epoch from validation.",
     )
+    return parser.parse_args()
 
-    return float(
-        np.mean(
-            (y_pred - y_true) ** 2
+
+# =========================================================
+# Reproducibility / Device
+# =========================================================
+def seed_everything(seed: int = SEED) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+    if hasattr(torch.backends, "cudnn"):
+        # mlp_v001과 동일한 속도 우선 설정.
+        torch.backends.cudnn.benchmark = True
+
+
+def get_device() -> torch.device:
+    if torch.cuda.is_available():
+        return torch.device("cpu")
+
+    if (
+        hasattr(torch.backends, "mps")
+        and torch.backends.mps.is_available()
+    ):
+        return torch.device("mps")
+
+    return torch.device("cpu")
+
+
+# =========================================================
+# Metric
+# =========================================================
+def calculate_metrics(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+) -> dict[str, float]:
+    y_true = np.asarray(y_true, dtype=np.float64)
+    y_pred = np.asarray(y_pred, dtype=np.float64)
+
+    if y_true.ndim != 1 or y_pred.ndim != 1:
+        raise ValueError("y_true and y_pred must be 1-D arrays")
+    if len(y_true) != len(y_pred):
+        raise ValueError("y_true and y_pred length mismatch")
+    if not np.isfinite(y_true).all():
+        raise ValueError("Non-finite target detected during metric calculation")
+    if not np.isfinite(y_pred).all():
+        raise ValueError("Non-finite prediction detected during metric calculation")
+
+    y_pred = np.clip(y_pred, 0.0, 1.0)
+
+    positive_rate = float(np.mean(y_true))
+    brier = float(np.mean((y_pred - y_true) ** 2))
+    baseline_brier = float(positive_rate * (1.0 - positive_rate))
+
+    if baseline_brier <= 0:
+        bss = 0.0
+    else:
+        bss = max(
+            0.0,
+            100000.0 * (1.0 - brier / baseline_brier),
+        )
+
+    eps = 1e-7
+    p = np.clip(y_pred, eps, 1.0 - eps)
+    logloss = float(
+        -np.mean(
+            y_true * np.log(p)
+            + (1.0 - y_true) * np.log(1.0 - p)
         )
     )
 
+    return {
+        "brier": brier,
+        "baseline_brier": baseline_brier,
+        "bss": float(bss),
+        "positive_rate": positive_rate,
+        "logloss": logloss,
+        "prediction_mean": float(np.mean(y_pred)),
+        "prediction_std": float(np.std(y_pred)),
+        "prediction_min": float(np.min(y_pred)),
+        "prediction_max": float(np.max(y_pred)),
+    }
+
 
 # =========================================================
-# Raw Feature 준비
+# Preprocessor artifact
 # =========================================================
+def load_preprocessor(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Preprocessor not found: {path}\n"
+            "Run mlp_preprocess.py first."
+        )
 
-def prepare_raw_features(
-    df,
-    features,
-    id_like_cols,
-):
-    """
-    XGBoost 전처리 직전 DataFrame을 생성한다.
+    with path.open("r", encoding="utf-8") as file:
+        preprocessor = json.load(file)
 
-    1. 학습 Feature 순서 고정
-    2. ID 계열은 numeric으로 강제 변환
-    3. 나머지 numeric NaN은 그대로 유지
-       → XGBoost가 직접 처리
-    """
+    required_keys = {
+        "categorical_columns",
+        "numeric_columns",
+        "cardinalities",
+        "category_maps",
+        "numeric_stats",
+        "unknown_index",
+        "missing_index",
+        "variant",
+    }
+    missing = sorted(required_keys - set(preprocessor))
+    if missing:
+        raise ValueError(
+            f"Missing keys in preprocessor.json: {missing}"
+        )
 
-    missing_features = [
-        col
-        for col in features
-        if col not in df.columns
+    if preprocessor["variant"] != VARIANT:
+        raise ValueError(
+            "Variant mismatch: "
+            f"train.py VARIANT={VARIANT!r}, "
+            f"preprocessor={preprocessor['variant']!r}"
+        )
+
+    return preprocessor
+
+
+def validate_dataset_schema(
+    dataset: TabularNpyDataset,
+    preprocessor: dict[str, Any],
+    split_name: str,
+    require_target: bool,
+) -> None:
+    if dataset.numeric.ndim != 2:
+        raise ValueError(
+            f"{split_name}: numeric.npy must be 2-D, "
+            f"got {dataset.numeric.shape}"
+        )
+    if dataset.categorical.ndim != 2:
+        raise ValueError(
+            f"{split_name}: categorical.npy must be 2-D, "
+            f"got {dataset.categorical.shape}"
+        )
+
+    expected_numeric = len(preprocessor["numeric_columns"])
+    expected_categorical = len(preprocessor["categorical_columns"])
+
+    if dataset.numeric.shape[1] != expected_numeric:
+        raise ValueError(
+            f"{split_name}: numeric feature count mismatch: "
+            f"array={dataset.numeric.shape[1]}, "
+            f"preprocessor={expected_numeric}"
+        )
+
+    if dataset.categorical.shape[1] != expected_categorical:
+        raise ValueError(
+            f"{split_name}: categorical feature count mismatch: "
+            f"array={dataset.categorical.shape[1]}, "
+            f"preprocessor={expected_categorical}"
+        )
+
+    if require_target and dataset.targets is None:
+        raise ValueError(f"{split_name}: target.npy is required")
+
+    if dataset.targets is not None:
+        targets = np.asarray(dataset.targets)
+        if not np.isfinite(targets).all():
+            raise ValueError(f"{split_name}: non-finite target detected")
+        if not np.isin(targets, [0.0, 1.0]).all():
+            values = np.unique(targets)[:10]
+            raise ValueError(
+                f"{split_name}: target must be binary 0/1; "
+                f"examples={values.tolist()}"
+            )
+
+    for index, column in enumerate(preprocessor["categorical_columns"]):
+        cardinality = int(preprocessor["cardinalities"][column])
+        values = dataset.categorical[:, index]
+        if len(values) == 0:
+            continue
+        min_value = int(np.min(values))
+        max_value = int(np.max(values))
+        if min_value < 0 or max_value >= cardinality:
+            raise ValueError(
+                f"{split_name}: categorical index out of range for "
+                f"{column}: min={min_value}, max={max_value}, "
+                f"cardinality={cardinality}"
+            )
+
+
+def print_unknown_ratios(
+    dataset: TabularNpyDataset,
+    preprocessor: dict[str, Any],
+) -> None:
+    columns = preprocessor["categorical_columns"]
+    unknown_index = int(preprocessor["unknown_index"])
+
+    if not columns:
+        return
+
+    print()
+    print("[Validation unknown category ratio]")
+    for index, column in enumerate(columns):
+        values = dataset.categorical[:, index]
+        ratio = float(np.mean(values == unknown_index))
+        print(f"{column:<22}: {ratio:.6%}")
+
+
+# =========================================================
+# Dataset / Loader
+# =========================================================
+def make_loader(
+    dataset: TabularNpyDataset,
+    batch_size: int,
+    shuffle: bool,
+    device: torch.device,
+) -> DataLoader:
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=NUM_WORKERS,
+        pin_memory=(device.type == "cuda"),
+        drop_last=False,
+    )
+
+
+# =========================================================
+# Model
+# =========================================================
+def choose_embedding_dim(n_categories: int) -> int:
+    n_categories = max(1, int(n_categories))
+    dim = int(round(4.0 * (n_categories ** 0.25)))
+    return int(min(32, max(2, dim)))
+
+
+class TabularMLP(nn.Module):
+    def __init__(
+        self,
+        cardinalities: list[int],
+        embedding_dims: list[int],
+        n_num_features: int,
+        hidden_dims: list[int],
+        dropout: float,
+    ) -> None:
+        super().__init__()
+
+        if len(cardinalities) != len(embedding_dims):
+            raise ValueError(
+                "cardinalities and embedding_dims length mismatch"
+            )
+
+        self.embeddings = nn.ModuleList(
+            [
+                nn.Embedding(
+                    num_embeddings=int(cardinality),
+                    embedding_dim=int(dim),
+                    padding_idx=0,
+                )
+                for cardinality, dim in zip(
+                    cardinalities,
+                    embedding_dims,
+                )
+            ]
+        )
+
+        embedding_total = int(sum(embedding_dims))
+        input_dim = embedding_total + int(n_num_features)
+
+        if input_dim <= 0:
+            raise ValueError("MLP input feature가 없습니다.")
+
+        layers: list[nn.Module] = []
+        prev_dim = input_dim
+
+        for hidden_dim in hidden_dims:
+            layers.extend(
+                [
+                    nn.Linear(prev_dim, hidden_dim),
+                    nn.LayerNorm(hidden_dim),
+                    nn.SiLU(),
+                    nn.Dropout(dropout),
+                ]
+            )
+            prev_dim = hidden_dim
+
+        self.backbone = nn.Sequential(*layers)
+        self.head = nn.Linear(prev_dim, 1)
+
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        for emb in self.embeddings:
+            nn.init.normal_(emb.weight, mean=0.0, std=0.02)
+            with torch.no_grad():
+                emb.weight[0].zero_()
+
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.kaiming_uniform_(
+                    module.weight,
+                    a=math.sqrt(5),
+                )
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+
+    def forward(
+        self,
+        categorical: torch.Tensor,
+        numeric: torch.Tensor,
+    ) -> torch.Tensor:
+        parts: list[torch.Tensor] = []
+
+        if len(self.embeddings) > 0:
+            embedded = [
+                emb(categorical[:, index])
+                for index, emb in enumerate(self.embeddings)
+            ]
+            parts.append(torch.cat(embedded, dim=1))
+
+        if numeric.shape[1] > 0:
+            parts.append(numeric)
+
+        x = parts[0] if len(parts) == 1 else torch.cat(parts, dim=1)
+        x = self.backbone(x)
+        return self.head(x).squeeze(1)
+
+
+def build_model_config(
+    preprocessor: dict[str, Any],
+) -> dict[str, Any]:
+    categorical_columns = preprocessor["categorical_columns"]
+    cardinalities = [
+        int(preprocessor["cardinalities"][column])
+        for column in categorical_columns
+    ]
+    embedding_dims = [
+        choose_embedding_dim(cardinality)
+        for cardinality in cardinalities
     ]
 
-    if missing_features:
-        raise ValueError(
-            "입력 데이터에 학습 Feature가 없습니다: "
-            + ", ".join(
-                missing_features
-            )
+    return {
+        "cardinalities": cardinalities,
+        "embedding_dims": embedding_dims,
+        "n_num_features": len(preprocessor["numeric_columns"]),
+        "hidden_dims": list(HIDDEN_DIMS),
+        "dropout": float(DROPOUT),
+    }
+
+
+def create_model(config: dict[str, Any]) -> TabularMLP:
+    return TabularMLP(
+        cardinalities=config["cardinalities"],
+        embedding_dims=config["embedding_dims"],
+        n_num_features=config["n_num_features"],
+        hidden_dims=config["hidden_dims"],
+        dropout=config["dropout"],
+    )
+
+
+# =========================================================
+# Train / Evaluate
+# =========================================================
+def train_one_epoch(
+    model: nn.Module,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    criterion: nn.Module,
+    device: torch.device,
+) -> float:
+    model.train()
+
+    total_loss = 0.0
+    total_n = 0
+
+    for batch in loader:
+        categorical = batch["categorical"].to(
+            device,
+            non_blocking=True,
+        )
+        numeric = batch["numeric"].to(
+            device,
+            non_blocking=True,
+        )
+        target = batch["target"].to(
+            device,
+            non_blocking=True,
         )
 
-    X = df[
-        features
-    ].copy()
+        optimizer.zero_grad(set_to_none=True)
+        logits = model(categorical, numeric)
+        loss = criterion(logits, target)
+        loss.backward()
+        optimizer.step()
 
-    for col in id_like_cols:
-        if col in X.columns:
-            X[col] = pd.to_numeric(
-                X[col],
-                errors="coerce",
-            )
+        batch_n = int(target.shape[0])
+        total_loss += float(loss.item()) * batch_n
+        total_n += batch_n
 
-    return X
+    return total_loss / max(1, total_n)
 
 
-# =========================================================
-# 전처리 생성
-# =========================================================
+@torch.inference_mode()
+def evaluate_loader(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    model.eval()
 
-def create_preprocessor(
-    cat_cols,
-    num_cols,
-):
-    """
-    새로운 OrdinalEncoder를 포함하는
-    XGBoost 전처리 객체를 매번 생성한다.
+    row_ids: list[str] = []
+    targets: list[np.ndarray] = []
+    predictions: list[np.ndarray] = []
 
-    Validation과 Final model이 서로 독립된
-    fitted encoder를 갖도록 한다.
+    for batch in loader:
+        if "target" not in batch:
+            raise ValueError("Validation loader must contain target")
 
-    categorical:
-        "__MISSING__" 사용
-        unseen category → -1
+        categorical = batch["categorical"].to(
+            device,
+            non_blocking=True,
+        )
+        numeric = batch["numeric"].to(
+            device,
+            non_blocking=True,
+        )
 
-    numeric:
-        그대로 통과
-        NaN도 그대로 XGBoost에 전달
-    """
+        logits = model(categorical, numeric)
+        prediction = torch.sigmoid(logits)
 
-    return ColumnTransformer(
-        transformers=[
-            (
-                "cat",
-                OrdinalEncoder(
-                    handle_unknown="use_encoded_value",
-                    unknown_value=-1,
-                    encoded_missing_value=-1,
-                ),
-                cat_cols,
-            ),
-            (
-                "num",
-                "passthrough",
-                num_cols,
-            ),
-        ],
-        remainder="drop",
+        row_ids.extend([str(value) for value in batch["row_id"]])
+        targets.append(
+            batch["target"].detach().cpu().numpy()
+        )
+        predictions.append(
+            prediction.detach().cpu().numpy()
+        )
+
+    return (
+        np.asarray(row_ids, dtype=str),
+        np.concatenate(targets).astype(np.float64, copy=False),
+        np.concatenate(predictions).astype(np.float64, copy=False),
     )
 
 
 # =========================================================
-# Validation 모델 생성
+# Validation fit
 # =========================================================
-
-def create_validation_model():
-    """
-    Brier Score 기반 early stopping을 사용하는
-    Validation용 XGBClassifier를 생성한다.
-    """
-
-    return XGBClassifier(
-        n_estimators=MAX_ITERATIONS,
-
-        eval_metric=brier_metric,
-        early_stopping_rounds=EARLY_STOPPING_ROUNDS,
-
-        **MODEL_PARAMS,
+def fit_validation_model(
+    train_dataset: TabularNpyDataset,
+    valid_dataset: TabularNpyDataset,
+    preprocessor: dict[str, Any],
+    device: torch.device,
+) -> dict[str, Any]:
+    train_loader = make_loader(
+        train_dataset,
+        BATCH_SIZE,
+        True,
+        device,
+    )
+    valid_loader = make_loader(
+        valid_dataset,
+        VALID_BATCH_SIZE,
+        False,
+        device,
     )
 
+    model_config = build_model_config(preprocessor)
+    model = create_model(model_config).to(device)
 
-# =========================================================
-# Final 모델 생성
-# =========================================================
-
-def create_final_model(
-    n_estimators,
-):
-    """
-    Validation에서 찾은 best iteration만큼
-    전체 데이터로 다시 학습할 Final 모델.
-
-    Final 모델에는 eval_metric callable과
-    early stopping 설정을 넣지 않는다.
-
-    이렇게 해야 저장된 model.pkl이
-    script.py의 함수 정의에 의존하지 않는다.
-    """
-
-    return XGBClassifier(
-        n_estimators=n_estimators,
-        **MODEL_PARAMS,
+    criterion = nn.BCEWithLogitsLoss()
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=LEARNING_RATE,
+        weight_decay=WEIGHT_DECAY,
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=MAX_EPOCHS,
+        eta_min=LEARNING_RATE * 0.05,
     )
 
+    best_brier = float("inf")
+    best_epoch = 0
+    best_state: dict[str, torch.Tensor] | None = None
+    best_row_ids: np.ndarray | None = None
+    best_targets: np.ndarray | None = None
+    best_pred: np.ndarray | None = None
+    best_metrics: dict[str, float] | None = None
+
+    patience_count = 0
+    history: list[dict[str, Any]] = []
+
+    print()
+    print("=" * 70)
+    print("MLP Validation 학습 시작")
+    print("=" * 70)
+    print(f"Experiment   : {EXPERIMENT_NAME}")
+    print(f"Variant      : {VARIANT}")
+    print(f"Device       : {device}")
+    print(f"Batch size   : {BATCH_SIZE}")
+    print(f"Max epochs   : {MAX_EPOCHS}")
+    print(f"Learning rate: {LEARNING_RATE}")
+    print(f"Hidden dims  : {HIDDEN_DIMS}")
+    print(f"Dropout      : {DROPOUT}")
+
+    print()
+    print("[Embedding schema]")
+    for column, cardinality, dim in zip(
+        preprocessor["categorical_columns"],
+        model_config["cardinalities"],
+        model_config["embedding_dims"],
+    ):
+        print(
+            f"{column:<22} "
+            f"cardinality={cardinality:<6} "
+            f"dim={dim}"
+        )
+
+    start_time = time.time()
+
+    for epoch in range(1, MAX_EPOCHS + 1):
+        epoch_start = time.time()
+
+        train_loss = train_one_epoch(
+            model,
+            train_loader,
+            optimizer,
+            criterion,
+            device,
+        )
+
+        row_ids, y_valid, valid_pred = evaluate_loader(
+            model,
+            valid_loader,
+            device,
+        )
+        metrics = calculate_metrics(y_valid, valid_pred)
+
+        current_lr = float(optimizer.param_groups[0]["lr"])
+        scheduler.step()
+        seconds = time.time() - epoch_start
+
+        history.append(
+            {
+                "epoch": epoch,
+                "train_bce": train_loss,
+                "val_brier": metrics["brier"],
+                "val_bss": metrics["bss"],
+                "val_logloss": metrics["logloss"],
+                "learning_rate": current_lr,
+                "seconds": seconds,
+            }
+        )
+
+        improved = metrics["brier"] < best_brier - 1e-10
+        if improved:
+            best_brier = metrics["brier"]
+            best_epoch = epoch
+            best_state = {
+                key: value.detach().cpu().clone()
+                for key, value in model.state_dict().items()
+            }
+            best_row_ids = row_ids.copy()
+            best_targets = y_valid.copy()
+            best_pred = valid_pred.copy()
+            best_metrics = dict(metrics)
+            patience_count = 0
+            marker = " *BEST*"
+        else:
+            patience_count += 1
+            marker = ""
+
+        print(
+            f"Epoch {epoch:02d} | "
+            f"train BCE={train_loss:.6f} | "
+            f"val Brier={metrics['brier']:.8f} | "
+            f"BSS={metrics['bss']:.2f} | "
+            f"logloss={metrics['logloss']:.6f} | "
+            f"lr={current_lr:.2e} | "
+            f"{seconds:.1f}s{marker}"
+        )
+
+        if patience_count >= EARLY_STOPPING_PATIENCE:
+            print("Early stopping.")
+            break
+
+    elapsed = time.time() - start_time
+
+    if (
+        best_state is None
+        or best_row_ids is None
+        or best_targets is None
+        or best_pred is None
+        or best_metrics is None
+        or best_epoch <= 0
+    ):
+        raise RuntimeError("No valid best checkpoint was produced")
+
+    print()
+    print("=" * 70)
+    print("MLP Validation Best")
+    print("=" * 70)
+    print(f"Best epoch       : {best_epoch}")
+    print(f"Brier Score      : {best_metrics['brier']:.8f}")
+    print(f"Baseline Brier   : {best_metrics['baseline_brier']:.8f}")
+    print(f"Validation Score : {best_metrics['bss']:.2f}")
+    print(f"LogLoss          : {best_metrics['logloss']:.8f}")
+    print(f"Prediction mean  : {best_metrics['prediction_mean']:.6f}")
+    print(f"Prediction std   : {best_metrics['prediction_std']:.6f}")
+    print(f"Prediction min   : {best_metrics['prediction_min']:.6f}")
+    print(f"Prediction max   : {best_metrics['prediction_max']:.6f}")
+    print(f"Total time       : {elapsed:.1f}s")
+
+    return {
+        "model_config": model_config,
+        "best_state_dict": best_state,
+        "best_epoch": best_epoch,
+        "row_ids": best_row_ids,
+        "targets": best_targets,
+        "best_prediction": best_pred,
+        "best_metrics": best_metrics,
+        "history": history,
+        "elapsed": elapsed,
+    }
+
 
 # =========================================================
-# Validation 결과 저장
+# Save validation
 # =========================================================
-
 def save_validation(
-    experiment_name,
-    estimator,
-    model_params,
-    row_ids,
-    y_true,
-    y_pred,
-    brier,
-    baseline_brier,
-    bss,
-    output_root,
-    best_iteration,
-):
-    row_ids = np.asarray(
-        row_ids
+    result: dict[str, Any],
+    preprocessor: dict[str, Any],
+) -> None:
+    VALIDATION_DIR.mkdir(parents=True, exist_ok=False)
+
+    prediction_frame = pd.DataFrame(
+        {
+            ID: result["row_ids"],
+            "target": result["targets"],
+            "prediction": result["best_prediction"],
+        }
     )
-
-    y_true = np.asarray(
-        y_true
-    )
-
-    y_pred = np.asarray(
-        y_pred
-    )
-
-    assert (
-        len(row_ids)
-        == len(y_true)
-        == len(y_pred)
-    )
-
-    output_dir = (
-        Path(output_root)
-        / experiment_name
-    )
-
-    if output_dir.exists():
-        raise FileExistsError(
-            f"Validation experiment already exists: "
-            f"{output_dir}"
-        )
-
-    output_dir.mkdir(
-        parents=True,
-        exist_ok=False,
-    )
-
-    # -----------------------------------------------------
-    # pred.csv
-    # -----------------------------------------------------
-
-    pred_df = pd.DataFrame({
-        "row_id": row_ids,
-        "target": y_true,
-        "prediction": y_pred,
-    })
-
-    pred_df.to_csv(
-        output_dir / "pred.csv",
+    prediction_frame.to_csv(
+        VALIDATION_DIR / "pred.csv",
         index=False,
         encoding="utf-8-sig",
     )
 
-    # -----------------------------------------------------
-    # validation.npz
-    # -----------------------------------------------------
-
     np.savez_compressed(
-        output_dir / "validation.npz",
-        row_id=row_ids,
-        target=y_true,
-        prediction=y_pred,
+        VALIDATION_DIR / "validation.npz",
+        row_id=result["row_ids"],
+        target=result["targets"],
+        prediction=result["best_prediction"],
     )
 
-    # -----------------------------------------------------
-    # metadata.json
-    # -----------------------------------------------------
+    pd.DataFrame(result["history"]).to_csv(
+        VALIDATION_DIR / "history.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
 
     metadata = {
-        "experiment_name": experiment_name,
-        "model_type": type(estimator).__name__,
-        "model_params": model_params,
-
-        "max_iterations": MAX_ITERATIONS,
-        "early_stopping_rounds": EARLY_STOPPING_ROUNDS,
-        "best_iteration": int(best_iteration),
-
-        "validation_season": 2024,
-        "n_validation": int(len(y_true)),
-
-        "positive_rate": float(
-            np.mean(y_true)
+        "experiment_name": EXPERIMENT_NAME,
+        "model_type": "TabularMLP",
+        "variant": VARIANT,
+        "validation_season": VALIDATION_SEASON,
+        "validation": "2019-2023 Train / 2024 Validation",
+        "categorical_columns": preprocessor["categorical_columns"],
+        "numeric_columns": preprocessor["numeric_columns"],
+        "n_features": (
+            len(preprocessor["categorical_columns"])
+            + len(preprocessor["numeric_columns"])
         ),
-
-        "brier": float(brier),
-        "baseline_brier": float(
-            baseline_brier
-        ),
-        "bss": float(bss),
-
-        "prediction_mean": float(
-            np.mean(y_pred)
-        ),
-
-        "prediction_std": float(
-            np.std(y_pred)
-        ),
-
-        "prediction_min": float(
-            np.min(y_pred)
-        ),
-
-        "prediction_max": float(
-            np.max(y_pred)
-        ),
-
-        "xgboost_version": xgb.__version__,
+        "cardinalities": preprocessor["cardinalities"],
+        "model_config": result["model_config"],
+        "best_epoch": result["best_epoch"],
+        "metrics": result["best_metrics"],
+        "training_seconds": result["elapsed"],
+        "preprocessing": {
+            "source": "mlp_preprocess.py",
+            "variant": VARIANT,
+            "count_state": True,
+            "raw_count_features_retained": VARIANT == "hybrid",
+            "unknown_index": preprocessor["unknown_index"],
+            "missing_index": preprocessor["missing_index"],
+        },
+        "training_config": {
+            "seed": SEED,
+            "batch_size": BATCH_SIZE,
+            "valid_batch_size": VALID_BATCH_SIZE,
+            "max_epochs": MAX_EPOCHS,
+            "early_stopping_patience": EARLY_STOPPING_PATIENCE,
+            "learning_rate": LEARNING_RATE,
+            "weight_decay": WEIGHT_DECAY,
+            "hidden_dims": HIDDEN_DIMS,
+            "dropout": DROPOUT,
+            "loss": "BCEWithLogitsLoss",
+            "scheduler": "CosineAnnealingLR",
+            "primary_metric": "Brier Score",
+        },
     }
 
-    with open(
-        output_dir / "metadata.json",
+    with (VALIDATION_DIR / "metadata.json").open(
         "w",
         encoding="utf-8",
-    ) as f:
+    ) as file:
+        json.dump(metadata, file, indent=2, ensure_ascii=False)
+
+
+# =========================================================
+# Final fit
+# =========================================================
+def fit_final_model(
+    train_dataset: TabularNpyDataset,
+    preprocessor: dict[str, Any],
+    best_epoch: int,
+    device: torch.device,
+) -> dict[str, Any]:
+    if best_epoch <= 0:
+        raise ValueError("best_epoch must be >= 1")
+
+    loader = make_loader(
+        train_dataset,
+        BATCH_SIZE,
+        True,
+        device,
+    )
+
+    model_config = build_model_config(preprocessor)
+    model = create_model(model_config).to(device)
+
+    criterion = nn.BCEWithLogitsLoss()
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=LEARNING_RATE,
+        weight_decay=WEIGHT_DECAY,
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=max(1, best_epoch),
+        eta_min=LEARNING_RATE * 0.05,
+    )
+
+    print()
+    print("=" * 70)
+    print("전체 데이터 재학습 시작")
+    print("=" * 70)
+    print(f"Experiment : {EXPERIMENT_NAME}")
+    print(f"Variant    : {VARIANT}")
+    print(f"Epochs     : {best_epoch}")
+
+    start_time = time.time()
+    history: list[dict[str, Any]] = []
+
+    for epoch in range(1, best_epoch + 1):
+        epoch_start = time.time()
+
+        train_loss = train_one_epoch(
+            model,
+            loader,
+            optimizer,
+            criterion,
+            device,
+        )
+
+        current_lr = float(optimizer.param_groups[0]["lr"])
+        scheduler.step()
+        seconds = time.time() - epoch_start
+
+        history.append(
+            {
+                "epoch": epoch,
+                "train_bce": train_loss,
+                "learning_rate": current_lr,
+                "seconds": seconds,
+            }
+        )
+
+        print(
+            f"Epoch {epoch:02d}/{best_epoch:02d} | "
+            f"train BCE={train_loss:.6f} | "
+            f"lr={current_lr:.2e} | "
+            f"{seconds:.1f}s"
+        )
+
+    elapsed = time.time() - start_time
+    state_dict = {
+        key: value.detach().cpu().clone()
+        for key, value in model.state_dict().items()
+    }
+
+    return {
+        "model_config": model_config,
+        "state_dict": state_dict,
+        "history": history,
+        "elapsed": elapsed,
+    }
+
+
+def load_validation_best_epoch() -> int | None:
+    metadata_path = VALIDATION_DIR / "metadata.json"
+    if not metadata_path.exists():
+        return None
+
+    with metadata_path.open("r", encoding="utf-8") as file:
+        metadata = json.load(file)
+
+    best_epoch = metadata.get("best_epoch")
+    if best_epoch is None:
+        return None
+
+    return int(best_epoch)
+
+
+def save_final_model(
+    result: dict[str, Any],
+    preprocessor: dict[str, Any],
+    best_epoch: int,
+) -> None:
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+
+    if MODEL_PATH.exists():
+        raise FileExistsError(f"Model already exists: {MODEL_PATH}")
+
+    bundle = {
+        "model_state_dict": result["state_dict"],
+        "model_config": result["model_config"],
+        "features": (
+            preprocessor["categorical_columns"]
+            + preprocessor["numeric_columns"]
+        ),
+        "cat_cols": preprocessor["categorical_columns"],
+        "num_cols": preprocessor["numeric_columns"],
+        "preprocessor": preprocessor,
+        "metadata": {
+            "experiment_name": EXPERIMENT_NAME,
+            "model_type": "TabularMLP",
+            "variant": VARIANT,
+            "validation": "2019-2023 Train / 2024 Validation",
+            "best_epoch": best_epoch,
+            "training_config": {
+                "seed": SEED,
+                "batch_size": BATCH_SIZE,
+                "learning_rate": LEARNING_RATE,
+                "weight_decay": WEIGHT_DECAY,
+                "hidden_dims": HIDDEN_DIMS,
+                "dropout": DROPOUT,
+                "loss": "BCEWithLogitsLoss",
+                "scheduler": "CosineAnnealingLR",
+                "primary_metric": "Brier Score",
+            },
+            "preprocessing": {
+                "source": "mlp_preprocess.py",
+                "variant": VARIANT,
+                "count_state": True,
+                "raw_count_features_retained": VARIANT == "hybrid",
+                "unknown_index": preprocessor["unknown_index"],
+                "missing_index": preprocessor["missing_index"],
+            },
+            "full_training_seconds": result["elapsed"],
+        },
+    }
+
+    joblib.dump(bundle, MODEL_PATH, compress=3)
+
+    metadata_path = MODEL_DIR / f"{EXPERIMENT_NAME}_metadata.json"
+    with metadata_path.open("w", encoding="utf-8") as file:
         json.dump(
-            metadata,
-            f,
+            bundle["metadata"],
+            file,
             indent=2,
             ensure_ascii=False,
         )
 
+    # 현재 실행 중인 train.py를 모델과 함께 보관한다.
+    source_path = Path(__file__).resolve()
+    destination = MODEL_DIR / f"{EXPERIMENT_NAME}_train.py"
+    shutil.copy2(source_path, destination)
+
+    # Final preprocessing artifact도 모델과 함께 보관한다.
+    preprocessor_copy = MODEL_DIR / f"{EXPERIMENT_NAME}_preprocessor.json"
+    with preprocessor_copy.open("w", encoding="utf-8") as file:
+        json.dump(preprocessor, file, indent=2, ensure_ascii=False)
+
     print()
-    print("[Validation 저장 완료]")
-    print(
-        f"- {output_dir / 'pred.csv'}"
-    )
-    print(
-        f"- {output_dir / 'validation.npz'}"
-    )
-    print(
-        f"- {output_dir / 'metadata.json'}"
-    )
+    print("=" * 70)
+    print("Final model 저장 완료")
+    print("=" * 70)
+    print(f"Model Bundle : {MODEL_PATH}")
+    print(f"Metadata     : {metadata_path}")
+    print(f"Train Code   : {destination}")
+    print(f"Preprocessor : {preprocessor_copy}")
+    print(f"Best Epoch   : {best_epoch}")
 
 
 # =========================================================
 # Main
 # =========================================================
-
-def main():
-
-    # -----------------------------------------------------
-    # 덮어쓰기 방지
-    # -----------------------------------------------------
-
+def run_validation(device: torch.device) -> None:
     if VALIDATION_DIR.exists():
         raise FileExistsError(
-            f"Validation experiment already exists: "
-            f"{VALIDATION_DIR}\n"
-            "새 EXPERIMENT_NAME을 사용하세요."
+            f"Validation already exists: {VALIDATION_DIR}"
         )
 
-    if MODEL_DIR.exists():
-        raise FileExistsError(
-            f"Model experiment already exists: "
-            f"{MODEL_DIR}\n"
-            "새 EXPERIMENT_NAME을 사용하세요."
-        )
+    preprocessor_path = VALIDATION_DATA_DIR / "preprocessor.json"
+    preprocessor = load_preprocessor(preprocessor_path)
 
-    # -----------------------------------------------------
-    # 경로
-    # -----------------------------------------------------
-
-    TEST_PATH = (
-        DATA_DIR
-        / "test.csv"
+    train_dataset = TabularNpyDataset(
+        VALIDATION_DATA_DIR / "train"
+    )
+    valid_dataset = TabularNpyDataset(
+        VALIDATION_DATA_DIR / "valid"
     )
 
-    TRAIN_PATH = (
-        DATA_DIR
-        / "train.csv"
+    validate_dataset_schema(
+        train_dataset,
+        preprocessor,
+        "validation/train",
+        require_target=True,
+    )
+    validate_dataset_schema(
+        valid_dataset,
+        preprocessor,
+        "validation/valid",
+        require_target=True,
     )
 
-    # -----------------------------------------------------
-    # 데이터 파일 검증
-    # -----------------------------------------------------
+    print("=" * 70)
+    print(EXPERIMENT_NAME)
+    print("=" * 70)
+    print(f"Mode          : validation")
+    print(f"Variant       : {VARIANT}")
+    print(f"Device        : {device}")
+    if device.type == "cuda":
+        print(f"GPU           : {torch.cuda.get_device_name(0)}")
+    print(f"PyTorch       : {torch.__version__}")
+    print(f"Train rows    : {len(train_dataset):,}")
+    print(f"Valid rows    : {len(valid_dataset):,}")
+    print(f"Numerical     : {train_dataset.numeric.shape[1]}")
+    print(f"Categorical   : {train_dataset.categorical.shape[1]}")
+    print(
+        "Features      : "
+        f"{len(preprocessor['numeric_columns']) + len(preprocessor['categorical_columns'])}"
+    )
+    print("=" * 70)
 
-    if not TEST_PATH.exists():
-        raise FileNotFoundError(
-            f"test.csv를 찾을 수 없습니다: "
-            f"{TEST_PATH}"
-        )
+    print_unknown_ratios(valid_dataset, preprocessor)
 
-    if not TRAIN_PATH.exists():
-        raise FileNotFoundError(
-            f"train.csv를 찾을 수 없습니다: "
-            f"{TRAIN_PATH}"
-        )
+    result = fit_validation_model(
+        train_dataset,
+        valid_dataset,
+        preprocessor,
+        device,
+    )
+    save_validation(result, preprocessor)
 
-    # -----------------------------------------------------
-    # test.csv 기준 Feature 결정
-    # -----------------------------------------------------
+    print()
+    print("=" * 70)
+    print("Validation 저장 완료")
+    print("=" * 70)
+    print(f"Validation Dir : {VALIDATION_DIR}")
+    print(f"Best Epoch     : {result['best_epoch']}")
+    print(
+        "Validation Brier: "
+        f"{result['best_metrics']['brier']:.8f}"
+    )
+    print(
+        "Validation BSS  : "
+        f"{result['best_metrics']['bss']:.2f}"
+    )
 
-    test_cols = pd.read_csv(
-        TEST_PATH,
-        encoding="utf-8-sig",
-        nrows=0,
-    ).columns.tolist()
 
-    if ID not in test_cols:
+def run_final(
+    device: torch.device,
+    best_epoch: int | None,
+) -> None:
+    if MODEL_PATH.exists():
+        raise FileExistsError(f"Model already exists: {MODEL_PATH}")
+
+    if best_epoch is None:
+        best_epoch = load_validation_best_epoch()
+
+    if best_epoch is None:
         raise ValueError(
-            f"test.csv에 ID 컬럼 "
-            f"'{ID}'가 없습니다."
+            "Final mode requires --best-epoch, or an existing "
+            f"{VALIDATION_DIR / 'metadata.json'}"
         )
 
-    features = [
-        col
-        for col in test_cols
-        if col != ID
-    ]
+    if best_epoch <= 0:
+        raise ValueError("best_epoch must be >= 1")
 
-    cat_cols = [
-        col
-        for col in CAT_COLS
-        if col in features
-    ]
+    preprocessor_path = FINAL_DATA_DIR / "preprocessor.json"
+    preprocessor = load_preprocessor(preprocessor_path)
 
-    id_like_cols = [
-        col
-        for col in ID_LIKE_COLS
-        if col in features
-    ]
-
-    num_cols = [
-        col
-        for col in features
-        if col not in cat_cols
-    ]
-
-    # -----------------------------------------------------
-    # 학습 데이터 로드
-    # -----------------------------------------------------
-
-    train = pd.read_csv(
-        TRAIN_PATH,
-        encoding="utf-8-sig",
-        usecols=[
-            ID,
-            *features,
-            TARGET,
-        ],
-    )
-
-    required_columns = {
-        ID,
-        "season",
-        TARGET,
-    }
-
-    missing_columns = (
-        required_columns
-        - set(train.columns)
-    )
-
-    if missing_columns:
-        raise ValueError(
-            "train.csv에 필요한 컬럼이 없습니다: "
-            + ", ".join(
-                sorted(missing_columns)
-            )
-        )
-
-    if train[TARGET].isna().any():
-        raise ValueError(
-            f"타깃 컬럼 '{TARGET}'에 "
-            "결측값이 있습니다."
-        )
-
-    print("=" * 70)
-    print("XGBoost 데이터 로드 완료")
-    print("=" * 70)
-
-    print(
-        "XGBoost version      :",
-        xgb.__version__,
-    )
-
-    print(
-        "Train shape          :",
-        train.shape,
-    )
-
-    print(
-        "Feature 수           :",
-        len(features),
-    )
-
-    print(
-        "Categorical 수       :",
-        len(cat_cols),
-    )
-
-    print(
-        "Numeric 수           :",
-        len(num_cols),
-    )
-
-    print(
-        "Categorical Feature  :",
-        cat_cols,
-    )
-
-    print(
-        "Numeric ID Feature   :",
-        id_like_cols,
-    )
-
-    print(
-        "시즌 범위            :",
-        train["season"].min(),
-        "~",
-        train["season"].max(),
-    )
-
-    print(
-        f"전체 제구 성공률      : "
-        f"{train[TARGET].mean():.6f}"
-    )
-
-    print(
-        "Device               : cpu"
+    train_dataset = TabularNpyDataset(FINAL_DATA_DIR / "train")
+    validate_dataset_schema(
+        train_dataset,
+        preprocessor,
+        "final/train",
+        require_target=True,
     )
 
     print("=" * 70)
-
-    # -----------------------------------------------------
-    # 2024 Validation 분할
-    # -----------------------------------------------------
-
-    is_val = (
-        train["season"]
-        == 2024
-    )
-
-    if not is_val.any():
-        raise ValueError(
-            "2024 시즌 Validation 데이터가 없습니다."
-        )
-
-    if is_val.all():
-        raise ValueError(
-            "2024년 이전 학습 데이터가 없습니다."
-        )
-
-    train_df = train.loc[
-        ~is_val
-    ].copy()
-
-    val_df = train.loc[
-        is_val
-    ].copy()
-
-    y_train = train_df[
-        TARGET
-    ].copy()
-
-    y_val = val_df[
-        TARGET
-    ].copy()
-
-    val_row_id = val_df[
-        ID
-    ].copy()
-
-    # -----------------------------------------------------
-    # Validation raw features
-    # -----------------------------------------------------
-
-    X_train_raw = prepare_raw_features(
-        df=train_df,
-        features=features,
-        id_like_cols=id_like_cols,
-    )
-
-    X_val_raw = prepare_raw_features(
-        df=val_df,
-        features=features,
-        id_like_cols=id_like_cols,
-    )
-
-    # -----------------------------------------------------
-    # Validation encoder
-    # -----------------------------------------------------
-
-    validation_preprocessor = (
-        create_preprocessor(
-            cat_cols=cat_cols,
-            num_cols=num_cols,
-        )
-    )
-
-    X_train = (
-        validation_preprocessor
-        .fit_transform(
-            X_train_raw
-        )
-    )
-
-    X_val = (
-        validation_preprocessor
-        .transform(
-            X_val_raw
-        )
-    )
-
-    print(
-        "학습 데이터 shape     :",
-        X_train.shape,
-    )
-
-    print(
-        "검증 데이터 shape     :",
-        X_val.shape,
-    )
-
-    print(
-        f"학습 Target 평균      : "
-        f"{y_train.mean():.6f}"
-    )
-
-    print(
-        f"검증 Target 평균      : "
-        f"{y_val.mean():.6f}"
-    )
-
-    # -----------------------------------------------------
-    # Validation 모델
-    # -----------------------------------------------------
-
-    validation_model = (
-        create_validation_model()
-    )
-
+    print(EXPERIMENT_NAME)
     print("=" * 70)
-    print("XGBoost Validation 학습 시작")
-
-    print(
-        f"최대 iteration        : "
-        f"{MAX_ITERATIONS}"
-    )
-
-    print(
-        f"Early stopping rounds : "
-        f"{EARLY_STOPPING_ROUNDS}"
-    )
-
-    print(
-        "Early stopping metric : "
-        "Brier Score"
-    )
-
-    print(
-        "Device                : "
-        "CPU"
-    )
-
+    print(f"Mode          : final")
+    print(f"Variant       : {VARIANT}")
+    print(f"Device        : {device}")
+    if device.type == "cuda":
+        print(f"GPU           : {torch.cuda.get_device_name(0)}")
+    print(f"PyTorch       : {torch.__version__}")
+    print(f"Train rows    : {len(train_dataset):,}")
+    print(f"Best epoch    : {best_epoch}")
+    print(f"Numerical     : {train_dataset.numeric.shape[1]}")
+    print(f"Categorical   : {train_dataset.categorical.shape[1]}")
     print("=" * 70)
 
-    validation_start = (
-        time.time()
+    # Validation과 Final의 categorical vocabulary/cardinality가 달라질 수 있으므로
+    # Final preprocessor로 모델 구조를 새로 생성한다.
+    seed_everything()
+    result = fit_final_model(
+        train_dataset,
+        preprocessor,
+        best_epoch,
+        device,
+    )
+    save_final_model(
+        result,
+        preprocessor,
+        best_epoch,
     )
 
-    validation_model.fit(
-        X_train,
-        y_train,
 
-        eval_set=[
-            (
-                X_val,
-                y_val,
-            ),
-        ],
 
-        verbose=100,
-    )
+def main() -> None:
+    args = parse_args()
 
-    validation_elapsed = (
-        time.time()
-        - validation_start
-    )
+    seed_everything()
+    device = get_device()
 
-    print(
-        f"Validation 학습 완료 : "
-        f"{validation_elapsed:.1f}초"
-    )
-
-    # -----------------------------------------------------
-    # Best iteration
-    # -----------------------------------------------------
-
-    best_iteration = getattr(
-        validation_model,
-        "best_iteration",
-        None,
-    )
-
-    if (
-        best_iteration is None
-        or best_iteration < 0
-    ):
-        best_iteration = (
-            MAX_ITERATIONS - 1
-        )
-
-    # XGBoost best_iteration은 0-based
-    final_iterations = (
-        best_iteration + 1
-    )
-
-    print(
-        f"Best iteration       : "
-        f"{best_iteration}"
-    )
-
-    print(
-        f"Final iterations     : "
-        f"{final_iterations}"
-    )
-
-    # -----------------------------------------------------
-    # Validation prediction
-    # -----------------------------------------------------
-
-    val_pred = (
-        validation_model
-        .predict_proba(
-            X_val
-        )[:, 1]
-    )
-
-    # -----------------------------------------------------
-    # Validation prediction 검증
-    # -----------------------------------------------------
-
-    if len(val_pred) != len(y_val):
-        raise RuntimeError(
-            "Validation 예측 수와 "
-            "정답 수가 다릅니다."
-        )
-
-    if not np.isfinite(
-        val_pred
-    ).all():
-        raise RuntimeError(
-            "Validation 예측에 "
-            "NaN 또는 무한대가 있습니다."
-        )
-
-    if not (
-        (val_pred >= 0.0)
-        & (val_pred <= 1.0)
-    ).all():
-        raise RuntimeError(
-            "Validation 예측이 "
-            "0~1 범위를 벗어났습니다."
-        )
-
-    # -----------------------------------------------------
-    # Brier Skill Score
-    # -----------------------------------------------------
-
-    y_val_array = (
-        y_val.to_numpy()
-    )
-
-    brier = np.mean(
-        (
-            val_pred
-            - y_val_array
-        ) ** 2
-    )
-
-    validation_rate = float(
-        y_val.mean()
-    )
-
-    baseline_brier = (
-        validation_rate
-        * (
-            1.0
-            - validation_rate
-        )
-    )
-
-    if baseline_brier <= 0:
-        raise RuntimeError(
-            "Baseline Brier Score가 "
-            "0 이하입니다."
-        )
-
-    validation_score = max(
-        0.0,
-        100000.0
-        * (
-            1.0
-            - brier
-            / baseline_brier
-        ),
-    )
-
-    print("=" * 70)
-    print("XGBoost Validation 결과")
-    print("=" * 70)
-
-    print(
-        f"Brier Score          : "
-        f"{brier:.10f}"
-    )
-
-    print(
-        f"Baseline Brier       : "
-        f"{baseline_brier:.10f}"
-    )
-
-    print(
-        f"Validation Score     : "
-        f"{validation_score:.4f}"
-    )
-
-    print(
-        f"Best iteration       : "
-        f"{best_iteration}"
-    )
-
-    print(
-        f"Final iterations     : "
-        f"{final_iterations}"
-    )
-
-    print(
-        f"Target mean          : "
-        f"{y_val_array.mean():.6f}"
-    )
-
-    print(
-        f"Prediction mean      : "
-        f"{val_pred.mean():.6f}"
-    )
-
-    print(
-        f"Prediction std       : "
-        f"{val_pred.std():.6f}"
-    )
-
-    print(
-        f"Prediction min       : "
-        f"{val_pred.min():.6f}"
-    )
-
-    print(
-        f"Prediction max       : "
-        f"{val_pred.max():.6f}"
-    )
-
-    print("=" * 70)
-
-    # -----------------------------------------------------
-    # Validation artifact 저장
-    # -----------------------------------------------------
-
-    save_validation(
-        experiment_name=EXPERIMENT_NAME,
-        estimator=validation_model,
-        model_params=MODEL_PARAMS,
-        row_ids=val_row_id,
-        y_true=y_val,
-        y_pred=val_pred,
-        brier=brier,
-        baseline_brier=baseline_brier,
-        bss=validation_score,
-        output_root=VALIDATION_ROOT,
-        best_iteration=best_iteration,
-    )
-
-    # -----------------------------------------------------
-    # 전체 데이터용 Raw Feature
-    # -----------------------------------------------------
-
-    X_full_raw = prepare_raw_features(
-        df=train,
-        features=features,
-        id_like_cols=id_like_cols,
-    )
-
-    y_full = train[
-        TARGET
-    ].copy()
-
-    # -----------------------------------------------------
-    # Final encoder
-    #
-    # Validation encoder를 재사용하지 않는다.
-    # -----------------------------------------------------
-
-    final_preprocessor = (
-        create_preprocessor(
-            cat_cols=cat_cols,
-            num_cols=num_cols,
-        )
-    )
-
-    X_full = (
-        final_preprocessor
-        .fit_transform(
-            X_full_raw
-        )
-    )
-
-    # -----------------------------------------------------
-    # Final model
-    #
-    # Validation model을 재사용하지 않는다.
-    # -----------------------------------------------------
-
-    final_model = (
-        create_final_model(
-            n_estimators=final_iterations,
-        )
-    )
-
-    print("=" * 70)
-    print("XGBoost 전체 데이터 재학습 시작")
-
-    print(
-        f"사용 iteration       : "
-        f"{final_iterations}"
-    )
-
-    print(
-        "Device               : CPU"
-    )
-
-    print("=" * 70)
-
-    final_start = (
-        time.time()
-    )
-
-    final_model.fit(
-        X_full,
-        y_full,
-        verbose=False,
-    )
-
-    final_elapsed = (
-        time.time()
-        - final_start
-    )
-
-    print(
-        f"전체 데이터 재학습 완료: "
-        f"{final_elapsed:.1f}초"
-    )
-
-    # -----------------------------------------------------
-    # 최종 Model artifact
-    # -----------------------------------------------------
-
-    artifact = {
-        "model": final_model,
-        "preprocessor": final_preprocessor,
-
-        "features": features,
-        "cat_cols": cat_cols,
-        "id_like_cols": id_like_cols,
-        "num_cols": num_cols,
-
-        "best_iteration": int(
-            best_iteration
-        ),
-
-        "final_iterations": int(
-            final_iterations
-        ),
-
-        "validation_brier": float(
-            brier
-        ),
-
-        "validation_score": float(
-            validation_score
-        ),
-
-        "model_name": EXPERIMENT_NAME,
-
-        "xgboost_version": (
-            xgb.__version__
-        ),
-    }
-
-    # -----------------------------------------------------
-    # 모델 저장
-    # -----------------------------------------------------
-
-    MODEL_DIR.mkdir(
-        parents=True,
-        exist_ok=False,
-    )
-
-    joblib.dump(
-        artifact,
-        MODEL_PATH,
-        compress=3,
-    )
-
-    shutil.copy2(
-        "./train.py",
-        MODEL_DIR / "train.py",
-    )
-
-    print("=" * 70)
-    print("XGBoost 모델 저장 완료")
-
-    print(
-        f"저장 경로            : "
-        f"{MODEL_PATH}"
-    )
-
-    print(
-        f"Final iterations     : "
-        f"{final_iterations}"
-    )
-
-    print(
-        f"Validation Brier     : "
-        f"{brier:.10f}"
-    )
-
-    print(
-        f"Validation Score     : "
-        f"{validation_score:.4f}"
-    )
-
-    print(
-        f"train.py snapshot    : "
-        f"{MODEL_DIR / 'train.py'}"
-    )
-
-    print("=" * 70)
+    if args.mode == "validation":
+        run_validation(device)
+    else:
+        run_final(device, args.best_epoch)
 
 
 if __name__ == "__main__":
