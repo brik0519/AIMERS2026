@@ -1,0 +1,2 @@
+﻿baseline_pair,baseline_pair_brier,baseline_pair_raw_skill,triple_brier,triple_raw_skill,delta_brier_triple_minus_baseline,delta_raw_skill_triple_minus_baseline,incremental_model,incremental_weight,decision
+cb_v002+xgb_v002,0.24575778638237364,1600.1172659949825,0.2457560561042701,1600.8100585408135,-1.730278103545535e-06,0.6927925458310256,mlp_v003,0.046655808497602244,GO
