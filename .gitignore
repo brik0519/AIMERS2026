@@ -1,10 +1,22 @@
-/data/*.csv
-/data
+# Data
+data/train.csv
+data/trackman_history.csv
+
+# Data(용량이 큰 파일 제거)
+data/mlp/
+data/mlp_2024Validation/
 
 # 용량이 큰 Model 파일 제거.
 **/et_v001.pkl
 
+# macOS
 **/.DS_Store/**
-**/__pychache__/**
-
 .DS_Store
+
+# Python cache
+__pycache__/
+*.pyc
+
+# 현
+data/data_analyzer.ipynb
+data/mlp_2024Validation/
