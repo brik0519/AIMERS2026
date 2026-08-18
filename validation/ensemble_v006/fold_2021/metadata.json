@@ -1,0 +1,33 @@
+{
+  "fold": 1,
+  "train_seasons": [
+    2019,
+    2020
+  ],
+  "validation_season": 2021,
+  "n_train": 481500,
+  "n_validation": 247088,
+  "cat_brier": 0.24571312555593602,
+  "cat_bss": 1290.9630961265184,
+  "cat_best_iteration": 64,
+  "cat_final_iterations": 65,
+  "cat_elapsed_seconds": 33.537843227386475,
+  "xgb_brier": 0.24620932933802114,
+  "xgb_bss": 1091.625770019644,
+  "xgb_best_iteration": 102,
+  "xgb_final_iterations": 103,
+  "xgb_elapsed_seconds": 38.346460819244385,
+  "prediction_corr": 0.9011392255685302,
+  "residual_corr": 0.9992248563368228,
+  "residual_covariance": 0.24571531150597198,
+  "fixed_cat_weight": 0.5655685,
+  "fixed_ensemble_brier": 0.24583491572700436,
+  "walk_forward_cat_weight": 0.5655685,
+  "walk_forward_ensemble_brier": 0.24583491572700436,
+  "diagnostic_opt_cat_weight": 1.0,
+  "diagnostic_opt_ensemble_brier": 0.24571312555593602,
+  "best_base_brier": 0.24571312555593602,
+  "fixed_blend_gain": -0.00012179017106833667,
+  "walk_forward_blend_gain": -0.00012179017106833667,
+  "diagnostic_opt_blend_gain": 0.0
+}

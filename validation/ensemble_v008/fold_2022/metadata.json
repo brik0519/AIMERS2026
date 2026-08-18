@@ -1,0 +1,125 @@
+{
+  "fold": 2,
+  "train_seasons": [
+    2019,
+    2020,
+    2021
+  ],
+  "validation_season": 2022,
+  "n_train": 728588,
+  "n_validation": 247472,
+  "cat_brier": 0.24346601560064687,
+  "cat_bss": 2286.6872063043165,
+  "cat_best_iteration": 75,
+  "cat_final_iterations": 76,
+  "cat_elapsed_seconds": 52.544907569885254,
+  "xgb_brier": 0.24360098085622803,
+  "xgb_bss": 2232.519883598738,
+  "xgb_best_iteration": 139,
+  "xgb_final_iterations": 140,
+  "xgb_elapsed_seconds": 44.51920771598816,
+  "reliability_state": {
+    "alpha": 36.02572028527288,
+    "beta": 28.42656784065151,
+    "prior_mean": 0.5589517662256958,
+    "prior_strength": 64.4522881259244,
+    "prior_std": 0.06137164910341891,
+    "n_pitchers": 560,
+    "n_trials": 728588,
+    "n_successes": 395727,
+    "min_pitcher_trials": 1,
+    "optimizer": "L-BFGS-B",
+    "optimizer_success": true,
+    "optimizer_message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH",
+    "negative_log_likelihood": 499605.9006597012
+  },
+  "reliability_train_summary": {
+    "n_valid_rows": 728028,
+    "n_fallback_rows": 560,
+    "mean_abs_shrinkage": 0.008661729149555002,
+    "mean_posterior_std": 0.017789763454900402,
+    "by_count": [
+      {
+        "bin": "n<=10",
+        "n_rows": 5594,
+        "mean_abs_shrinkage": 0.21535463080602713,
+        "mean_posterior_std": 0.05894081799094094
+      },
+      {
+        "bin": "10<n<=50",
+        "n_rows": 20961,
+        "mean_abs_shrinkage": 0.07522845892985955,
+        "mean_posterior_std": 0.05090308255989105
+      },
+      {
+        "bin": "50<n<=200",
+        "n_rows": 65388,
+        "mean_abs_shrinkage": 0.025107753454055384,
+        "mean_posterior_std": 0.036784431248308595
+      },
+      {
+        "bin": "200<n<=1000",
+        "n_rows": 238849,
+        "mean_abs_shrinkage": 0.005811879339011353,
+        "mean_posterior_std": 0.020793610437366897
+      },
+      {
+        "bin": "n>1000",
+        "n_rows": 397236,
+        "mean_abs_shrinkage": 0.0012448933778339123,
+        "mean_posterior_std": 0.01053015841803357
+      }
+    ]
+  },
+  "reliability_validation_summary": {
+    "n_valid_rows": 247384,
+    "n_fallback_rows": 88,
+    "mean_abs_shrinkage": 0.0049236432305688055,
+    "mean_posterior_std": 0.012841271686600306,
+    "by_count": [
+      {
+        "bin": "n<=10",
+        "n_rows": 864,
+        "mean_abs_shrinkage": 0.19784034772085662,
+        "mean_posterior_std": 0.05895757999749049
+      },
+      {
+        "bin": "10<n<=50",
+        "n_rows": 3122,
+        "mean_abs_shrinkage": 0.080104483088432,
+        "mean_posterior_std": 0.050922531143709406
+      },
+      {
+        "bin": "50<n<=200",
+        "n_rows": 10488,
+        "mean_abs_shrinkage": 0.02914956277725977,
+        "mean_posterior_std": 0.036498427731273896
+      },
+      {
+        "bin": "200<n<=1000",
+        "n_rows": 45627,
+        "mean_abs_shrinkage": 0.006433561471543192,
+        "mean_posterior_std": 0.020285488892146313
+      },
+      {
+        "bin": "n>1000",
+        "n_rows": 187283,
+        "mean_abs_shrinkage": 0.001055865063289923,
+        "mean_posterior_std": 0.008855283991829891
+      }
+    ]
+  },
+  "prediction_corr": 0.9668305728501481,
+  "residual_corr": 0.9992923888962232,
+  "residual_covariance": 0.2433540243899881,
+  "fixed_cat_weight": 0.5655685,
+  "fixed_ensemble_brier": 0.24343983463639698,
+  "walk_forward_cat_weight": 1.0,
+  "walk_forward_ensemble_brier": 0.24346601560064687,
+  "diagnostic_opt_cat_weight": 0.6954926043901525,
+  "diagnostic_opt_ensemble_brier": 0.2434340076887394,
+  "best_base_brier": 0.24346601560064687,
+  "fixed_blend_gain": 2.6180964249888916e-05,
+  "walk_forward_blend_gain": 0.0,
+  "diagnostic_opt_blend_gain": 3.200791190746677e-05
+}
