@@ -1,0 +1,18 @@
+﻿experiment_id,date,author,branch,commit,category,features,model,validation,score,lb_score,seed,status,notes
+base_v001,2026-08-08,,,,model,base,RandomForest,2019~2023 -> 2024 holdout,,549.64,42,drop,Baseline. Bagging 계열의 경쟁력이 낮음을 확인.
+et_v001,2026-08-08,,,,model,base,ExtraTrees,,,510.49,,drop,RandomForest보다도 낮은 Public LB. 현재 단계에서 Bagging 계열 추가 실험 우선순위 하향.
+lgb_v002,2026-08-08,,,,model,base,LightGBM,,,748.22,,keep,Boosting 계열의 성능 우위를 확인하는 모델 screening 결과.
+xgb_v001,2026-08-08,,,,model,base,XGBoost,,,759.36,,keep,LightGBM보다 높은 Public LB. CatBoost와의 diversity ensemble 후보로 유지.
+cb_v001,2026-08-08,,,,model,base,CatBoostClassifier,,,783.26,,keep,초기 Model Screening 단일 모델 최고 성능. 이후 앙상블의 핵심 모델로 채택.
+cb_reg_v001,2026-08-08,,,,model,base,CatBoostRegressor,,,774.54,,drop,Brier 계열 지표를 고려해 회귀 문제로 접근. Classification 버전보다 Public LB가 낮아 주력 모델에서 제외.
+ensemble_v001,2026-08-08,,,,ensemble,base,CatBoost + XGBoost,single holdout 기반 ensemble weight 탐색,,807.34,,keep,"cb_v001 + xgb_v001. 단일 CatBoost보다 향상. 2-model diversity ensemble 효과 확인. 과거 exact optimum 비율 CatBoost 56.56%, XGBoost 43.44%."
+skill_v001,,,experiment/feature-elo,,feature,Elo-based pitcher skill / temporal skill candidates,,,,747.96,,drop,Elo 기반 투수 능력 수치화 실험. 성능 향상 없음으로 폐기. 투수별 경기 Segment 분리 가능성은 별도 아이디어로 남김.
+mlp_v001,2026-08-14,,experiment/mlp_test,,model,current tabular feature set,MLP,,,632.41,,keep,단일 성능은 낮지만 ML 앙상블과의 예측 diversity 확보 목적으로 유지.
+mlp_v002,,,experiment/mlp_test,,model,current tabular feature set,MLP,,,689.82,,keep,mlp_v001 대비 단일 Public LB 개선.
+ensemble_v002,2026-08-14,,,,ensemble,current tabular feature set,CatBoost + XGBoost + MLP,기존 validation 설계 사용,,818.88,,keep,cb_v001 + xgb_v001 + mlp_v001. 2-model ensemble 807.34 대비 +11.54. DL+ML diversity가 성능 향상에 기여함을 확인. 당시 Validation 설계는 부적절하다고 판단.
+ensemble_v003,,,,,ensemble,current tabular feature set,CatBoost + XGBoost + MLP,,,840.53,,keep,현재까지 확인된 최고 Public LB 중 하나. 제출 아카이브 기준 cb_v001 + xgb_v001 + mlp_v002 조합.
+cb_v002,2026-08-17,,,,model,47 features / categorical 9,CatBoostClassifier,"expanding window OOF: 2019~2020->2021, ... ->2024",,809.11,,keep,"Training objective=Logloss, early stopping metric=BrierScore. 단일 CatBoost v001 대비 Public LB 개선."
+xgb_v002,2026-08-17,,,,model,current tabular feature set,XGBoost,expanding window OOF: validation seasons 2021~2024,,,,keep,expanding OOF 구조로 재설계. 현재 제공된 기록에서 정확한 Public LB는 확인되지 않아 공란.
+mlp_v003,2026-08-17,,experiment/mlp_test,,model,current tabular feature set,MLP,expanding window OOF: validation seasons 2021~2024,,684.25,,keep,현재 feature set을 빠르게 학습하며 비교적 이른 epoch부터 과적합이 시작됨. 단일 LB보다 ensemble diversity 용도에 의미.
+ensemble_v004,2026-08-17,,,,ensemble,current tabular feature set,cb_v002 + xgb_v002 + mlp_v003,expanding_oof,,825.10,,drop,최신 단일 모델 3종 조합. ensemble_v003의 840.53보다 낮아 최고 조합을 대체하지 못함.
+ensemble_v005,2026-08-17,,,,ensemble,current tabular feature set,cb_v002 + xgb_v002 + mlp_v003,"expanding_oof; optimization seasons=2021,2022,2024; season 2023 excluded from optimization",,840,,keep,"가중치 최적화와 평가를 분리. optimization n=748067, evaluation n=993592. pair step=0.01, triple step=0.02. 사용자 확인 기준 Public LB 약 840점이며 정확한 소수점 값은 현재 근거가 없어 840으로 기록."
