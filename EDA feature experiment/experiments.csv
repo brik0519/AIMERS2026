@@ -1,0 +1,10 @@
+﻿experiment_id,date,author,branch,commit,category,features,model,validation,score,lb_score,seed,status,notes
+exp_001,,,,,baseline,Raw47,CatBoost,"Expanding Window 4-Fold (2019-20→2021, 2019-21→2022, 2019-22→2023, 2019-23→2024)",0.24680316,829.4690,42,keep,cb_v002 기준 모델. OOF pooled Brier 기준.
+exp_002,,,,,feature,Temporal10,CatBoost,Expanding Window 4-Fold,0.24679518,840.9992,42,keep,Raw47 대비 OOF Δ +0.00000798. Local 개선은 매우 작지만 Public LB에서는 개선.
+exp_003,,,,,feature,Middle5,CatBoost,Expanding Window 4-Fold,0.24678264,,42,test,단일 seed OOF Δ +0.00002052. Multi-seed 3/5 승으로 안정성 부족.
+exp_004,,,,,feature,Temporal Core / EXP1,CatBoost,Expanding Window 기반 검증,,819.8670,42,drop,Temporal Core 계열. Public LB가 기준 모델보다 악화.
+exp_005,,,,,feature,Count / Interaction EXP4,CatBoost,Expanding Window 기반 검증,,818.2141,42,drop,Count/Interaction 계열. Public LB 악화.
+exp_006,,,,,feature,"Breaking × Count 2 (breaking_x_balls, breaking_x_strikes)",CatBoost,Expanding Window 4-Fold,0.24680896,,42,drop,"Raw47 대비 pooled Δ -0.00000580. 2021/2022 악화, 2023/2024 개선. Pooled 악화로 비채택."
+exp_007,,,,,feature,"Offspeed × Count 2 (offspeed_x_balls, offspeed_x_strikes)",CatBoost,Expanding Window 4-Fold,0.24679230,,42,test,단일 seed pooled Δ +0.00001086. 개선폭이 작아 Multi-seed 안정성 검증 진행.
+exp_008,,,,,feature,Breaking + Offspeed × Count 4,CatBoost,Expanding Window 4-Fold,0.24683116,,42,drop,Raw47 대비 pooled Δ -0.00002800. 4/4 validation fold 모두 악화.
+exp_009,,,,,feature,Offspeed × Count 2 Multi-Seed,CatBoost,Expanding Window 4-Fold × 5 seeds,mean 0.24681083,,7|42|123|999|2026,drop,"Basic mean 0.24681990, mean Δ +0.00000907, Δ std 0.00002782, pooled win 3/5, 2024 win 2/5. 안정성 부족으로 비채택."
