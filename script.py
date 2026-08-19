@@ -1,6 +1,6 @@
-# script.py: Ensemble v004 inference
-# cb_v002 + xgb_v002 + mlp_v003 모델을 고정 weight로 결합하여
-# test.csv 각 행을 독립적으로 예측하고 submission.csv를 생성한다.
+# script.py: MLP mlp_v003 inference
+# train.py에서 저장한 Final bundle을 로드하여
+# test.csv 각 행을 독립적으로 추론하고 submission.csv를 생성한다.
 
 from __future__ import annotations
 
@@ -19,55 +19,22 @@ import torch.nn as nn
 # 실험 설정
 # =========================================================
 
-EXPERIMENT_NAME = "ensemble_v005"
+EXPERIMENT_NAME = "mlp_v003"
 
 DATA_DIR = Path("./data")
 
 MODEL_ROOT = Path("./model")
-
-CB_EXPERIMENT_NAME = "cb_v002"
-XGB_EXPERIMENT_NAME = "xgb_v002"
-MLP_EXPERIMENT_NAME = "mlp_v003"
-
-CB_MODEL_DIR = MODEL_ROOT / CB_EXPERIMENT_NAME
-CB_MODEL_PATH = (
-    CB_MODEL_DIR
-    / f"{CB_EXPERIMENT_NAME}.pkl"
-)
-
-XGB_MODEL_DIR = MODEL_ROOT / XGB_EXPERIMENT_NAME
-XGB_MODEL_PATH = (
-    XGB_MODEL_DIR
-    / f"{XGB_EXPERIMENT_NAME}.pkl"
-)
-
-MLP_MODEL_DIR = MODEL_ROOT / MLP_EXPERIMENT_NAME
-MLP_MODEL_PATH = (
-    MLP_MODEL_DIR
-    / f"{MLP_EXPERIMENT_NAME}.pkl"
-)
-
+MODEL_DIR = MODEL_ROOT / EXPERIMENT_NAME
+MODEL_PATH = MODEL_DIR / f"{EXPERIMENT_NAME}.pkl"
 
 OUTPUT_DIR = Path("./output")
 
 TEST_PATH = DATA_DIR / "test.csv"
-SAMPLE_SUB_PATH = (
-    DATA_DIR
-    / "sample_submission.csv"
-)
-OUTPUT_PATH = (
-    OUTPUT_DIR
-    / "submission.csv"
-)
+SAMPLE_SUB_PATH = DATA_DIR / "sample_submission.csv"
+OUTPUT_PATH = OUTPUT_DIR / "submission.csv"
 
 ID = "row_id"
 TARGET = "control_success"
-
-MODEL_NAMES = (
-    CB_EXPERIMENT_NAME,
-    XGB_EXPERIMENT_NAME,
-    MLP_EXPERIMENT_NAME,
-)
 
 
 # =========================================================
@@ -79,10 +46,7 @@ def get_device() -> torch.device:
         return torch.device("cuda")
 
     if (
-        hasattr(
-            torch.backends,
-            "mps",
-        )
+        hasattr(torch.backends, "mps")
         and torch.backends.mps.is_available()
     ):
         return torch.device("mps")
@@ -91,294 +55,19 @@ def get_device() -> torch.device:
 
 
 # =========================================================
-# Ensemble weight
-# =========================================================
-#
-# ensemble_v004 train.py 실행 후 metadata.json의
-# global_best.weights 값으로 반드시 교체한다.
-#
-# 평가 서버에서는 validation 결과 파일에 의존하지 않고,
-# 아래 고정 weight만 사용한다.
-#
-ENSEMBLE_WEIGHTS = {
-    "cb_v002": 0.857980818205651,
-    "xgb_v002": 0.09536337329674678,
-    "mlp_v003": 0.046655808497602244,
-}
-
-
-def load_ensemble_weights() -> dict[str, float]:
-    weights = {}
-
-    for model_name in MODEL_NAMES:
-        raw_weight = ENSEMBLE_WEIGHTS.get(
-            model_name
-        )
-
-        if raw_weight is None:
-            raise ValueError(
-                "ensemble_v005 weight가 아직 확정되지 않았습니다. "
-                "train_ensemble_v005.py 실행 후 "
-                "metadata.json의 global_best.weights를 "
-                "ENSEMBLE_WEIGHTS에 입력하세요."
-            )
-
-        weight = float(
-            raw_weight
-        )
-
-        if not np.isfinite(
-            weight
-        ):
-            raise ValueError(
-                f"{model_name} weight가 유한한 값이 아닙니다."
-            )
-
-        if weight < 0.0:
-            raise ValueError(
-                f"{model_name} weight가 음수입니다."
-            )
-
-        weights[
-            model_name
-        ] = weight
-
-    weight_sum = float(
-        sum(
-            weights.values()
-        )
-    )
-
-    if weight_sum <= 0.0:
-        raise ValueError(
-            "Ensemble weight 합이 0 이하입니다."
-        )
-
-    return {
-        model_name:
-            weight / weight_sum
-        for model_name, weight
-        in weights.items()
-    }
-
-
-# =========================================================
-# CatBoost preprocessing / inference
-# =========================================================
-
-CB_CAT_COLS = [
-    "top_bottom",
-    "game_type",
-    "base_state",
-    "pitcher_id",
-    "batter_id",
-    "pitcher_team_id",
-    "batter_team_id",
-    "pitcher_hand",
-    "batter_hand",
-]
-
-
-def prepare_cb_features(
-    df: pd.DataFrame,
-    features: list[str],
-    cat_cols: list[str],
-) -> pd.DataFrame:
-    missing_features = [
-        column
-        for column in features
-        if column not in df.columns
-    ]
-
-    if missing_features:
-        raise ValueError(
-            "CatBoost 입력 Feature가 없습니다: "
-            + ", ".join(
-                missing_features
-            )
-        )
-
-    X = df[
-        features
-    ].copy()
-
-    for column in cat_cols:
-        X[column] = (
-            X[column]
-            .fillna("__MISSING__")
-            .astype(str)
-        )
-
-    return X
-
-
-def predict_catboost(
-    test: pd.DataFrame,
-) -> np.ndarray:
-    if not CB_MODEL_PATH.exists():
-        raise FileNotFoundError(
-            f"CatBoost 모델이 없습니다: "
-            f"{CB_MODEL_PATH}"
-        )
-
-    model = joblib.load(
-        CB_MODEL_PATH
-    )
-
-    features = [
-        column
-        for column in test.columns
-        if column != ID
-    ]
-
-    cat_cols = [
-        column
-        for column in CB_CAT_COLS
-        if column in features
-    ]
-
-    X_test = prepare_cb_features(
-        test,
-        features,
-        cat_cols,
-    )
-
-    prediction = (
-        model.predict_proba(
-            X_test
-        )[:, 1]
-    )
-
-    return np.asarray(
-        prediction,
-        dtype=np.float64,
-    )
-
-
-# =========================================================
-# XGBoost preprocessing / inference
-# =========================================================
-
-def prepare_xgb_raw_features(
-    df: pd.DataFrame,
-    features: list[str],
-    id_like_cols: list[str],
-) -> pd.DataFrame:
-    missing_features = [
-        column
-        for column in features
-        if column not in df.columns
-    ]
-
-    if missing_features:
-        raise ValueError(
-            "XGBoost 입력 Feature가 없습니다: "
-            + ", ".join(
-                missing_features
-            )
-        )
-
-    X = df[
-        features
-    ].copy()
-
-    for column in id_like_cols:
-        if column in X.columns:
-            X[column] = (
-                pd.to_numeric(
-                    X[column],
-                    errors="coerce",
-                )
-            )
-
-    return X
-
-
-def predict_xgboost(
-    test: pd.DataFrame,
-) -> np.ndarray:
-    if not XGB_MODEL_PATH.exists():
-        raise FileNotFoundError(
-            f"XGBoost 모델이 없습니다: "
-            f"{XGB_MODEL_PATH}"
-        )
-
-    artifact = joblib.load(
-        XGB_MODEL_PATH
-    )
-
-    required_keys = {
-        "model",
-        "preprocessor",
-        "features",
-        "id_like_cols",
-    }
-
-    missing = (
-        required_keys
-        - set(
-            artifact.keys()
-        )
-    )
-
-    if missing:
-        raise ValueError(
-            "XGBoost artifact key 누락: "
-            + ", ".join(
-                sorted(missing)
-            )
-        )
-
-    model = artifact[
-        "model"
-    ]
-
-    preprocessor = artifact[
-        "preprocessor"
-    ]
-
-    features = artifact[
-        "features"
-    ]
-
-    id_like_cols = artifact[
-        "id_like_cols"
-    ]
-
-    X_raw = (
-        prepare_xgb_raw_features(
-            test,
-            features,
-            id_like_cols,
-        )
-    )
-
-    X_test = (
-        preprocessor.transform(
-            X_raw
-        )
-    )
-
-    prediction = (
-        model.predict_proba(
-            X_test
-        )[:, 1]
-    )
-
-    return np.asarray(
-        prediction,
-        dtype=np.float64,
-    )
-
-
-# =========================================================
-# MLP preprocessing
+# Feature Engineering
 # =========================================================
 
 def make_count_state(
     balls: pd.Series,
     strikes: pd.Series,
 ) -> pd.Series:
+    """
+    현재 행의 balls_before / strikes_before만 이용해 count_state 생성.
+
+    다른 test 행이나 test 전체 통계는 사용하지 않는다.
+    """
+
     balls_numeric = pd.to_numeric(
         balls,
         errors="coerce",
@@ -406,75 +95,27 @@ def make_count_state(
         .astype(str)
     )
 
-    result = result.astype(
-        object
-    )
-
-    result.loc[
-        missing
-    ] = None
+    result = result.astype(object)
+    result.loc[missing] = None
 
     return result
 
 
-def normalize_category_value(
-    value: Any,
-) -> str | None:
-    if pd.isna(
-        value
-    ):
-        return None
-
-    if isinstance(
-        value,
-        (
-            float,
-            np.floating,
-        ),
-    ):
-        if (
-            np.isfinite(
-                value
-            )
-            and float(
-                value
-            ).is_integer()
-        ):
-            return str(
-                int(
-                    value
-                )
-            )
-
-    if isinstance(
-        value,
-        (
-            int,
-            np.integer,
-        ),
-    ):
-        return str(
-            int(
-                value
-            )
-        )
-
-    return str(
-        value
-    )
-
-
-def build_mlp_feature_frame(
+def build_feature_frame(
     df: pd.DataFrame,
     preprocessor: dict[str, Any],
 ) -> pd.DataFrame:
+    """
+    Final preprocessor가 기대하는 Feature만 생성한다.
+
+    test 전체 평균/빈도/순위/누적 통계는 계산하지 않는다.
+    """
+
     X = df.copy()
 
     if (
         "count_state"
-        in preprocessor[
-            "categorical_columns"
-        ]
+        in preprocessor["categorical_columns"]
     ):
         required = {
             "balls_before",
@@ -483,26 +124,22 @@ def build_mlp_feature_frame(
 
         missing = (
             required
-            - set(
-                X.columns
-            )
+            - set(X.columns)
         )
 
         if missing:
             raise ValueError(
-                "MLP count_state 생성 컬럼 누락: "
+                "count_state 생성에 필요한 컬럼이 없습니다: "
                 + ", ".join(
-                    sorted(
-                        missing
-                    )
+                    sorted(missing)
                 )
             )
 
-        X[
-            "count_state"
-        ] = make_count_state(
-            X["balls_before"],
-            X["strikes_before"],
+        X["count_state"] = (
+            make_count_state(
+                X["balls_before"],
+                X["strikes_before"],
+            )
         )
 
     required_features = (
@@ -526,7 +163,7 @@ def build_mlp_feature_frame(
 
     if missing_features:
         raise ValueError(
-            "MLP 입력 Feature가 없습니다: "
+            "입력 데이터에 학습 Feature가 없습니다: "
             + ", ".join(
                 missing_features
             )
@@ -537,16 +174,47 @@ def build_mlp_feature_frame(
     ].copy()
 
 
-def transform_mlp_categorical(
+# =========================================================
+# Preprocessor transform
+# =========================================================
+
+def normalize_category_value(
+    value: Any,
+) -> str | None:
+    if pd.isna(value):
+        return None
+
+    if isinstance(
+        value,
+        (float, np.floating),
+    ):
+        if (
+            np.isfinite(value)
+            and float(value).is_integer()
+        ):
+            return str(
+                int(value)
+            )
+
+    if isinstance(
+        value,
+        (int, np.integer),
+    ):
+        return str(
+            int(value)
+        )
+
+    return str(value)
+
+
+def transform_categorical(
     series: pd.Series,
     mapping: dict[str, int],
     unknown_index: int,
     missing_index: int,
 ) -> np.ndarray:
     output = np.empty(
-        len(
-            series
-        ),
+        len(series),
         dtype=np.int64,
     )
 
@@ -563,21 +231,21 @@ def transform_mlp_categorical(
         )
 
         if value is None:
-            output[
-                index
-            ] = missing_index
+            output[index] = (
+                missing_index
+            )
         else:
-            output[
-                index
-            ] = mapping.get(
-                value,
-                unknown_index,
+            output[index] = (
+                mapping.get(
+                    value,
+                    unknown_index,
+                )
             )
 
     return output
 
 
-def transform_mlp_numeric(
+def transform_numeric(
     series: pd.Series,
     stats: dict[str, float],
 ) -> np.ndarray:
@@ -589,18 +257,11 @@ def transform_mlp_numeric(
     values = (
         numeric
         .replace(
-            [
-                np.inf,
-                -np.inf,
-            ],
+            [np.inf, -np.inf],
             np.nan,
         )
         .fillna(
-            float(
-                stats[
-                    "median"
-                ]
-            )
+            float(stats["median"])
         )
         .to_numpy(
             dtype=np.float64,
@@ -610,15 +271,9 @@ def transform_mlp_numeric(
 
     values = (
         values
-        - float(
-            stats[
-                "mean"
-            ]
-        )
+        - float(stats["mean"])
     ) / float(
-        stats[
-            "std"
-        ]
+        stats["std"]
     )
 
     values = values.astype(
@@ -630,14 +285,14 @@ def transform_mlp_numeric(
         values
     ).all():
         raise RuntimeError(
-            "MLP numeric transform 후 "
+            "Numeric transform 후 "
             "NaN/Inf가 발생했습니다."
         )
 
     return values
 
 
-def transform_mlp_dataframe(
+def transform_dataframe(
     df: pd.DataFrame,
     preprocessor: dict[str, Any],
 ) -> tuple[
@@ -645,7 +300,7 @@ def transform_mlp_dataframe(
     np.ndarray,
 ]:
     feature_frame = (
-        build_mlp_feature_frame(
+        build_feature_frame(
             df,
             preprocessor,
         )
@@ -664,28 +319,26 @@ def transform_mlp_dataframe(
     )
 
     unknown_index = int(
-        preprocessor[
-            "unknown_index"
-        ]
+        preprocessor["unknown_index"]
     )
 
     missing_index = int(
-        preprocessor[
-            "missing_index"
-        ]
+        preprocessor["missing_index"]
     )
 
     categorical_arrays = []
 
     for column in categorical_columns:
+        mapping = (
+            preprocessor[
+                "category_maps"
+            ][column]
+        )
+
         encoded = (
-            transform_mlp_categorical(
-                feature_frame[
-                    column
-                ],
-                preprocessor[
-                    "category_maps"
-                ][column],
+            transform_categorical(
+                feature_frame[column],
+                mapping,
                 unknown_index,
                 missing_index,
             )
@@ -704,24 +357,23 @@ def transform_mlp_dataframe(
         )
     else:
         categorical = np.empty(
-            (
-                len(df),
-                0,
-            ),
+            (len(df), 0),
             dtype=np.int64,
         )
 
     numeric_arrays = []
 
     for column in numeric_columns:
+        stats = (
+            preprocessor[
+                "numeric_stats"
+            ][column]
+        )
+
         transformed = (
-            transform_mlp_numeric(
-                feature_frame[
-                    column
-                ],
-                preprocessor[
-                    "numeric_stats"
-                ][column],
+            transform_numeric(
+                feature_frame[column],
+                stats,
             )
         )
 
@@ -738,10 +390,7 @@ def transform_mlp_dataframe(
         )
     else:
         numeric = np.empty(
-            (
-                len(df),
-                0,
-            ),
+            (len(df), 0),
             dtype=np.float32,
         )
 
@@ -752,12 +401,10 @@ def transform_mlp_dataframe(
 
 
 # =========================================================
-# MLP model
+# Model
 # =========================================================
 
-class TabularMLP(
-    nn.Module
-):
+class TabularMLP(nn.Module):
     def __init__(
         self,
         cardinalities: list[int],
@@ -768,25 +415,32 @@ class TabularMLP(
     ) -> None:
         super().__init__()
 
-        self.embeddings = (
-            nn.ModuleList(
-                [
-                    nn.Embedding(
-                        num_embeddings=int(
-                            cardinality
-                        ),
-                        embedding_dim=int(
-                            dim
-                        ),
-                        padding_idx=0,
-                    )
-                    for cardinality, dim
-                    in zip(
-                        cardinalities,
-                        embedding_dims,
-                    )
-                ]
+        if len(
+            cardinalities
+        ) != len(
+            embedding_dims
+        ):
+            raise ValueError(
+                "cardinalities and embedding_dims length mismatch"
             )
+
+        self.embeddings = nn.ModuleList(
+            [
+                nn.Embedding(
+                    num_embeddings=int(
+                        cardinality
+                    ),
+                    embedding_dim=int(
+                        dim
+                    ),
+                    padding_idx=0,
+                )
+                for cardinality, dim
+                in zip(
+                    cardinalities,
+                    embedding_dims,
+                )
+            ]
         )
 
         embedding_total = int(
@@ -807,7 +461,9 @@ class TabularMLP(
                 "MLP input feature가 없습니다."
             )
 
-        layers = []
+        layers: list[
+            nn.Module
+        ] = []
 
         prev_dim = input_dim
 
@@ -828,21 +484,15 @@ class TabularMLP(
                 ]
             )
 
-            prev_dim = (
-                hidden_dim
-            )
+            prev_dim = hidden_dim
 
-        self.backbone = (
-            nn.Sequential(
-                *layers
-            )
+        self.backbone = nn.Sequential(
+            *layers
         )
 
-        self.head = (
-            nn.Linear(
-                prev_dim,
-                1,
-            )
+        self.head = nn.Linear(
+            prev_dim,
+            1,
         )
 
     def forward(
@@ -850,19 +500,21 @@ class TabularMLP(
         categorical: torch.Tensor,
         numeric: torch.Tensor,
     ) -> torch.Tensor:
-        parts = []
+        parts: list[
+            torch.Tensor
+        ] = []
 
         if len(
             self.embeddings
         ) > 0:
             embedded = [
-                embedding(
+                emb(
                     categorical[
                         :,
                         index,
                     ]
                 )
-                for index, embedding
+                for index, emb
                 in enumerate(
                     self.embeddings
                 )
@@ -883,12 +535,8 @@ class TabularMLP(
             )
 
         x = (
-            parts[
-                0
-            ]
-            if len(
-                parts
-            ) == 1
+            parts[0]
+            if len(parts) == 1
             else torch.cat(
                 parts,
                 dim=1,
@@ -899,60 +547,111 @@ class TabularMLP(
             x
         )
 
-        return (
-            self.head(
-                x
-            )
-            .squeeze(
-                1
-            )
+        return self.head(
+            x
+        ).squeeze(
+            1
         )
 
 
-def create_mlp_model(
+def create_model(
     model_config: dict[str, Any],
 ) -> TabularMLP:
     return TabularMLP(
-        cardinalities=(
-            model_config[
-                "cardinalities"
-            ]
-        ),
-        embedding_dims=(
-            model_config[
-                "embedding_dims"
-            ]
-        ),
-        n_num_features=(
-            model_config[
-                "n_num_features"
-            ]
-        ),
-        hidden_dims=(
-            model_config[
-                "hidden_dims"
-            ]
-        ),
-        dropout=(
-            model_config[
-                "dropout"
-            ]
-        ),
+        cardinalities=model_config[
+            "cardinalities"
+        ],
+        embedding_dims=model_config[
+            "embedding_dims"
+        ],
+        n_num_features=model_config[
+            "n_num_features"
+        ],
+        hidden_dims=model_config[
+            "hidden_dims"
+        ],
+        dropout=model_config[
+            "dropout"
+        ],
     )
 
 
-def predict_mlp(
-    test: pd.DataFrame,
-    device: torch.device,
-) -> np.ndarray:
-    if not MLP_MODEL_PATH.exists():
-        raise FileNotFoundError(
-            f"MLP 모델이 없습니다: "
-            f"{MLP_MODEL_PATH}"
+# =========================================================
+# Prediction 검증
+# =========================================================
+
+def validate_predictions(
+    predictions: np.ndarray,
+    n_expected: int,
+) -> None:
+    predictions = np.asarray(
+        predictions,
+        dtype=np.float64,
+    )
+
+    if len(
+        predictions
+    ) != n_expected:
+        raise RuntimeError(
+            "예측 수와 test 행 수가 다릅니다."
         )
 
+    if not np.isfinite(
+        predictions
+    ).all():
+        raise RuntimeError(
+            "예측값에 NaN 또는 무한대가 있습니다."
+        )
+
+    if not (
+        (
+            predictions
+            >= 0.0
+        )
+        & (
+            predictions
+            <= 1.0
+        )
+    ).all():
+        raise RuntimeError(
+            "예측값이 0~1 범위를 벗어났습니다."
+        )
+
+
+# =========================================================
+# Main
+# =========================================================
+
+def main() -> None:
+
+    # -----------------------------------------------------
+    # 파일 확인
+    # -----------------------------------------------------
+
+    if not MODEL_PATH.exists():
+        raise FileNotFoundError(
+            "모델 파일을 찾을 수 없습니다: "
+            f"{MODEL_PATH}"
+        )
+
+    if not TEST_PATH.exists():
+        raise FileNotFoundError(
+            "test.csv를 찾을 수 없습니다: "
+            f"{TEST_PATH}"
+        )
+
+    if not SAMPLE_SUB_PATH.exists():
+        raise FileNotFoundError(
+            "sample_submission.csv를 찾을 수 없습니다: "
+            f"{SAMPLE_SUB_PATH}"
+        )
+
+    # -----------------------------------------------------
+    # Bundle 로드
+    # -----------------------------------------------------
+
     bundle = joblib.load(
-        MLP_MODEL_PATH
+        MODEL_PATH
     )
 
     required_keys = {
@@ -961,22 +660,28 @@ def predict_mlp(
         "preprocessor",
     }
 
-    missing = (
+    missing_keys = (
         required_keys
         - set(
             bundle.keys()
         )
     )
 
-    if missing:
+    if missing_keys:
         raise ValueError(
-            "MLP bundle key 누락: "
+            "MLP bundle에 필요한 key가 없습니다: "
             + ", ".join(
                 sorted(
-                    missing
+                    missing_keys
                 )
             )
         )
+
+    model_config = (
+        bundle[
+            "model_config"
+        ]
+    )
 
     preprocessor = (
         bundle[
@@ -984,17 +689,115 @@ def predict_mlp(
         ]
     )
 
+    required_preprocessor_keys = {
+        "categorical_columns",
+        "numeric_columns",
+        "cardinalities",
+        "category_maps",
+        "numeric_stats",
+        "unknown_index",
+        "missing_index",
+        "variant",
+    }
+
+    missing_preprocessor = (
+        required_preprocessor_keys
+        - set(
+            preprocessor.keys()
+        )
+    )
+
+    if missing_preprocessor:
+        raise ValueError(
+            "preprocessor에 필요한 key가 없습니다: "
+            + ", ".join(
+                sorted(
+                    missing_preprocessor
+                )
+            )
+        )
+
+    # -----------------------------------------------------
+    # 데이터 로드
+    # -----------------------------------------------------
+
+    test = pd.read_csv(
+        TEST_PATH,
+        encoding="utf-8-sig",
+    )
+
+    submission = pd.read_csv(
+        SAMPLE_SUB_PATH,
+        encoding="utf-8-sig",
+    )
+
+    if ID not in test.columns:
+        raise ValueError(
+            f"test.csv에 {ID}가 없습니다."
+        )
+
+    if ID not in submission.columns:
+        raise ValueError(
+            "sample_submission.csv에 "
+            f"{ID}가 없습니다."
+        )
+
+    if TARGET not in submission.columns:
+        raise ValueError(
+            "sample_submission.csv에 "
+            f"{TARGET}가 없습니다."
+        )
+
+    if len(
+        test
+    ) != len(
+        submission
+    ):
+        raise ValueError(
+            "test.csv와 sample_submission.csv의 "
+            "행 수가 일치하지 않습니다."
+        )
+
+    if not (
+        test[ID]
+        .astype(str)
+        .reset_index(
+            drop=True
+        )
+        .equals(
+            submission[
+                ID
+            ]
+            .astype(str)
+            .reset_index(
+                drop=True
+            )
+        )
+    ):
+        raise ValueError(
+            "test.csv와 sample_submission.csv의 "
+            "row_id 순서가 일치하지 않습니다."
+        )
+
+    # -----------------------------------------------------
+    # Final preprocessor transform
+    # -----------------------------------------------------
+
     numeric, categorical = (
-        transform_mlp_dataframe(
+        transform_dataframe(
             test,
             preprocessor,
         )
     )
 
-    model = create_mlp_model(
-        bundle[
-            "model_config"
-        ]
+    # -----------------------------------------------------
+    # 모델 생성 / weight 로드
+    # -----------------------------------------------------
+
+    device = get_device()
+
+    model = create_model(
+        model_config
     ).to(
         device
     )
@@ -1007,7 +810,44 @@ def predict_mlp(
 
     model.eval()
 
+    print("=" * 70)
+    print("MLP mlp_v003 Inference")
+    print("=" * 70)
+    print(
+        f"Model path           : "
+        f"{MODEL_PATH}"
+    )
+    print(
+        f"Device               : "
+        f"{device}"
+    )
+    print(
+        f"Rows                 : "
+        f"{len(test):,}"
+    )
+    print(
+        f"Numerical features   : "
+        f"{numeric.shape[1]}"
+    )
+    print(
+        f"Categorical features : "
+        f"{categorical.shape[1]}"
+    )
+    print(
+        f"Variant              : "
+        f"{preprocessor.get('variant')}"
+    )
+    print("=" * 70)
+
+    # -----------------------------------------------------
+    # 추론
+    #
+    # Feature는 각 행 자체의 입력값과
+    # train으로 fit된 preprocessor만 사용한다.
+    # -----------------------------------------------------
+
     batch_size = 8192
+
     predictions = []
 
     with torch.inference_mode():
@@ -1017,8 +857,7 @@ def predict_mlp(
             batch_size,
         ):
             end = min(
-                start
-                + batch_size,
+                start + batch_size,
                 len(test),
             )
 
@@ -1064,277 +903,41 @@ def predict_mlp(
                 probability
             )
 
-    return (
-        np.concatenate(
-            predictions
-        )
-        .astype(
-            np.float64,
-            copy=False,
-        )
-    )
-
-
-# =========================================================
-# Validation
-# =========================================================
-
-def validate_predictions(
-    prediction: np.ndarray,
-    n_expected: int,
-    model_name: str,
-) -> None:
-    prediction = np.asarray(
-        prediction,
-        dtype=np.float64,
-    )
-
-    if len(
-        prediction
-    ) != n_expected:
-        raise RuntimeError(
-            f"{model_name}: 예측 수와 "
-            "test 행 수가 다릅니다."
-        )
-
-    if not np.isfinite(
-        prediction
-    ).all():
-        raise RuntimeError(
-            f"{model_name}: 예측에 "
-            "NaN/Inf가 있습니다."
-        )
-
-    if not (
-        (
-            prediction
-            >= 0.0
-        )
-        & (
-            prediction
-            <= 1.0
-        )
-    ).all():
-        raise RuntimeError(
-            f"{model_name}: 예측이 "
-            "0~1 범위를 벗어났습니다."
-        )
-
-
-# =========================================================
-# Main
-# =========================================================
-
-def main() -> None:
-    if not TEST_PATH.exists():
-        raise FileNotFoundError(
-            f"test.csv가 없습니다: "
-            f"{TEST_PATH}"
-        )
-
-    if not SAMPLE_SUB_PATH.exists():
-        raise FileNotFoundError(
-            "sample_submission.csv가 없습니다: "
-            f"{SAMPLE_SUB_PATH}"
-        )
-
-    weights = (
-        load_ensemble_weights()
-    )
-
-    test = pd.read_csv(
-        TEST_PATH,
-        encoding="utf-8-sig",
-    )
-
-    submission = pd.read_csv(
-        SAMPLE_SUB_PATH,
-        encoding="utf-8-sig",
-    )
-
-    if ID not in test.columns:
-        raise ValueError(
-            f"test.csv에 {ID}가 없습니다."
-        )
-
-    if ID not in submission.columns:
-        raise ValueError(
-            f"sample_submission.csv에 "
-            f"{ID}가 없습니다."
-        )
-
-    if TARGET not in submission.columns:
-        raise ValueError(
-            f"sample_submission.csv에 "
-            f"{TARGET}가 없습니다."
-        )
-
-    if len(
-        test
-    ) != len(
-        submission
-    ):
-        raise ValueError(
-            "test.csv와 sample_submission.csv "
-            "행 수가 다릅니다."
-        )
-
-    if not (
-        test[
-            ID
-        ]
-        .astype(
-            str
-        )
-        .reset_index(
-            drop=True
-        )
-        .equals(
-            submission[
-                ID
-            ]
-            .astype(
-                str
-            )
-            .reset_index(
-                drop=True
-            )
-        )
-    ):
-        raise ValueError(
-            "test.csv와 sample_submission.csv의 "
-            "row_id 순서가 다릅니다."
-        )
-
-    device = get_device()
-
-    print("=" * 80)
-    print("LG Aimers Ensemble v005 Inference")
-    print("=" * 80)
-    print(f"Rows       : {len(test):,}")
-    print(f"Device     : {device}")
-    print(f"Weights    : {weights}")
-    print("=" * 80)
-
-    # -----------------------------------------------------
-    # 각 모델 독립 추론
-    # -----------------------------------------------------
-
-    cb_prediction = (
-        predict_catboost(
-            test
-        )
-    )
-
-    xgb_prediction = (
-        predict_xgboost(
-            test
-        )
-    )
-
-    mlp_prediction = (
-        predict_mlp(
-            test,
-            device,
-        )
+    predictions = np.concatenate(
+        predictions
+    ).astype(
+        np.float64,
+        copy=False,
     )
 
     validate_predictions(
-        cb_prediction,
-        len(
-            test
-        ),
-        CB_EXPERIMENT_NAME,
-    )
-
-    validate_predictions(
-        xgb_prediction,
-        len(
-            test
-        ),
-        XGB_EXPERIMENT_NAME,
-    )
-
-    validate_predictions(
-        mlp_prediction,
-        len(
-            test
-        ),
-        MLP_EXPERIMENT_NAME,
+        predictions,
+        len(test),
     )
 
     print()
-    print("[Single predictions]")
-
+    print("=" * 70)
+    print("Inference 결과")
+    print("=" * 70)
     print(
-        f"{CB_EXPERIMENT_NAME:<10} "
-        f"mean={cb_prediction.mean():.6f} "
-        f"std={cb_prediction.std():.6f}"
+        f"Prediction mean      : "
+        f"{predictions.mean():.6f}"
     )
-
     print(
-        f"{XGB_EXPERIMENT_NAME:<10} "
-        f"mean={xgb_prediction.mean():.6f} "
-        f"std={xgb_prediction.std():.6f}"
+        f"Prediction std       : "
+        f"{predictions.std():.6f}"
     )
-
     print(
-        f"{MLP_EXPERIMENT_NAME:<10} "
-        f"mean={mlp_prediction.mean():.6f} "
-        f"std={mlp_prediction.std():.6f}"
+        f"Prediction min       : "
+        f"{predictions.min():.6f}"
+    )
+    print(
+        f"Prediction max       : "
+        f"{predictions.max():.6f}"
     )
 
     # -----------------------------------------------------
-    # 고정 weight ensemble
-    #
-    # weight는 공식 train의 OOF에서 미리 결정되었으며
-    # test의 분포/다른 행/통계로 재조정하지 않는다.
-    # -----------------------------------------------------
-
-    prediction = (
-        weights[
-            CB_EXPERIMENT_NAME
-        ]
-        * cb_prediction
-        + weights[
-            XGB_EXPERIMENT_NAME
-        ]
-        * xgb_prediction
-        + weights[
-            MLP_EXPERIMENT_NAME
-        ]
-        * mlp_prediction
-    )
-
-    validate_predictions(
-        prediction,
-        len(
-            test
-        ),
-        EXPERIMENT_NAME,
-    )
-
-    print()
-    print("[Ensemble prediction]")
-
-    print(
-        f"mean={prediction.mean():.6f}"
-    )
-
-    print(
-        f"std ={prediction.std():.6f}"
-    )
-
-    print(
-        f"min ={prediction.min():.6f}"
-    )
-
-    print(
-        f"max ={prediction.max():.6f}"
-    )
-
-    # -----------------------------------------------------
-    # Submission
+    # Submission 저장
     # -----------------------------------------------------
 
     submission = (
@@ -1343,7 +946,7 @@ def main() -> None:
 
     submission[
         TARGET
-    ] = prediction
+    ] = predictions
 
     OUTPUT_DIR.mkdir(
         parents=True,
@@ -1357,11 +960,18 @@ def main() -> None:
     )
 
     print()
-    print("=" * 80)
+    print("=" * 70)
     print("Submission 저장 완료")
-    print("=" * 80)
-    print(f"- {OUTPUT_PATH}")
-    print("=" * 80)
+    print("=" * 70)
+    print(
+        f"저장 경로            : "
+        f"{OUTPUT_PATH}"
+    )
+    print(
+        f"행 수                : "
+        f"{len(submission)}"
+    )
+    print("=" * 70)
 
 
 if __name__ == "__main__":
