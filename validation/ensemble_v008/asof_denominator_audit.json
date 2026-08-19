@@ -1,0 +1,67 @@
+{
+  "definition_check": "Tests whether asof_pitcher_n * asof_pitcher_success_rate is approximately integer.",
+  "n_total_rows": 1475092,
+  "n_valid_rows": 1474300,
+  "valid_row_share": 0.9994630843364346,
+  "n_zero_history_rows": 0,
+  "integer_distance": {
+    "mean": 0.0006655831549213886,
+    "median": 0.00033800000005612674,
+    "p90": 0.001751000000035674,
+    "p95": 0.0024920000000747677,
+    "p99": 0.004125000000385626,
+    "p999": 0.005821402000149416,
+    "max": 0.007588000000396278
+  },
+  "share_within_tolerance": {
+    "1e-08": 0.024286101878857762,
+    "1e-06": 0.025190259784304416,
+    "1e-04": 0.24848877433358205,
+    "1e-03": 0.7829268127246829,
+    "1e-02": 1.0
+  },
+  "by_season": [
+    {
+      "season": 2019,
+      "n": 237058,
+      "median_integer_distance": 0.0001080000000115433,
+      "p99_integer_distance": 0.0010219999999208085,
+      "share_within_1e-3": 0.988711623315813
+    },
+    {
+      "season": 2020,
+      "n": 243977,
+      "median_integer_distance": 0.0002729999999928623,
+      "p99_integer_distance": 0.0019919999999729043,
+      "share_within_1e-3": 0.8819683822655414
+    },
+    {
+      "season": 2021,
+      "n": 246993,
+      "median_integer_distance": 0.0003620000001092194,
+      "p99_integer_distance": 0.002850000000307773,
+      "share_within_1e-3": 0.8027555436793755
+    },
+    {
+      "season": 2022,
+      "n": 247384,
+      "median_integer_distance": 0.0004720000001725566,
+      "p99_integer_distance": 0.0038879999992786907,
+      "share_within_1e-3": 0.7149451864308121
+    },
+    {
+      "season": 2023,
+      "n": 245462,
+      "median_integer_distance": 0.0005969999997432751,
+      "p99_integer_distance": 0.004582390000259678,
+      "share_within_1e-3": 0.656411175660591
+    },
+    {
+      "season": 2024,
+      "n": 253426,
+      "median_integer_distance": 0.0005440000001044609,
+      "p99_integer_distance": 0.0053520000001299195,
+      "share_within_1e-3": 0.6646595061280216
+    }
+  ]
+}
