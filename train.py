@@ -1,247 +1,82 @@
-"""Train mlp_v003 from NumPy artifacts created by data/mlp/mlp_preprocess.py.
-
-Workflow
---------
-1) Expanding preprocessing
-   python data/mlp/mlp_preprocess.py --mode expanding --variant processed
-
-2) 4-Fold Expanding Window validation
-   python train.py --mode expanding
-
-3) Final preprocessing using official train only
-   python data/mlp/mlp_preprocess.py --mode final --variant processed
-
-4) Final training
-   python train.py --mode final
-
-The training script never derives features or statistics from test.csv.
-It only consumes preprocessed NumPy arrays and preprocessor.json.
-"""
-
-
-from __future__ import annotations
-
-
-
-import argparse
+# ensemble_search.py
 import json
-import math
-import random
-import shutil
-import time
+from itertools import combinations
 from pathlib import Path
-from typing import Any
 
-import joblib
 import numpy as np
 import pandas as pd
-import torch
-import torch.nn as nn
-from torch.utils.data import Dataset
-from torch.utils.data import DataLoader
 
 
 # =========================================================
-# 실험 설정
+# 경로 / 설정
 # =========================================================
-EXPERIMENT_NAME = "mlp_v003"
-VARIANT = "processed"  # "processed" or "hybrid"
-
-ID = "row_id"
-TARGET = "control_success"
-
-SEED = 42
-BATCH_SIZE = 4096
-VALID_BATCH_SIZE = 4096
-MAX_EPOCHS = 50
-EARLY_STOPPING_PATIENCE = 5
-
-LEARNING_RATE = 1e-3
-WEIGHT_DECAY = 1e-5
-HIDDEN_DIMS = [256, 256, 128]
-DROPOUT = 0.15
-NUM_WORKERS = 0
-
-
-# =========================================================
-# 경로
-# =========================================================
-DATA_DIR = Path("./data")
-
-MODEL_ROOT = Path("./model")
-MODEL_PATH = MODEL_ROOT / f"{EXPERIMENT_NAME}.pkl"
+EXPERIMENT_NAME = "ensemble_v009"
 
 VALIDATION_ROOT = Path("./validation")
 VALIDATION_DIR = VALIDATION_ROOT / EXPERIMENT_NAME
+OUTPUT_DIR = VALIDATION_DIR
 
-OUTPUT_DIR = Path("./output")
-TEST_PATH = DATA_DIR / "test.csv"
-SAMPLE_SUB_PATH = DATA_DIR / "sample_submission.csv"
-OUTPUT_PATH = OUTPUT_DIR / "submission.csv"
-
-MLP_DATA_DIR = DATA_DIR / "mlp" / VARIANT
-EXPANDING_DATA_DIR = MLP_DATA_DIR / "expanding"
-FINAL_DATA_DIR = MLP_DATA_DIR / "final"
-
-FINAL_EPOCH_STRATEGY = "latest_fold"
-
-EXPANDING_FOLDS = [
-    {"fold": 1, "train_seasons": [2019, 2020], "validation_season": 2021},
-    {"fold": 2, "train_seasons": [2019, 2020, 2021], "validation_season": 2022},
-    {"fold": 3, "train_seasons": [2019, 2020, 2021, 2022], "validation_season": 2023},
-    {
-        "fold": 4,
-        "train_seasons": [2019, 2020, 2021, 2022, 2023],
-        "validation_season": 2024,
+MODEL_CONFIG = {
+    "cb_v002": {
+        "path": VALIDATION_ROOT / "cb_v002" / "oof_pred.csv",
+        "prediction_candidates": ["prediction"],
     },
-]
+    "xgb_v002": {
+        "path": VALIDATION_ROOT / "xgb_v002" / "oof_pred.csv",
+        "prediction_candidates": ["prediction"],
+    },
+    "mlp_v003_hybrid": {
+        "path": VALIDATION_ROOT / "mlp_v003_hybrid" / "oof_pred.csv",
+        "prediction_candidates": ["prediction"],
+    },
+}
 
+BASELINE_PAIR = ("cb_v002", "xgb_v002")
+INCREMENTAL_MODEL = "mlp_v003_hybrid"
+TRIPLE_MODELS = (*BASELINE_PAIR, INCREMENTAL_MODEL)
 
-# =========================================================
-# CLI
-# =========================================================
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--mode",
-        choices=["expanding", "final"],
-        default="expanding",
-        help=(
-            "expanding: 4-Fold Expanding Window Validation; "
-            "final: 전체 train artifact로 Final Model 학습"
-        ),
-    )
-    parser.add_argument(
-        "--best-epoch",
-        type=int,
-        default=None,
-        help=(
-            "final mode에서 선택적으로 지정. 생략하면 "
-            "Expanding metadata의 latest_fold best epoch을 사용."
-        ),
-    )
-    return parser.parse_args()
+# Hybrid MLP OOF만 신규 사용한다.
+# CatBoost/XGBoost는 cb_v002, xgb_v002를 그대로 유지한다.
 
+PAIR_WEIGHT_STEP = 0.01
+TRIPLE_WEIGHT_STEP = 0.02
+EPS = 1e-12
 
-# =========================================================
-# Reproducibility / Device
-# =========================================================
-def seed_everything(seed: int = SEED) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-    if hasattr(torch.backends, "cudnn"):
-        # mlp_v001과 동일한 속도 우선 설정.
-        torch.backends.cudnn.benchmark = True
-
-
-def get_device() -> torch.device:
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-
-    if (
-        hasattr(torch.backends, "mps")
-        and torch.backends.mps.is_available()
-    ):
-        return torch.device("mps")
-
-    return torch.device("cpu")
-
-# =========================================================
-# Class
-# =========================================================
-class TabularNpyDataset(Dataset):
-    """Memory-mapped numeric/categorical arrays with optional targets."""
-
-    def __init__(self, split_dir: str | Path) -> None:
-        self.split_dir = Path(split_dir)
-        self.numeric = np.load(
-            self.split_dir / "numeric.npy", mmap_mode="r"
-        )
-        self.categorical = np.load(
-            self.split_dir / "categorical.npy", mmap_mode="r"
-        )
-        self.row_ids = np.load(
-            self.split_dir / "row_id.npy", mmap_mode="r"
-        )
-
-        target_path = self.split_dir / "target.npy"
-        self.targets = (
-            np.load(target_path, mmap_mode="r")
-            if target_path.exists()
-            else None
-        )
-
-        lengths = {
-            len(self.numeric),
-            len(self.categorical),
-            len(self.row_ids),
-        }
-        if self.targets is not None:
-            lengths.add(len(self.targets))
-        if len(lengths) != 1:
-            raise ValueError(f"Array length mismatch in {self.split_dir}")
-
-    def __len__(self) -> int:
-        return len(self.numeric)
-
-    def __getitem__(self, index: int) -> dict[str, Any]:
-        item: dict[str, Any] = {
-            "numeric": torch.tensor(
-                self.numeric[index], dtype=torch.float32
-            ),
-            "categorical": torch.tensor(
-                self.categorical[index], dtype=torch.long
-            ),
-            "row_id": str(self.row_ids[index]),
-        }
-        if self.targets is not None:
-            item["target"] = torch.tensor(
-                self.targets[index], dtype=torch.float32
-            )
-        return item
-
+# 2023은 weight optimization에서만 제외한다.
+# 최종 고정 weight 평가는 2021~2024 전체 OOF에서 다시 수행한다.
+EXCLUDED_OPTIMIZATION_SEASONS = [2023]
 
 # =========================================================
 # Metric
 # =========================================================
-def calculate_metrics(
-    y_true: np.ndarray,
-    y_pred: np.ndarray,
-) -> dict[str, float]:
+def calculate_metrics(y_true, y_pred):
     y_true = np.asarray(y_true, dtype=np.float64)
     y_pred = np.asarray(y_pred, dtype=np.float64)
 
-    if y_true.ndim != 1 or y_pred.ndim != 1:
-        raise ValueError("y_true and y_pred must be 1-D arrays")
     if len(y_true) != len(y_pred):
-        raise ValueError("y_true and y_pred length mismatch")
+        raise ValueError("y_true와 y_pred 길이가 다릅니다.")
+
     if not np.isfinite(y_true).all():
-        raise ValueError("Non-finite target detected during metric calculation")
+        raise ValueError("target에 NaN 또는 Inf가 있습니다.")
+
     if not np.isfinite(y_pred).all():
-        raise ValueError("Non-finite prediction detected during metric calculation")
+        raise ValueError("prediction에 NaN 또는 Inf가 있습니다.")
 
-    y_pred = np.clip(y_pred, 0.0, 1.0)
+    target_mean = float(y_true.mean())
+    prediction_mean = float(y_pred.mean())
 
-    positive_rate = float(np.mean(y_true))
     brier = float(np.mean((y_pred - y_true) ** 2))
-    baseline_brier = float(positive_rate * (1.0 - positive_rate))
+    baseline_brier = float(target_mean * (1.0 - target_mean))
 
     if baseline_brier <= 0:
-        bss_raw = 0.0
-        bss = 0.0
-    else:
-        bss_raw = float(
-            100000.0 * (1.0 - brier / baseline_brier)
-        )
-        bss = max(0.0, bss_raw)
+        raise ValueError("baseline_brier가 0 이하입니다.")
 
-    eps = 1e-7
-    p = np.clip(y_pred, eps, 1.0 - eps)
+    raw_skill = float(
+        100000.0 * (1.0 - brier / baseline_brier)
+    )
+    competition_bss = float(max(0.0, raw_skill))
+
+    p = np.clip(y_pred, 1e-7, 1.0 - 1e-7)
     logloss = float(
         -np.mean(
             y_true * np.log(p)
@@ -252,1340 +87,2261 @@ def calculate_metrics(
     return {
         "brier": brier,
         "baseline_brier": baseline_brier,
-        "bss_raw": float(bss_raw),
-        "bss": float(bss),
-        "positive_rate": positive_rate,
+        "raw_skill": raw_skill,
+        "competition_bss": competition_bss,
         "logloss": logloss,
-        "prediction_mean": float(np.mean(y_pred)),
-        "prediction_std": float(np.std(y_pred)),
-        "prediction_min": float(np.min(y_pred)),
-        "prediction_max": float(np.max(y_pred)),
+        "target_mean": target_mean,
+        "prediction_mean": prediction_mean,
+        "bias": float(prediction_mean - target_mean),
+        "prediction_std": float(y_pred.std()),
+        "prediction_min": float(y_pred.min()),
+        "prediction_max": float(y_pred.max()),
     }
 
 
 # =========================================================
-# Preprocessor artifact
+# Prediction load / merge
 # =========================================================
-def load_preprocessor(path: Path) -> dict[str, Any]:
+def detect_prediction_column(df, candidates, model_name):
+    for col in candidates:
+        if col in df.columns:
+            return col
+
+    raise ValueError(
+        f"{model_name}: prediction 컬럼을 찾지 못했습니다. "
+        f"columns={list(df.columns)}, candidates={candidates}"
+    )
+
+
+def load_prediction(model_name, config):
+    path = Path(config["path"])
+
     if not path.exists():
         raise FileNotFoundError(
-            f"Preprocessor not found: {path}\n"
-            "Run mlp_preprocess.py first."
+            f"{model_name} prediction 파일이 없습니다: {path}"
         )
 
-    with path.open("r", encoding="utf-8") as file:
-        preprocessor = json.load(file)
+    df = pd.read_csv(path, encoding="utf-8-sig")
 
-    required_keys = {
-        "categorical_columns",
-        "numeric_columns",
-        "cardinalities",
-        "category_maps",
-        "numeric_stats",
-        "unknown_index",
-        "missing_index",
-        "variant",
+    required_cols = {
+        "row_id",
+        "target",
+        "validation_season",
     }
-    missing = sorted(required_keys - set(preprocessor))
+
+    missing = required_cols - set(df.columns)
+
     if missing:
         raise ValueError(
-            f"Missing keys in preprocessor.json: {missing}"
+            f"{model_name}: 필수 컬럼 누락: {missing}"
         )
 
-    if preprocessor["variant"] != VARIANT:
+    if df["row_id"].duplicated().any():
         raise ValueError(
-            "Variant mismatch: "
-            f"train.py VARIANT={VARIANT!r}, "
-            f"preprocessor={preprocessor['variant']!r}"
+            f"{model_name}: row_id 중복이 있습니다."
         )
 
-    return preprocessor
-
-
-def validate_dataset_schema(
-    dataset: TabularNpyDataset,
-    preprocessor: dict[str, Any],
-    split_name: str,
-    require_target: bool,
-) -> None:
-    if dataset.numeric.ndim != 2:
-        raise ValueError(
-            f"{split_name}: numeric.npy must be 2-D, "
-            f"got {dataset.numeric.shape}"
-        )
-    if dataset.categorical.ndim != 2:
-        raise ValueError(
-            f"{split_name}: categorical.npy must be 2-D, "
-            f"got {dataset.categorical.shape}"
-        )
-
-    expected_numeric = len(preprocessor["numeric_columns"])
-    expected_categorical = len(preprocessor["categorical_columns"])
-
-    if dataset.numeric.shape[1] != expected_numeric:
-        raise ValueError(
-            f"{split_name}: numeric feature count mismatch: "
-            f"array={dataset.numeric.shape[1]}, "
-            f"preprocessor={expected_numeric}"
-        )
-
-    if dataset.categorical.shape[1] != expected_categorical:
-        raise ValueError(
-            f"{split_name}: categorical feature count mismatch: "
-            f"array={dataset.categorical.shape[1]}, "
-            f"preprocessor={expected_categorical}"
-        )
-
-    if require_target and dataset.targets is None:
-        raise ValueError(f"{split_name}: target.npy is required")
-
-    if dataset.targets is not None:
-        targets = np.asarray(dataset.targets)
-        if not np.isfinite(targets).all():
-            raise ValueError(f"{split_name}: non-finite target detected")
-        if not np.isin(targets, [0.0, 1.0]).all():
-            values = np.unique(targets)[:10]
-            raise ValueError(
-                f"{split_name}: target must be binary 0/1; "
-                f"examples={values.tolist()}"
-            )
-
-    for index, column in enumerate(preprocessor["categorical_columns"]):
-        cardinality = int(preprocessor["cardinalities"][column])
-        values = dataset.categorical[:, index]
-        if len(values) == 0:
-            continue
-        min_value = int(np.min(values))
-        max_value = int(np.max(values))
-        if min_value < 0 or max_value >= cardinality:
-            raise ValueError(
-                f"{split_name}: categorical index out of range for "
-                f"{column}: min={min_value}, max={max_value}, "
-                f"cardinality={cardinality}"
-            )
-
-
-def print_unknown_ratios(
-    dataset: TabularNpyDataset,
-    preprocessor: dict[str, Any],
-) -> None:
-    columns = preprocessor["categorical_columns"]
-    unknown_index = int(preprocessor["unknown_index"])
-
-    if not columns:
-        return
-
-    print()
-    print("[Validation unknown category ratio]")
-    for index, column in enumerate(columns):
-        values = dataset.categorical[:, index]
-        ratio = float(np.mean(values == unknown_index))
-        print(f"{column:<22}: {ratio:.6%}")
-
-
-# =========================================================
-# Dataset / Loader
-# =========================================================
-def make_loader(
-    dataset: TabularNpyDataset,
-    batch_size: int,
-    shuffle: bool,
-    device: torch.device,
-) -> DataLoader:
-    return DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        num_workers=NUM_WORKERS,
-        pin_memory=(device.type == "cuda"),
-        drop_last=False,
+    pred_col = detect_prediction_column(
+        df,
+        config["prediction_candidates"],
+        model_name,
     )
 
+    out = df[
+        [
+            "row_id",
+            "target",
+            "validation_season",
+            pred_col,
+        ]
+    ].copy()
 
-# =========================================================
-# Model
-# =========================================================
-def choose_embedding_dim(n_categories: int) -> int:
-    n_categories = max(1, int(n_categories))
-    dim = int(round(4.0 * (n_categories ** 0.25)))
-    return int(min(32, max(2, dim)))
-
-
-class TabularMLP(nn.Module):
-    def __init__(
-        self,
-        cardinalities: list[int],
-        embedding_dims: list[int],
-        n_num_features: int,
-        hidden_dims: list[int],
-        dropout: float,
-    ) -> None:
-        super().__init__()
-
-        if len(cardinalities) != len(embedding_dims):
-            raise ValueError(
-                "cardinalities and embedding_dims length mismatch"
-            )
-
-        self.embeddings = nn.ModuleList(
-            [
-                nn.Embedding(
-                    num_embeddings=int(cardinality),
-                    embedding_dim=int(dim),
-                    padding_idx=0,
-                )
-                for cardinality, dim in zip(
-                    cardinalities,
-                    embedding_dims,
-                )
-            ]
-        )
-
-        embedding_total = int(sum(embedding_dims))
-        input_dim = embedding_total + int(n_num_features)
-
-        if input_dim <= 0:
-            raise ValueError("MLP input feature가 없습니다.")
-
-        layers: list[nn.Module] = []
-        prev_dim = input_dim
-
-        for hidden_dim in hidden_dims:
-            layers.extend(
-                [
-                    nn.Linear(prev_dim, hidden_dim),
-                    nn.LayerNorm(hidden_dim),
-                    nn.SiLU(),
-                    nn.Dropout(dropout),
-                ]
-            )
-            prev_dim = hidden_dim
-
-        self.backbone = nn.Sequential(*layers)
-        self.head = nn.Linear(prev_dim, 1)
-
-        self.reset_parameters()
-
-    def reset_parameters(self) -> None:
-        for emb in self.embeddings:
-            nn.init.normal_(emb.weight, mean=0.0, std=0.02)
-            with torch.no_grad():
-                emb.weight[0].zero_()
-
-        for module in self.modules():
-            if isinstance(module, nn.Linear):
-                nn.init.kaiming_uniform_(
-                    module.weight,
-                    a=math.sqrt(5),
-                )
-                if module.bias is not None:
-                    nn.init.zeros_(module.bias)
-
-    def forward(
-        self,
-        categorical: torch.Tensor,
-        numeric: torch.Tensor,
-    ) -> torch.Tensor:
-        parts: list[torch.Tensor] = []
-
-        if len(self.embeddings) > 0:
-            embedded = [
-                emb(categorical[:, index])
-                for index, emb in enumerate(self.embeddings)
-            ]
-            parts.append(torch.cat(embedded, dim=1))
-
-        if numeric.shape[1] > 0:
-            parts.append(numeric)
-
-        x = parts[0] if len(parts) == 1 else torch.cat(parts, dim=1)
-        x = self.backbone(x)
-        return self.head(x).squeeze(1)
-
-
-def build_model_config(
-    preprocessor: dict[str, Any],
-) -> dict[str, Any]:
-    categorical_columns = preprocessor["categorical_columns"]
-    cardinalities = [
-        int(preprocessor["cardinalities"][column])
-        for column in categorical_columns
-    ]
-    embedding_dims = [
-        choose_embedding_dim(cardinality)
-        for cardinality in cardinalities
-    ]
-
-    return {
-        "cardinalities": cardinalities,
-        "embedding_dims": embedding_dims,
-        "n_num_features": len(preprocessor["numeric_columns"]),
-        "hidden_dims": list(HIDDEN_DIMS),
-        "dropout": float(DROPOUT),
-    }
-
-
-def create_model(config: dict[str, Any]) -> TabularMLP:
-    return TabularMLP(
-        cardinalities=config["cardinalities"],
-        embedding_dims=config["embedding_dims"],
-        n_num_features=config["n_num_features"],
-        hidden_dims=config["hidden_dims"],
-        dropout=config["dropout"],
+    out = out.rename(
+        columns={pred_col: model_name}
     )
 
+    out["target"] = pd.to_numeric(
+        out["target"],
+        errors="raise",
+    )
 
-# =========================================================
-# Train / Evaluate
-# =========================================================
-def train_one_epoch(
-    model: nn.Module,
-    loader: DataLoader,
-    optimizer: torch.optim.Optimizer,
-    criterion: nn.Module,
-    device: torch.device,
-) -> float:
-    model.train()
+    out["validation_season"] = pd.to_numeric(
+        out["validation_season"],
+        errors="raise",
+    ).astype(int)
 
-    total_loss = 0.0
-    total_n = 0
+    out[model_name] = pd.to_numeric(
+        out[model_name],
+        errors="raise",
+    )
 
-    for batch in loader:
-        categorical = batch["categorical"].to(
-            device,
-            non_blocking=True,
-        )
-        numeric = batch["numeric"].to(
-            device,
-            non_blocking=True,
-        )
-        target = batch["target"].to(
-            device,
-            non_blocking=True,
+    if not np.isfinite(
+        out[model_name].to_numpy(dtype=np.float64)
+    ).all():
+        raise ValueError(
+            f"{model_name}: prediction에 NaN 또는 Inf가 있습니다."
         )
 
-        optimizer.zero_grad(set_to_none=True)
-        logits = model(categorical, numeric)
-        loss = criterion(logits, target)
-        loss.backward()
-        optimizer.step()
+    print(
+        f"[로드] {model_name:<10} | rows={len(out):,} "
+        f"| seasons={sorted(out['validation_season'].unique().tolist())} "
+        f"| column={pred_col} | path={path}"
+    )
 
-        batch_n = int(target.shape[0])
-        total_loss += float(loss.item()) * batch_n
-        total_n += batch_n
-
-    return total_loss / max(1, total_n)
+    return out
 
 
-@torch.inference_mode()
-def evaluate_loader(
-    model: nn.Module,
-    loader: DataLoader,
-    device: torch.device,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    model.eval()
+def merge_predictions(model_config):
+    merged = None
+    expected_n = None
+    row_id_sets = {}
 
-    row_ids: list[str] = []
-    targets: list[np.ndarray] = []
-    predictions: list[np.ndarray] = []
-
-    for batch in loader:
-        if "target" not in batch:
-            raise ValueError("Validation loader must contain target")
-
-        categorical = batch["categorical"].to(
-            device,
-            non_blocking=True,
-        )
-        numeric = batch["numeric"].to(
-            device,
-            non_blocking=True,
+    for model_name, config in model_config.items():
+        df = load_prediction(
+            model_name,
+            config,
         )
 
-        logits = model(categorical, numeric)
-        prediction = torch.sigmoid(logits)
+        if expected_n is None:
+            expected_n = len(df)
+        elif len(df) != expected_n:
+            raise ValueError(
+                "모델별 OOF row 수가 다릅니다. "
+                f"expected={expected_n}, {model_name}={len(df)}"
+            )
 
-        row_ids.extend([str(value) for value in batch["row_id"]])
-        targets.append(
-            batch["target"].detach().cpu().numpy()
+        row_id_sets[model_name] = set(
+            df["row_id"]
         )
-        predictions.append(
-            prediction.detach().cpu().numpy()
+
+        df = df.rename(
+            columns={
+                "target": f"target__{model_name}",
+                "validation_season":
+                    f"validation_season__{model_name}",
+            }
         )
+
+        if merged is None:
+            merged = df
+        else:
+            merged = merged.merge(
+                df,
+                on="row_id",
+                how="inner",
+                validate="one_to_one",
+            )
+
+    model_names = list(
+        model_config.keys()
+    )
+
+    base_set = row_id_sets[
+        model_names[0]
+    ]
+
+    for model_name in model_names[1:]:
+        if (
+            row_id_sets[model_name]
+            != base_set
+        ):
+            raise ValueError(
+                "row_id 집합 불일치: "
+                f"{model_names[0]} vs {model_name}"
+            )
+
+    if len(merged) != expected_n:
+        raise ValueError(
+            f"merge row 수 불일치: "
+            f"expected={expected_n}, merged={len(merged)}"
+        )
+
+    target_cols = [
+        column
+        for column in merged.columns
+        if column.startswith("target__")
+    ]
+
+    season_cols = [
+        column
+        for column in merged.columns
+        if column.startswith(
+            "validation_season__"
+        )
+    ]
+
+    base_target = merged[
+        target_cols[0]
+    ].to_numpy()
+
+    for column in target_cols[1:]:
+        other = merged[
+            column
+        ].to_numpy()
+
+        if not np.array_equal(
+            base_target,
+            other,
+        ):
+            mismatch = int(
+                np.sum(
+                    base_target != other
+                )
+            )
+            raise ValueError(
+                "target 불일치: "
+                f"{target_cols[0]} vs {column}, "
+                f"mismatch={mismatch}"
+            )
+
+    base_season = merged[
+        season_cols[0]
+    ].to_numpy()
+
+    for column in season_cols[1:]:
+        other = merged[
+            column
+        ].to_numpy()
+
+        if not np.array_equal(
+            base_season,
+            other,
+        ):
+            mismatch = int(
+                np.sum(
+                    base_season != other
+                )
+            )
+            raise ValueError(
+                "validation_season 불일치: "
+                f"{season_cols[0]} vs {column}, "
+                f"mismatch={mismatch}"
+            )
+
+    merged["target"] = (
+        base_target
+    )
+
+    merged["validation_season"] = (
+        base_season.astype(int)
+    )
+
+    merged = merged.drop(
+        columns=(
+            target_cols
+            + season_cols
+        )
+    )
 
     return (
-        np.asarray(row_ids, dtype=str),
-        np.concatenate(targets).astype(np.float64, copy=False),
-        np.concatenate(predictions).astype(np.float64, copy=False),
+        merged
+        .sort_values(
+            [
+                "validation_season",
+                "row_id",
+            ]
+        )
+        .reset_index(drop=True)
     )
 
 
 # =========================================================
-# Validation fit
+# Single / correlation
 # =========================================================
-def fit_validation_model(
-    train_dataset: TabularNpyDataset,
-    valid_dataset: TabularNpyDataset,
-    preprocessor: dict[str, Any],
-    device: torch.device,
-) -> dict[str, Any]:
-    train_loader = make_loader(
-        train_dataset,
-        BATCH_SIZE,
-        True,
-        device,
-    )
-    valid_loader = make_loader(
-        valid_dataset,
-        VALID_BATCH_SIZE,
-        False,
-        device,
-    )
+def evaluate_single_models(df, model_names):
+    y = df["target"].to_numpy(dtype=np.float64)
 
-    model_config = build_model_config(preprocessor)
-    model = create_model(model_config).to(device)
+    rows = []
 
-    criterion = nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=LEARNING_RATE,
-        weight_decay=WEIGHT_DECAY,
-    )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer,
-        T_max=MAX_EPOCHS,
-        eta_min=LEARNING_RATE * 0.05,
+    for model_name in model_names:
+        pred = df[model_name].to_numpy(dtype=np.float64)
+
+        rows.append({
+            "model": model_name,
+            **calculate_metrics(y, pred),
+        })
+
+    return (
+        pd.DataFrame(rows)
+        .sort_values("brier")
+        .reset_index(drop=True)
     )
 
-    best_brier = float("inf")
-    best_epoch = 0
-    best_state: dict[str, torch.Tensor] | None = None
-    best_row_ids: np.ndarray | None = None
-    best_targets: np.ndarray | None = None
-    best_pred: np.ndarray | None = None
-    best_metrics: dict[str, float] | None = None
 
-    patience_count = 0
-    history: list[dict[str, Any]] = []
+def calculate_correlations(df, model_names):
+    prediction_corr = df[model_names].corr(
+        method="pearson"
+    )
 
-    print()
-    print("=" * 70)
-    print("MLP Validation 학습 시작")
-    print("=" * 70)
-    print(f"Experiment   : {EXPERIMENT_NAME}")
-    print(f"Variant      : {VARIANT}")
-    print(f"Device       : {device}")
-    print(f"Batch size   : {BATCH_SIZE}")
-    print(f"Max epochs   : {MAX_EPOCHS}")
-    print(f"Learning rate: {LEARNING_RATE}")
-    print(f"Hidden dims  : {HIDDEN_DIMS}")
-    print(f"Dropout      : {DROPOUT}")
+    y = df["target"].to_numpy(dtype=np.float64)
 
-    print()
-    print("[Embedding schema]")
-    for column, cardinality, dim in zip(
-        preprocessor["categorical_columns"],
-        model_config["cardinalities"],
-        model_config["embedding_dims"],
+    residual_df = pd.DataFrame({
+        model_name:
+            df[model_name].to_numpy(dtype=np.float64) - y
+        for model_name in model_names
+    })
+
+    residual_corr = residual_df.corr(
+        method="pearson"
+    )
+
+    return prediction_corr, residual_corr
+
+
+# =========================================================
+# Fold analysis
+# =========================================================
+def evaluate_single_models_by_fold(
+    df,
+    model_names,
+):
+    rows = []
+
+    for season in sorted(
+        df["validation_season"].unique()
     ):
-        print(
-            f"{column:<22} "
-            f"cardinality={cardinality:<6} "
-            f"dim={dim}"
+        fold_df = df[
+            df["validation_season"] == season
+        ]
+
+        fold_summary = (
+            evaluate_single_models(
+                fold_df,
+                model_names,
+            )
         )
 
-    start_time = time.time()
-
-    for epoch in range(1, MAX_EPOCHS + 1):
-        epoch_start = time.time()
-
-        train_loss = train_one_epoch(
-            model,
-            train_loader,
-            optimizer,
-            criterion,
-            device,
+        fold_summary.insert(
+            0,
+            "validation_season",
+            int(season),
         )
 
-        row_ids, y_valid, valid_pred = evaluate_loader(
-            model,
-            valid_loader,
-            device,
-        )
-        metrics = calculate_metrics(y_valid, valid_pred)
-
-        current_lr = float(optimizer.param_groups[0]["lr"])
-        scheduler.step()
-        seconds = time.time() - epoch_start
-
-        history.append(
-            {
-                "epoch": epoch,
-                "train_bce": train_loss,
-                "val_brier": metrics["brier"],
-                "val_bss": metrics["bss"],
-                "val_logloss": metrics["logloss"],
-                "learning_rate": current_lr,
-                "seconds": seconds,
-            }
+        rows.append(
+            fold_summary
         )
 
-        improved = metrics["brier"] < best_brier - 1e-10
-        if improved:
-            best_brier = metrics["brier"]
-            best_epoch = epoch
-            best_state = {
-                key: value.detach().cpu().clone()
-                for key, value in model.state_dict().items()
-            }
-            best_row_ids = row_ids.copy()
-            best_targets = y_valid.copy()
-            best_pred = valid_pred.copy()
-            best_metrics = dict(metrics)
-            patience_count = 0
-            marker = " *BEST*"
-        else:
-            patience_count += 1
-            marker = ""
+    return pd.concat(
+        rows,
+        ignore_index=True,
+    )
 
-        print(
-            f"Epoch {epoch:02d} | "
-            f"train BCE={train_loss:.6f} | "
-            f"val Brier={metrics['brier']:.8f} | "
-            f"BSS={metrics['bss']:.2f} | "
-            f"logloss={metrics['logloss']:.6f} | "
-            f"lr={current_lr:.2e} | "
-            f"{seconds:.1f}s{marker}"
-        )
 
-        if patience_count >= EARLY_STOPPING_PATIENCE:
-            print("Early stopping.")
-            break
+def calculate_fold_correlations(
+    df,
+    model_names,
+):
+    prediction_rows = []
+    residual_rows = []
 
-    elapsed = time.time() - start_time
-
-    if (
-        best_state is None
-        or best_row_ids is None
-        or best_targets is None
-        or best_pred is None
-        or best_metrics is None
-        or best_epoch <= 0
+    for season in sorted(
+        df["validation_season"].unique()
     ):
-        raise RuntimeError("No valid best checkpoint was produced")
+        fold_df = df[
+            df["validation_season"] == season
+        ]
 
-    print()
-    print("=" * 70)
-    print("MLP Validation Best")
-    print("=" * 70)
-    print(f"Best epoch       : {best_epoch}")
-    print(f"Brier Score      : {best_metrics['brier']:.8f}")
-    print(f"Baseline Brier   : {best_metrics['baseline_brier']:.8f}")
-    print(f"Validation Score : {best_metrics['bss']:.2f}")
-    print(f"LogLoss          : {best_metrics['logloss']:.8f}")
-    print(f"Prediction mean  : {best_metrics['prediction_mean']:.6f}")
-    print(f"Prediction std   : {best_metrics['prediction_std']:.6f}")
-    print(f"Prediction min   : {best_metrics['prediction_min']:.6f}")
-    print(f"Prediction max   : {best_metrics['prediction_max']:.6f}")
-    print(f"Total time       : {elapsed:.1f}s")
+        prediction_corr, residual_corr = (
+            calculate_correlations(
+                fold_df,
+                model_names,
+            )
+        )
+
+        for model_a, model_b in combinations(
+            model_names,
+            2,
+        ):
+            prediction_rows.append({
+                "validation_season":
+                    int(season),
+                "model_a": model_a,
+                "model_b": model_b,
+                "correlation": float(
+                    prediction_corr.loc[
+                        model_a,
+                        model_b,
+                    ]
+                ),
+            })
+
+            residual_rows.append({
+                "validation_season":
+                    int(season),
+                "model_a": model_a,
+                "model_b": model_b,
+                "correlation": float(
+                    residual_corr.loc[
+                        model_a,
+                        model_b,
+                    ]
+                ),
+            })
+
+    return (
+        pd.DataFrame(
+            prediction_rows
+        ),
+        pd.DataFrame(
+            residual_rows
+        ),
+    )
+
+
+def search_fold_exact_optimum(
+    df,
+    model_names,
+):
+    rows = []
+
+    model_a, model_b, model_c = (
+        model_names
+    )
+
+    for season in sorted(
+        df["validation_season"].unique()
+    ):
+        fold_df = df[
+            df["validation_season"] == season
+        ]
+
+        pair_results = []
+
+        for pair_a, pair_b in combinations(
+            model_names,
+            2,
+        ):
+            result = search_pair_exact(
+                fold_df,
+                pair_a,
+                pair_b,
+            )
+
+            pair_results.append({
+                "validation_season":
+                    int(season),
+                "ensemble_type":
+                    "pair_exact",
+                "models":
+                    f"{pair_a}+{pair_b}",
+                "weights": {
+                    pair_a:
+                        float(
+                            result[
+                                "weight_a"
+                            ]
+                        ),
+                    pair_b:
+                        float(
+                            result[
+                                "weight_b"
+                            ]
+                        ),
+                },
+                "brier":
+                    float(
+                        result[
+                            "brier"
+                        ]
+                    ),
+                "raw_skill":
+                    float(
+                        result[
+                            "raw_skill"
+                        ]
+                    ),
+                "competition_bss":
+                    float(
+                        result[
+                            "competition_bss"
+                        ]
+                    ),
+            })
+
+        triple = search_triple_exact(
+            fold_df,
+            model_a,
+            model_b,
+            model_c,
+        )
+
+        triple_record = {
+            "validation_season":
+                int(season),
+            "ensemble_type":
+                "triple_exact",
+            "models":
+                (
+                    f"{model_a}+"
+                    f"{model_b}+"
+                    f"{model_c}"
+                ),
+            "weights": {
+                model_a:
+                    float(
+                        triple[
+                            "weight_a"
+                        ]
+                    ),
+                model_b:
+                    float(
+                        triple[
+                            "weight_b"
+                        ]
+                    ),
+                model_c:
+                    float(
+                        triple[
+                            "weight_c"
+                        ]
+                    ),
+            },
+            "brier":
+                float(
+                    triple[
+                        "brier"
+                    ]
+                ),
+            "raw_skill":
+                float(
+                    triple[
+                        "raw_skill"
+                    ]
+                ),
+            "competition_bss":
+                float(
+                    triple[
+                        "competition_bss"
+                    ]
+                ),
+        }
+
+        rows.extend(
+            pair_results
+        )
+        rows.append(
+            triple_record
+        )
+
+    result = pd.DataFrame(
+        rows
+    )
+
+    result["weights"] = result[
+        "weights"
+    ].apply(
+        lambda value: json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    )
+
+    return result
+
+
+def apply_fixed_weights(
+    df,
+    weights,
+):
+    prediction = np.zeros(
+        len(df),
+        dtype=np.float64,
+    )
+
+    for model_name, weight in (
+        weights.items()
+    ):
+        prediction += (
+            float(weight)
+            * df[
+                model_name
+            ].to_numpy(
+                dtype=np.float64
+            )
+        )
+
+    return prediction
+
+
+def evaluate_fixed_weights_by_fold(
+    df,
+    weights,
+    label,
+):
+    rows = []
+
+    for season in sorted(
+        df["validation_season"].unique()
+    ):
+        fold_df = df[
+            df["validation_season"] == season
+        ]
+
+        prediction = (
+            apply_fixed_weights(
+                fold_df,
+                weights,
+            )
+        )
+
+        metrics = (
+            calculate_metrics(
+                fold_df[
+                    "target"
+                ].to_numpy(
+                    dtype=np.float64
+                ),
+                prediction,
+            )
+        )
+
+        rows.append({
+            "label": label,
+            "validation_season":
+                int(season),
+            "n_validation":
+                int(
+                    len(fold_df)
+                ),
+            **metrics,
+        })
+
+    return pd.DataFrame(
+        rows
+    )
+
+
+# =========================================================
+# Pair
+# =========================================================
+def pair_exact_from_arrays(y, pred_a, pred_b):
+    y = np.asarray(y, dtype=np.float64)
+    pred_a = np.asarray(pred_a, dtype=np.float64)
+    pred_b = np.asarray(pred_b, dtype=np.float64)
+
+    delta = pred_a - pred_b
+    denom = float(np.dot(delta, delta))
+
+    if denom <= EPS:
+        w_unconstrained = 0.5
+    else:
+        w_unconstrained = float(
+            np.dot(delta, y - pred_b) / denom
+        )
+
+    w_a = float(np.clip(w_unconstrained, 0.0, 1.0))
+    w_b = float(1.0 - w_a)
+
+    pred = w_a * pred_a + w_b * pred_b
 
     return {
-        "model_config": model_config,
-        "best_state_dict": best_state,
-        "best_epoch": best_epoch,
-        "row_ids": best_row_ids,
-        "targets": best_targets,
-        "best_prediction": best_pred,
-        "best_metrics": best_metrics,
-        "history": history,
-        "elapsed": elapsed,
+        "weight_a_unconstrained":
+            w_unconstrained,
+        "weight_a":
+            w_a,
+        "weight_b":
+            w_b,
+        **calculate_metrics(y, pred),
+        "prediction":
+            pred.copy(),
     }
 
 
-# =========================================================
-# Fold Validation 저장
-# =========================================================
-def save_fold_validation(
-    result: dict[str, Any],
-    preprocessor: dict[str, Any],
-    fold_config: dict[str, Any],
-) -> tuple[pd.DataFrame, dict[str, Any]]:
-    validation_season = int(fold_config["validation_season"])
-    fold_dir = VALIDATION_DIR / f"fold_{validation_season}"
-    fold_dir.mkdir(parents=True, exist_ok=False)
+def search_pair_exact(df, model_a, model_b):
+    y = df["target"].to_numpy(dtype=np.float64)
 
-    prediction_frame = pd.DataFrame(
-        {
-            ID: result["row_ids"],
-            "target": result["targets"],
-            "prediction": result["best_prediction"],
-            "validation_season": validation_season,
+    result = pair_exact_from_arrays(
+        y,
+        df[model_a].to_numpy(dtype=np.float64),
+        df[model_b].to_numpy(dtype=np.float64),
+    )
+
+    return {
+        "model_a": model_a,
+        "model_b": model_b,
+        **result,
+    }
+
+
+def search_pair_grid(
+    df,
+    model_a,
+    model_b,
+    step,
+):
+    y = df["target"].to_numpy(dtype=np.float64)
+    pred_a = df[model_a].to_numpy(dtype=np.float64)
+    pred_b = df[model_b].to_numpy(dtype=np.float64)
+
+    n_steps = int(round(1.0 / step))
+
+    rows = []
+    best = None
+
+    for i in range(n_steps + 1):
+        w_a = float(i / n_steps)
+        w_b = float(1.0 - w_a)
+
+        pred = w_a * pred_a + w_b * pred_b
+
+        record = {
+            "model_a": model_a,
+            "model_b": model_b,
+            "weight_a": w_a,
+            "weight_b": w_b,
+            **calculate_metrics(y, pred),
         }
+
+        rows.append(record)
+
+        if (
+            best is None
+            or record["brier"] < best["brier"]
+        ):
+            best = {
+                **record,
+                "prediction": pred.copy(),
+            }
+
+    return (
+        pd.DataFrame(rows)
+        .sort_values("brier")
+        .reset_index(drop=True),
+        best,
     )
-
-    prediction_frame.to_csv(
-        fold_dir / "pred.csv",
-        index=False,
-        encoding="utf-8-sig",
-    )
-
-    np.savez_compressed(
-        fold_dir / "validation.npz",
-        row_id=result["row_ids"],
-        target=result["targets"],
-        prediction=result["best_prediction"],
-        validation_season=np.full(
-            len(result["row_ids"]),
-            validation_season,
-        ),
-    )
-
-    pd.DataFrame(result["history"]).to_csv(
-        fold_dir / "history.csv",
-        index=False,
-        encoding="utf-8-sig",
-    )
-
-    metrics = result["best_metrics"]
-    metadata = {
-        "experiment_name": EXPERIMENT_NAME,
-        "model_type": "TabularMLP",
-        "variant": VARIANT,
-        "fold": int(fold_config["fold"]),
-        "train_seasons": [
-            int(season)
-            for season in fold_config["train_seasons"]
-        ],
-        "validation_season": validation_season,
-        "n_train": int(fold_config["n_train"]),
-        "n_validation": int(fold_config["n_validation"]),
-        "categorical_columns": preprocessor["categorical_columns"],
-        "numeric_columns": preprocessor["numeric_columns"],
-        "n_features": (
-            len(preprocessor["categorical_columns"])
-            + len(preprocessor["numeric_columns"])
-        ),
-        "cardinalities": preprocessor["cardinalities"],
-        "model_config": result["model_config"],
-        "best_epoch": int(result["best_epoch"]),
-        "metrics": metrics,
-        "training_seconds": float(result["elapsed"]),
-        "preprocessing": {
-            "source": "data/mlp/mlp_preprocess.py",
-            "variant": VARIANT,
-            "count_state": bool(preprocessor.get("count_state", True)),
-            "raw_count_features_retained": bool(
-                preprocessor.get(
-                    "raw_count_features_retained",
-                    VARIANT == "hybrid",
-                )
-            ),
-            "unknown_index": int(preprocessor["unknown_index"]),
-            "missing_index": int(preprocessor["missing_index"]),
-            "fit_seasons": preprocessor.get("fit_seasons"),
-            "fit_rows": preprocessor.get("fit_rows"),
-        },
-        "training_config": {
-            "seed": SEED,
-            "batch_size": BATCH_SIZE,
-            "valid_batch_size": VALID_BATCH_SIZE,
-            "max_epochs": MAX_EPOCHS,
-            "early_stopping_patience": EARLY_STOPPING_PATIENCE,
-            "learning_rate": LEARNING_RATE,
-            "weight_decay": WEIGHT_DECAY,
-            "hidden_dims": HIDDEN_DIMS,
-            "dropout": DROPOUT,
-            "loss": "BCEWithLogitsLoss",
-            "scheduler": "CosineAnnealingLR",
-            "primary_metric": "Brier Score",
-        },
-    }
-
-    with (fold_dir / "metadata.json").open(
-        "w",
-        encoding="utf-8",
-    ) as file:
-        json.dump(metadata, file, indent=2, ensure_ascii=False)
-
-    return prediction_frame, metadata
 
 
 # =========================================================
-# Expanding Window Validation
+# Triple grid
 # =========================================================
-def run_expanding_validation(
-    device: torch.device,
-) -> tuple[list[dict[str, Any]], pd.DataFrame]:
-    if VALIDATION_DIR.exists():
-        raise FileExistsError(
-            f"Validation already exists: {VALIDATION_DIR}"
+def search_triple_grid(
+    df,
+    model_a,
+    model_b,
+    model_c,
+    step,
+):
+    y = df["target"].to_numpy(dtype=np.float64)
+
+    pa = df[model_a].to_numpy(dtype=np.float64)
+    pb = df[model_b].to_numpy(dtype=np.float64)
+    pc = df[model_c].to_numpy(dtype=np.float64)
+
+    n_steps = int(round(1.0 / step))
+
+    rows = []
+    best = None
+
+    for i in range(n_steps + 1):
+        for j in range(n_steps - i + 1):
+            k = n_steps - i - j
+
+            wa = float(i / n_steps)
+            wb = float(j / n_steps)
+            wc = float(k / n_steps)
+
+            pred = wa * pa + wb * pb + wc * pc
+
+            record = {
+                "model_a": model_a,
+                "model_b": model_b,
+                "model_c": model_c,
+                "weight_a": wa,
+                "weight_b": wb,
+                "weight_c": wc,
+                **calculate_metrics(y, pred),
+            }
+
+            rows.append(record)
+
+            if (
+                best is None
+                or record["brier"] < best["brier"]
+            ):
+                best = {
+                    **record,
+                    "prediction": pred.copy(),
+                }
+
+    return (
+        pd.DataFrame(rows)
+        .sort_values("brier")
+        .reset_index(drop=True),
+        best,
+    )
+
+
+# =========================================================
+# Triple exact convex optimum
+# =========================================================
+def search_triple_exact(
+    df,
+    model_a,
+    model_b,
+    model_c,
+):
+    """
+    1) unconstrained solution이 simplex 내부면 채택.
+    2) simplex 외부면 AB / AC / BC 세 edge의
+       pair exact optimum 계산.
+    3) 가장 Brier가 작은 edge solution을 채택.
+    """
+
+    y = df["target"].to_numpy(dtype=np.float64)
+
+    pa = df[model_a].to_numpy(dtype=np.float64)
+    pb = df[model_b].to_numpy(dtype=np.float64)
+    pc = df[model_c].to_numpy(dtype=np.float64)
+
+    # pc를 baseline으로 둔다.
+    design = np.column_stack([
+        pa - pc,
+        pb - pc,
+    ])
+
+    target = y - pc
+
+    solution, _, _, _ = np.linalg.lstsq(
+        design,
+        target,
+        rcond=None,
+    )
+
+    wa_u = float(solution[0])
+    wb_u = float(solution[1])
+    wc_u = float(1.0 - wa_u - wb_u)
+
+    pred_u = (
+        wa_u * pa
+        + wb_u * pb
+        + wc_u * pc
+    )
+
+    unconstrained_metrics = calculate_metrics(
+        y,
+        pred_u,
+    )
+
+    inside = (
+        wa_u >= -EPS
+        and wb_u >= -EPS
+        and wc_u >= -EPS
+        and wa_u <= 1.0 + EPS
+        and wb_u <= 1.0 + EPS
+        and wc_u <= 1.0 + EPS
+    )
+
+    if inside:
+        weights = np.array(
+            [
+                max(0.0, wa_u),
+                max(0.0, wb_u),
+                max(0.0, wc_u),
+            ],
+            dtype=np.float64,
+        )
+        weights /= weights.sum()
+
+        wa, wb, wc = map(float, weights)
+
+        pred = (
+            wa * pa
+            + wb * pb
+            + wc * pc
         )
 
-    VALIDATION_DIR.mkdir(
+        return {
+            "model_a": model_a,
+            "model_b": model_b,
+            "model_c": model_c,
+            "solution_type": "interior",
+            "inside_simplex": True,
+            "selected_edge": None,
+            "weight_a_unconstrained": wa_u,
+            "weight_b_unconstrained": wb_u,
+            "weight_c_unconstrained": wc_u,
+            "unconstrained_brier":
+                unconstrained_metrics["brier"],
+            "weight_a": wa,
+            "weight_b": wb,
+            "weight_c": wc,
+            **calculate_metrics(y, pred),
+            "prediction": pred.copy(),
+        }
+
+    # simplex 밖: 세 edge exact optimum
+    edges = []
+
+    # AB edge: C = 0
+    ab = pair_exact_from_arrays(y, pa, pb)
+    edges.append({
+        "edge": f"{model_a}+{model_b}",
+        "weight_a": ab["weight_a"],
+        "weight_b": ab["weight_b"],
+        "weight_c": 0.0,
+        "brier": ab["brier"],
+        "prediction": ab["prediction"],
+    })
+
+    # AC edge: B = 0
+    ac = pair_exact_from_arrays(y, pa, pc)
+    edges.append({
+        "edge": f"{model_a}+{model_c}",
+        "weight_a": ac["weight_a"],
+        "weight_b": 0.0,
+        "weight_c": ac["weight_b"],
+        "brier": ac["brier"],
+        "prediction": ac["prediction"],
+    })
+
+    # BC edge: A = 0
+    bc = pair_exact_from_arrays(y, pb, pc)
+    edges.append({
+        "edge": f"{model_b}+{model_c}",
+        "weight_a": 0.0,
+        "weight_b": bc["weight_a"],
+        "weight_c": bc["weight_b"],
+        "brier": bc["brier"],
+        "prediction": bc["prediction"],
+    })
+
+    best_edge = min(
+        edges,
+        key=lambda x: x["brier"],
+    )
+
+    wa = float(best_edge["weight_a"])
+    wb = float(best_edge["weight_b"])
+    wc = float(best_edge["weight_c"])
+
+    pred = best_edge["prediction"]
+
+    return {
+        "model_a": model_a,
+        "model_b": model_b,
+        "model_c": model_c,
+        "solution_type": "edge",
+        "inside_simplex": False,
+        "selected_edge": best_edge["edge"],
+        "weight_a_unconstrained": wa_u,
+        "weight_b_unconstrained": wb_u,
+        "weight_c_unconstrained": wc_u,
+        "unconstrained_brier":
+            unconstrained_metrics["brier"],
+        "weight_a": wa,
+        "weight_b": wb,
+        "weight_c": wc,
+        **calculate_metrics(y, pred),
+        "prediction": pred.copy(),
+    }
+
+
+# =========================================================
+# Pair comparison / MLP incremental value
+# =========================================================
+def build_pair_comparison(
+    pair_grid_best,
+    pair_exact_best,
+    prediction_corr,
+    residual_corr,
+    single_summary,
+):
+    single = (
+        single_summary
+        .set_index("model")
+        .to_dict(orient="index")
+    )
+
+    exact_lookup = {
+        (x["model_a"], x["model_b"]): x
+        for x in pair_exact_best
+    }
+
+    rows = []
+
+    for grid in pair_grid_best:
+        a = grid["model_a"]
+        b = grid["model_b"]
+        exact = exact_lookup[(a, b)]
+
+        best_single_brier = min(
+            single[a]["brier"],
+            single[b]["brier"],
+        )
+
+        best_single_raw_skill = max(
+            single[a]["raw_skill"],
+            single[b]["raw_skill"],
+        )
+
+        rows.append({
+            "model_a": a,
+            "model_b": b,
+            "prediction_correlation":
+                float(prediction_corr.loc[a, b]),
+            "residual_correlation":
+                float(residual_corr.loc[a, b]),
+            "grid_weight_a": grid["weight_a"],
+            "grid_weight_b": grid["weight_b"],
+            "grid_brier": grid["brier"],
+            "grid_raw_skill": grid["raw_skill"],
+            "exact_weight_a_unconstrained":
+                exact["weight_a_unconstrained"],
+            "exact_weight_a": exact["weight_a"],
+            "exact_weight_b": exact["weight_b"],
+            "exact_brier": exact["brier"],
+            "exact_raw_skill": exact["raw_skill"],
+            "exact_competition_bss":
+                exact["competition_bss"],
+            "exact_logloss": exact["logloss"],
+            "exact_bias": exact["bias"],
+            "exact_brier_gain_vs_grid":
+                grid["brier"] - exact["brier"],
+            "exact_raw_skill_gain_vs_grid":
+                exact["raw_skill"] - grid["raw_skill"],
+            "exact_brier_gain_vs_best_single":
+                best_single_brier - exact["brier"],
+            "exact_raw_skill_gain_vs_best_single":
+                exact["raw_skill"]
+                - best_single_raw_skill,
+        })
+
+    result = (
+        pd.DataFrame(rows)
+        .sort_values("exact_brier")
+        .reset_index(drop=True)
+    )
+
+    result.insert(
+        0,
+        "rank",
+        np.arange(1, len(result) + 1),
+    )
+
+    return result
+
+
+def find_pair_exact(
+    pair_exact_best,
+    model_a,
+    model_b,
+):
+    wanted = {model_a, model_b}
+
+    for item in pair_exact_best:
+        if {
+            item["model_a"],
+            item["model_b"],
+        } == wanted:
+            return item
+
+    raise ValueError(
+        f"pair exact 결과 없음: {model_a}+{model_b}"
+    )
+
+
+def evaluate_incremental_value(
+    baseline_pair,
+    triple_exact,
+    incremental_model,
+):
+    weights = {
+        triple_exact["model_a"]:
+            triple_exact["weight_a"],
+        triple_exact["model_b"]:
+            triple_exact["weight_b"],
+        triple_exact["model_c"]:
+            triple_exact["weight_c"],
+    }
+
+    incremental_weight = float(weights[incremental_model])
+
+    delta_brier = float(
+        triple_exact["brier"]
+        - baseline_pair["brier"]
+    )
+
+    delta_raw_skill = float(
+        triple_exact["raw_skill"]
+        - baseline_pair["raw_skill"]
+    )
+
+    if (
+        delta_brier < -EPS
+        and incremental_weight > 1e-8
+    ):
+        decision = "GO"
+    elif (
+        delta_brier < -EPS
+        and incremental_weight <= 1e-8
+    ):
+        decision = "NO-GO_INCREMENTAL_WEIGHT_ZERO"
+    elif (
+        abs(delta_brier) <= EPS
+        and incremental_weight > 1e-8
+    ):
+        decision = "CONDITIONAL_GO"
+    else:
+        decision = "NO-GO"
+
+    return {
+        "baseline_pair":
+            f"{baseline_pair['model_a']}+"
+            f"{baseline_pair['model_b']}",
+        "baseline_pair_brier":
+            float(baseline_pair["brier"]),
+        "baseline_pair_raw_skill":
+            float(baseline_pair["raw_skill"]),
+        "triple_brier":
+            float(triple_exact["brier"]),
+        "triple_raw_skill":
+            float(triple_exact["raw_skill"]),
+        "delta_brier_triple_minus_baseline":
+            delta_brier,
+        "delta_raw_skill_triple_minus_baseline":
+            delta_raw_skill,
+        "incremental_model":
+            incremental_model,
+        "incremental_weight":
+            incremental_weight,
+        "decision":
+            decision,
+    }
+
+
+# =========================================================
+# Save
+# =========================================================
+def strip_prediction(item):
+    return {
+        k: v
+        for k, v in item.items()
+        if k != "prediction"
+    }
+
+
+def json_safe(obj):
+    if isinstance(obj, dict):
+        return {
+            str(k): json_safe(v)
+            for k, v in obj.items()
+        }
+    if isinstance(obj, list):
+        return [json_safe(x) for x in obj]
+    if isinstance(obj, tuple):
+        return [json_safe(x) for x in obj]
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, (np.integer, np.floating)):
+        return obj.item()
+    return obj
+
+
+def save_outputs(
+    full_df,
+    search_df,
+    full_single_summary,
+    optimization_single_summary,
+    fold_single_summary,
+    prediction_corr,
+    residual_corr,
+    fold_prediction_corr,
+    fold_residual_corr,
+    pair_grid_all,
+    pair_grid_best,
+    pair_exact_best,
+    pair_comparison,
+    triple_grid_result,
+    triple_grid_best,
+    triple_exact,
+    incremental_value,
+    fold_exact_optimum,
+    fold_ensemble_performance,
+    optimization_best,
+    full_oof_metrics,
+    full_prediction,
+):
+    if OUTPUT_DIR.exists():
+        raise FileExistsError(
+            f"Ensemble experiment already exists: {OUTPUT_DIR}"
+        )
+
+    OUTPUT_DIR.mkdir(
         parents=True,
         exist_ok=False,
     )
 
-    fold_metadata_list: list[dict[str, Any]] = []
-    oof_frames: list[pd.DataFrame] = []
-
-    print("=" * 70)
-    print(EXPERIMENT_NAME)
-    print("=" * 70)
-    print("Mode          : expanding")
-    print(f"Variant       : {VARIANT}")
-    print(f"Device        : {device}")
-    if device.type == "cuda":
-        print(f"GPU           : {torch.cuda.get_device_name(0)}")
-    print(f"PyTorch       : {torch.__version__}")
-    print(f"Data root     : {EXPANDING_DATA_DIR}")
-    print("=" * 70)
-
-    for base_config in EXPANDING_FOLDS:
-        fold_config = dict(base_config)
-        validation_season = int(
-            fold_config["validation_season"]
-        )
-        fold_data_dir = (
-            EXPANDING_DATA_DIR
-            / f"fold_{validation_season}"
-        )
-
-        preprocessor = load_preprocessor(
-            fold_data_dir / "preprocessor.json"
-        )
-        train_dataset = TabularNpyDataset(
-            fold_data_dir / "train"
-        )
-        valid_dataset = TabularNpyDataset(
-            fold_data_dir / "valid"
-        )
-
-        validate_dataset_schema(
-            train_dataset,
-            preprocessor,
-            f"fold_{validation_season}/train",
-            require_target=True,
-        )
-        validate_dataset_schema(
-            valid_dataset,
-            preprocessor,
-            f"fold_{validation_season}/valid",
-            require_target=True,
-        )
-
-        fold_config["n_train"] = len(train_dataset)
-        fold_config["n_validation"] = len(valid_dataset)
-
-        print()
-        print("=" * 70)
-        print(
-            f"Fold {fold_config['fold']}: "
-            f"{fold_config['train_seasons'][0]}"
-            f"~{fold_config['train_seasons'][-1]} "
-            f"-> {validation_season}"
-        )
-        print("=" * 70)
-        print(f"Train rows    : {len(train_dataset):,}")
-        print(f"Valid rows    : {len(valid_dataset):,}")
-        print(f"Numerical     : {train_dataset.numeric.shape[1]}")
-        print(f"Categorical   : {train_dataset.categorical.shape[1]}")
-
-        print_unknown_ratios(
-            valid_dataset,
-            preprocessor,
-        )
-
-        # Fold별 초기화 조건을 동일하게 맞춘다.
-        seed_everything(SEED)
-
-        result = fit_validation_model(
-            train_dataset,
-            valid_dataset,
-            preprocessor,
-            device,
-        )
-
-        prediction_frame, fold_metadata = (
-            save_fold_validation(
-                result=result,
-                preprocessor=preprocessor,
-                fold_config=fold_config,
-            )
-        )
-
-        fold_metadata_list.append(
-            fold_metadata
-        )
-        oof_frames.append(
-            prediction_frame
-        )
-
-    oof = pd.concat(
-        oof_frames,
-        ignore_index=True,
+    # -----------------------------------------------------
+    # OOF source / optimization subset
+    # -----------------------------------------------------
+    full_df.to_csv(
+        OUTPUT_DIR / "validation_predictions.csv",
+        index=False,
+        encoding="utf-8-sig",
     )
 
-    return fold_metadata_list, oof
-
-
-# =========================================================
-# Expanding Validation Summary
-# =========================================================
-def save_validation_summary(
-    fold_metadata_list: list[dict[str, Any]],
-    oof: pd.DataFrame,
-) -> dict[str, Any]:
-    briers = np.asarray(
-        [
-            fold["metrics"]["brier"]
-            for fold in fold_metadata_list
-        ],
-        dtype=np.float64,
-    )
-    bss_values = np.asarray(
-        [
-            fold["metrics"]["bss"]
-            for fold in fold_metadata_list
-        ],
-        dtype=np.float64,
-    )
-    bss_raw_values = np.asarray(
-        [
-            fold["metrics"]["bss_raw"]
-            for fold in fold_metadata_list
-        ],
-        dtype=np.float64,
-    )
-    fold_sizes = np.asarray(
-        [
-            fold["n_validation"]
-            for fold in fold_metadata_list
-        ],
-        dtype=np.float64,
+    search_df.to_csv(
+        OUTPUT_DIR / "optimization_predictions.csv",
+        index=False,
+        encoding="utf-8-sig",
     )
 
-    recent_briers = [
-        fold["metrics"]["brier"]
-        for fold in fold_metadata_list
-        if fold["validation_season"] in (2023, 2024)
-    ]
-
-    oof_metrics = calculate_metrics(
-        oof["target"].to_numpy(),
-        oof["prediction"].to_numpy(),
+    full_single_summary.to_csv(
+        OUTPUT_DIR / "single_model_summary.csv",
+        index=False,
+        encoding="utf-8-sig",
     )
 
-    latest_fold = max(
-        fold_metadata_list,
-        key=lambda fold: fold["validation_season"],
+    optimization_single_summary.to_csv(
+        OUTPUT_DIR / "optimization_single_model_summary.csv",
+        index=False,
+        encoding="utf-8-sig",
     )
 
-    summary = {
-        "n_oof": int(len(oof)),
-        "mean_fold_brier": float(np.mean(briers)),
-        "std_fold_brier": float(np.std(briers)),
-        "weighted_fold_brier": float(
-            np.average(briers, weights=fold_sizes)
-        ),
-        "best_fold_brier": float(np.min(briers)),
-        "worst_fold_brier": float(np.max(briers)),
-        "fold_brier_range": float(
-            np.max(briers) - np.min(briers)
-        ),
-        "recent_2023_2024_mean_brier": float(
-            np.mean(recent_briers)
-        ),
-        "mean_fold_bss_raw": float(
-            np.mean(bss_raw_values)
-        ),
-        "weighted_fold_bss_raw": float(
-            np.average(
-                bss_raw_values,
-                weights=fold_sizes,
-            )
-        ),
-        "mean_fold_bss": float(np.mean(bss_values)),
-        "weighted_fold_bss": float(
-            np.average(
-                bss_values,
-                weights=fold_sizes,
-            )
-        ),
-        "pooled_oof_brier": float(
-            oof_metrics["brier"]
-        ),
-        "pooled_oof_baseline_brier": float(
-            oof_metrics["baseline_brier"]
-        ),
-        "pooled_oof_bss_raw": float(
-            oof_metrics["bss_raw"]
-        ),
-        "pooled_oof_bss": float(
-            oof_metrics["bss"]
-        ),
-        "best_epochs": {
-            str(fold["validation_season"]): int(
-                fold["best_epoch"]
-            )
-            for fold in fold_metadata_list
-        },
-        "latest_fold_best_epoch": int(
-            latest_fold["best_epoch"]
-        ),
-    }
+    fold_single_summary.to_csv(
+        OUTPUT_DIR / "fold_single_model_summary.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
 
-    oof.to_csv(
-        VALIDATION_DIR / "oof_pred.csv",
+    # -----------------------------------------------------
+    # Correlation
+    # optimization correlation은 2023 제외 OOF 기준.
+    # Fold correlation은 전체 OOF 기준.
+    # -----------------------------------------------------
+    prediction_corr.to_csv(
+        OUTPUT_DIR / "prediction_correlation.csv",
+        encoding="utf-8-sig",
+    )
+
+    residual_corr.to_csv(
+        OUTPUT_DIR / "residual_correlation.csv",
+        encoding="utf-8-sig",
+    )
+
+    fold_prediction_corr.to_csv(
+        OUTPUT_DIR / "fold_prediction_correlation.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    fold_residual_corr.to_csv(
+        OUTPUT_DIR / "fold_residual_correlation.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    # -----------------------------------------------------
+    # Pair / Triple optimization
+    # -----------------------------------------------------
+    pair_grid_all.to_csv(
+        OUTPUT_DIR / "pair_grid_search.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    pd.DataFrame(
+        pair_grid_best
+    ).sort_values(
+        "brier"
+    ).to_csv(
+        OUTPUT_DIR / "pair_grid_best.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    pair_exact_df = pd.DataFrame([
+        strip_prediction(item)
+        for item in pair_exact_best
+    ]).sort_values(
+        "brier"
+    ).reset_index(drop=True)
+
+    pair_exact_df.insert(
+        0,
+        "rank",
+        np.arange(
+            1,
+            len(pair_exact_df) + 1,
+        ),
+    )
+
+    pair_exact_df.to_csv(
+        OUTPUT_DIR / "pair_exact_optimum.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    pair_comparison.to_csv(
+        OUTPUT_DIR / "pair_comparison.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    triple_grid_result.to_csv(
+        OUTPUT_DIR / "triple_grid_search.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    pd.DataFrame([
+        strip_prediction(
+            triple_grid_best
+        )
+    ]).to_csv(
+        OUTPUT_DIR / "triple_grid_best.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    pd.DataFrame([
+        strip_prediction(
+            triple_exact
+        )
+    ]).to_csv(
+        OUTPUT_DIR / "triple_exact_optimum.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    pd.DataFrame([
+        incremental_value
+    ]).to_csv(
+        OUTPUT_DIR / "incremental_value.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    # -----------------------------------------------------
+    # Temporal diagnostics
+    # -----------------------------------------------------
+    fold_exact_optimum.to_csv(
+        OUTPUT_DIR / "fold_exact_optimum.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    fold_ensemble_performance.to_csv(
+        OUTPUT_DIR / "fold_ensemble_performance.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    # -----------------------------------------------------
+    # 새 weight를 전체 2021~2024 OOF에 고정 적용한 결과
+    # -----------------------------------------------------
+    pd.DataFrame({
+        "row_id": full_df["row_id"],
+        "target": full_df["target"],
+        "validation_season":
+            full_df["validation_season"],
+        "prediction": full_prediction,
+    }).to_csv(
+        OUTPUT_DIR / "best_prediction.csv",
         index=False,
         encoding="utf-8-sig",
     )
 
     np.savez_compressed(
-        VALIDATION_DIR / "oof_validation.npz",
-        row_id=oof[ID].to_numpy(),
-        target=oof["target"].to_numpy(),
-        prediction=oof["prediction"].to_numpy(),
-        validation_season=oof[
+        OUTPUT_DIR / "best_prediction.npz",
+        row_id=full_df[
+            "row_id"
+        ].to_numpy(),
+        target=full_df[
+            "target"
+        ].to_numpy(),
+        validation_season=full_df[
             "validation_season"
         ].to_numpy(),
+        prediction=full_prediction,
+    )
+
+    optimization_seasons = sorted(
+        [
+            int(value)
+            for value in search_df[
+                "validation_season"
+            ].unique()
+        ]
+    )
+
+    evaluation_seasons = sorted(
+        [
+            int(value)
+            for value in full_df[
+                "validation_season"
+            ].unique()
+        ]
     )
 
     metadata = {
-        "experiment_name": EXPERIMENT_NAME,
-        "model_type": "TabularMLP",
-        "variant": VARIANT,
-        "validation_method": "expanding_window",
-        "final_epoch_strategy": FINAL_EPOCH_STRATEGY,
-        "folds": fold_metadata_list,
-        "summary": summary,
-        "training_config": {
-            "seed": SEED,
-            "batch_size": BATCH_SIZE,
-            "valid_batch_size": VALID_BATCH_SIZE,
-            "max_epochs": MAX_EPOCHS,
-            "early_stopping_patience": EARLY_STOPPING_PATIENCE,
-            "learning_rate": LEARNING_RATE,
-            "weight_decay": WEIGHT_DECAY,
-            "hidden_dims": HIDDEN_DIMS,
-            "dropout": DROPOUT,
-            "loss": "BCEWithLogitsLoss",
-            "scheduler": "CosineAnnealingLR",
-            "primary_metric": "Brier Score",
+        "experiment_name":
+            EXPERIMENT_NAME,
+        "validation_method":
+            "expanding_oof",
+        "optimization_policy":
+            "exclude_validation_season",
+        "optimization_seasons":
+            optimization_seasons,
+        "excluded_optimization_seasons": [
+            int(value)
+            for value
+            in EXCLUDED_OPTIMIZATION_SEASONS
+        ],
+        "evaluation_seasons":
+            evaluation_seasons,
+        "n_optimization":
+            int(len(search_df)),
+        "n_evaluation":
+            int(len(full_df)),
+        "optimization_target_mean":
+            float(
+                search_df[
+                    "target"
+                ].mean()
+            ),
+        "evaluation_target_mean":
+            float(
+                full_df[
+                    "target"
+                ].mean()
+            ),
+        "pair_weight_step":
+            PAIR_WEIGHT_STEP,
+        "triple_weight_step":
+            TRIPLE_WEIGHT_STEP,
+        "models":
+            list(
+                MODEL_CONFIG.keys()
+            ),
+        "source_models": {
+            model_name:
+                str(
+                    config[
+                        "path"
+                    ]
+                )
+            for model_name, config
+            in MODEL_CONFIG.items()
         },
+        "single_models_full_oof":
+            full_single_summary.to_dict(
+                orient="records"
+            ),
+        "single_models_optimization":
+            optimization_single_summary.to_dict(
+                orient="records"
+            ),
+        "pair_comparison":
+            pair_comparison.to_dict(
+                orient="records"
+            ),
+        "triple_grid_best":
+            strip_prediction(
+                triple_grid_best
+            ),
+        "triple_exact":
+            strip_prediction(
+                triple_exact
+            ),
+        "incremental_value":
+            incremental_value,
+        "global_best": {
+            "ensemble_type":
+                optimization_best[
+                    "ensemble_type"
+                ],
+            "models":
+                optimization_best[
+                    "models"
+                ],
+            "weights":
+                optimization_best[
+                    "weights"
+                ],
+            "optimization_brier":
+                float(
+                    optimization_best[
+                        "brier"
+                    ]
+                ),
+            "optimization_raw_skill":
+                float(
+                    optimization_best[
+                        "raw_skill"
+                    ]
+                ),
+            "optimization_competition_bss":
+                float(
+                    optimization_best[
+                        "competition_bss"
+                    ]
+                ),
+            "full_oof_brier":
+                float(
+                    full_oof_metrics[
+                        "brier"
+                    ]
+                ),
+            "full_oof_raw_skill":
+                float(
+                    full_oof_metrics[
+                        "raw_skill"
+                    ]
+                ),
+            "full_oof_competition_bss":
+                float(
+                    full_oof_metrics[
+                        "competition_bss"
+                    ]
+                ),
+        },
+        "fold_ensemble_performance":
+            fold_ensemble_performance.to_dict(
+                orient="records"
+            ),
     }
 
-    with (VALIDATION_DIR / "metadata.json").open(
+    with open(
+        OUTPUT_DIR / "metadata.json",
         "w",
         encoding="utf-8",
     ) as file:
         json.dump(
-            metadata,
+            json_safe(
+                metadata
+            ),
             file,
             indent=2,
             ensure_ascii=False,
         )
-
-    return summary
-
-
-def select_final_epoch(
-    fold_metadata_list: list[dict[str, Any]],
-) -> int:
-    if FINAL_EPOCH_STRATEGY == "latest_fold":
-        latest_fold = max(
-            fold_metadata_list,
-            key=lambda fold: fold["validation_season"],
-        )
-        return int(latest_fold["best_epoch"])
-
-    raise ValueError(
-        "Unsupported FINAL_EPOCH_STRATEGY: "
-        f"{FINAL_EPOCH_STRATEGY}"
-    )
-
-
-# =========================================================
-# Final fit
-# =========================================================
-def fit_final_model(
-    train_dataset: TabularNpyDataset,
-    preprocessor: dict[str, Any],
-    best_epoch: int,
-    device: torch.device,
-) -> dict[str, Any]:
-    if best_epoch <= 0:
-        raise ValueError("best_epoch must be >= 1")
-
-    loader = make_loader(
-        train_dataset,
-        BATCH_SIZE,
-        True,
-        device,
-    )
-
-    model_config = build_model_config(preprocessor)
-    model = create_model(model_config).to(device)
-
-    criterion = nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=LEARNING_RATE,
-        weight_decay=WEIGHT_DECAY,
-    )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer,
-        T_max=max(1, best_epoch),
-        eta_min=LEARNING_RATE * 0.05,
-    )
-
-    print()
-    print("=" * 70)
-    print("전체 데이터 재학습 시작")
-    print("=" * 70)
-    print(f"Experiment : {EXPERIMENT_NAME}")
-    print(f"Variant    : {VARIANT}")
-    print(f"Epochs     : {best_epoch}")
-
-    start_time = time.time()
-    history: list[dict[str, Any]] = []
-
-    for epoch in range(1, best_epoch + 1):
-        epoch_start = time.time()
-
-        train_loss = train_one_epoch(
-            model,
-            loader,
-            optimizer,
-            criterion,
-            device,
-        )
-
-        current_lr = float(optimizer.param_groups[0]["lr"])
-        scheduler.step()
-        seconds = time.time() - epoch_start
-
-        history.append(
-            {
-                "epoch": epoch,
-                "train_bce": train_loss,
-                "learning_rate": current_lr,
-                "seconds": seconds,
-            }
-        )
-
-        print(
-            f"Epoch {epoch:02d}/{best_epoch:02d} | "
-            f"train BCE={train_loss:.6f} | "
-            f"lr={current_lr:.2e} | "
-            f"{seconds:.1f}s"
-        )
-
-    elapsed = time.time() - start_time
-    state_dict = {
-        key: value.detach().cpu().clone()
-        for key, value in model.state_dict().items()
-    }
-
-    return {
-        "model_config": model_config,
-        "state_dict": state_dict,
-        "history": history,
-        "elapsed": elapsed,
-    }
-
-
-def load_validation_best_epoch() -> int | None:
-    metadata_path = VALIDATION_DIR / "metadata.json"
-    if not metadata_path.exists():
-        return None
-
-    with metadata_path.open(
-        "r",
-        encoding="utf-8",
-    ) as file:
-        metadata = json.load(file)
-
-    summary = metadata.get(
-        "summary",
-        {}
-    )
-    best_epoch = summary.get(
-        "latest_fold_best_epoch"
-    )
-
-    if best_epoch is None:
-        return None
-
-    return int(best_epoch)
-
-
-def save_final_model(
-    result: dict[str, Any],
-    preprocessor: dict[str, Any],
-    best_epoch: int,
-) -> None:
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
-
-    if MODEL_PATH.exists():
-        raise FileExistsError(f"Model already exists: {MODEL_PATH}")
-
-    bundle = {
-        "model_state_dict": result["state_dict"],
-        "model_config": result["model_config"],
-        "features": (
-            preprocessor["categorical_columns"]
-            + preprocessor["numeric_columns"]
-        ),
-        "cat_cols": preprocessor["categorical_columns"],
-        "num_cols": preprocessor["numeric_columns"],
-        "preprocessor": preprocessor,
-        "metadata": {
-            "experiment_name": EXPERIMENT_NAME,
-            "model_type": "TabularMLP",
-            "variant": VARIANT,
-            "validation": "4-Fold Expanding Window Validation",
-            "best_epoch": best_epoch,
-            "training_config": {
-                "seed": SEED,
-                "batch_size": BATCH_SIZE,
-                "learning_rate": LEARNING_RATE,
-                "weight_decay": WEIGHT_DECAY,
-                "hidden_dims": HIDDEN_DIMS,
-                "dropout": DROPOUT,
-                "loss": "BCEWithLogitsLoss",
-                "scheduler": "CosineAnnealingLR",
-                "primary_metric": "Brier Score",
-            },
-            "preprocessing": {
-                "source": "mlp_preprocess.py",
-                "variant": VARIANT,
-                "count_state": True,
-                "raw_count_features_retained": VARIANT == "hybrid",
-                "unknown_index": preprocessor["unknown_index"],
-                "missing_index": preprocessor["missing_index"],
-            },
-            "full_training_seconds": result["elapsed"],
-        },
-    }
-
-    joblib.dump(bundle, MODEL_PATH, compress=3)
-
-    metadata_path = MODEL_DIR / f"{EXPERIMENT_NAME}_metadata.json"
-    with metadata_path.open("w", encoding="utf-8") as file:
-        json.dump(
-            bundle["metadata"],
-            file,
-            indent=2,
-            ensure_ascii=False,
-        )
-
-    # 현재 실행 중인 train.py를 모델과 함께 보관한다.
-    source_path = Path(__file__).resolve()
-    destination = MODEL_DIR / f"{EXPERIMENT_NAME}_train.py"
-    shutil.copy2(source_path, destination)
-
-    # Final preprocessing artifact도 모델과 함께 보관한다.
-    preprocessor_copy = MODEL_DIR / f"{EXPERIMENT_NAME}_preprocessor.json"
-    with preprocessor_copy.open("w", encoding="utf-8") as file:
-        json.dump(preprocessor, file, indent=2, ensure_ascii=False)
-
-    print()
-    print("=" * 70)
-    print("Final model 저장 완료")
-    print("=" * 70)
-    print(f"Model Bundle : {MODEL_PATH}")
-    print(f"Metadata     : {metadata_path}")
-    print(f"Train Code   : {destination}")
-    print(f"Preprocessor : {preprocessor_copy}")
-    print(f"Best Epoch   : {best_epoch}")
 
 
 # =========================================================
 # Main
 # =========================================================
-def run_expanding(
-    device: torch.device,
-) -> None:
-    (
-        fold_metadata_list,
-        oof,
-    ) = run_expanding_validation(
-        device
+def main():
+
+    print("=" * 80)
+    print("LG Aimers Phase2 Ensemble v005 Search")
+    print("=" * 80)
+
+    # -----------------------------------------------------
+    # 1. 전체 OOF 로드
+    # -----------------------------------------------------
+    print(
+        "\n[1] Expanding OOF 로드 / alignment audit"
     )
 
-    summary = save_validation_summary(
-        fold_metadata_list,
-        oof,
+    full_df = merge_predictions(
+        MODEL_CONFIG
     )
 
-    final_epoch = select_final_epoch(
-        fold_metadata_list
+    model_names = list(
+        MODEL_CONFIG.keys()
     )
+
+    full_seasons = sorted(
+        full_df[
+            "validation_season"
+        ].unique().tolist()
+    )
+
+    print(
+        f"Full OOF rows        : "
+        f"{len(full_df):,}"
+    )
+
+    print(
+        f"Full positive rate   : "
+        f"{full_df['target'].mean():.6f}"
+    )
+
+    print(
+        f"Evaluation seasons   : "
+        f"{full_seasons}"
+    )
+
+    print(
+        "PASS: row_id / target / "
+        "validation_season alignment"
+    )
+
+    # -----------------------------------------------------
+    # 2. 2023은 optimization에서만 제외
+    # -----------------------------------------------------
+    search_df = full_df[
+        ~full_df[
+            "validation_season"
+        ].isin(
+            EXCLUDED_OPTIMIZATION_SEASONS
+        )
+    ].copy()
+
+    optimization_seasons = sorted(
+        search_df[
+            "validation_season"
+        ].unique().tolist()
+    )
+
+    if len(search_df) == 0:
+        raise ValueError(
+            "Optimization OOF가 비어 있습니다."
+        )
+
+    if (
+        set(
+            EXCLUDED_OPTIMIZATION_SEASONS
+        )
+        & set(
+            optimization_seasons
+        )
+    ):
+        raise RuntimeError(
+            "제외 시즌이 optimization data에 "
+            "남아 있습니다."
+        )
 
     print()
-    print("=" * 70)
-    print("MLP Expanding Window 결과 요약")
-    print("=" * 70)
+    print(
+        "[2] Optimization subset"
+    )
 
-    for fold in fold_metadata_list:
-        metrics = fold["metrics"]
+    print(
+        f"Excluded seasons     : "
+        f"{EXCLUDED_OPTIMIZATION_SEASONS}"
+    )
+
+    print(
+        f"Optimization seasons : "
+        f"{optimization_seasons}"
+    )
+
+    print(
+        f"Optimization rows    : "
+        f"{len(search_df):,}"
+    )
+
+    # -----------------------------------------------------
+    # 3. Single model
+    # -----------------------------------------------------
+    print(
+        "\n[3] Single model 비교"
+    )
+
+    full_single_summary = (
+        evaluate_single_models(
+            full_df,
+            model_names,
+        )
+    )
+
+    optimization_single_summary = (
+        evaluate_single_models(
+            search_df,
+            model_names,
+        )
+    )
+
+    fold_single_summary = (
+        evaluate_single_models_by_fold(
+            full_df,
+            model_names,
+        )
+    )
+
+    display_cols = [
+        "model",
+        "brier",
+        "raw_skill",
+        "competition_bss",
+        "bias",
+        "prediction_std",
+    ]
+
+    print(
+        "\n[전체 2021~2024 OOF]"
+    )
+
+    print(
+        full_single_summary[
+            display_cols
+        ].to_string(
+            index=False,
+            float_format=lambda value:
+                f"{value:.8f}",
+        )
+    )
+
+    print(
+        "\n[2023 제외 Optimization OOF]"
+    )
+
+    print(
+        optimization_single_summary[
+            display_cols
+        ].to_string(
+            index=False,
+            float_format=lambda value:
+                f"{value:.8f}",
+        )
+    )
+
+    # -----------------------------------------------------
+    # 4. Correlation
+    #
+    # Weight 탐색용 correlation은 search_df.
+    # Fold별 diagnostic은 full_df.
+    # -----------------------------------------------------
+    print(
+        "\n[4] Optimization Prediction / Residual correlation"
+    )
+
+    (
+        prediction_corr,
+        residual_corr,
+    ) = calculate_correlations(
+        search_df,
+        model_names,
+    )
+
+    (
+        fold_prediction_corr,
+        fold_residual_corr,
+    ) = calculate_fold_correlations(
+        full_df,
+        model_names,
+    )
+
+    print(
+        "\n[Prediction correlation]"
+    )
+
+    print(
+        prediction_corr.to_string(
+            float_format=lambda value:
+                f"{value:.6f}",
+        )
+    )
+
+    print(
+        "\n[Residual correlation]"
+    )
+
+    print(
+        residual_corr.to_string(
+            float_format=lambda value:
+                f"{value:.6f}",
+        )
+    )
+
+    # -----------------------------------------------------
+    # 5. Pair Search - search_df only
+    # -----------------------------------------------------
+    print(
+        "\n[5] Pair grid + exact optimum "
+        "(2023 제외)"
+    )
+
+    pair_grid_results = []
+    pair_grid_best = []
+    pair_exact_best = []
+
+    for model_a, model_b in combinations(
+        model_names,
+        2,
+    ):
+        (
+            grid_result,
+            grid_best,
+        ) = search_pair_grid(
+            search_df,
+            model_a,
+            model_b,
+            PAIR_WEIGHT_STEP,
+        )
+
+        exact_best = (
+            search_pair_exact(
+                search_df,
+                model_a,
+                model_b,
+            )
+        )
+
+        pair_grid_results.append(
+            grid_result
+        )
+
+        pair_grid_best.append(
+            strip_prediction(
+                grid_best
+            )
+        )
+
+        pair_exact_best.append(
+            exact_best
+        )
+
+        print()
         print(
-            f"Valid {fold['validation_season']}: "
-            f"Brier={metrics['brier']:.8f}, "
-            f"BSS={metrics['bss']:.2f}, "
-            f"epoch={fold['best_epoch']}"
+            f"{model_a} + {model_b}"
         )
 
-    print(
-        "Fold 단순 평균 Brier : "
-        f"{summary['mean_fold_brier']:.8f}"
-    )
-    print(
-        "Fold 가중 평균 Brier : "
-        f"{summary['weighted_fold_brier']:.8f}"
-    )
-    print(
-        "Fold Brier 표준편차  : "
-        f"{summary['std_fold_brier']:.8f}"
-    )
-    print(
-        "Fold Brier 범위      : "
-        f"{summary['fold_brier_range']:.8f}"
-    )
-    print(
-        "2023~2024 평균 Brier : "
-        f"{summary['recent_2023_2024_mean_brier']:.8f}"
-    )
-    print(
-        "OOF pooled Brier     : "
-        f"{summary['pooled_oof_brier']:.8f}"
-    )
-    print(
-        "OOF pooled BSS       : "
-        f"{summary['pooled_oof_bss']:.2f}"
-    )
-    print(
-        "Final epoch strategy : "
-        f"{FINAL_EPOCH_STRATEGY}"
-    )
-    print(
-        "Final epoch          : "
-        f"{final_epoch}"
-    )
-    print(
-        "Validation 저장      : "
-        f"{VALIDATION_DIR}"
-    )
-    print("=" * 70)
-
-
-def run_final(
-    device: torch.device,
-    best_epoch: int | None,
-) -> None:
-    if MODEL_PATH.exists():
-        raise FileExistsError(
-            f"Model already exists: {MODEL_PATH}"
-        )
-
-    if best_epoch is None:
-        best_epoch = (
-            load_validation_best_epoch()
-        )
-
-    if best_epoch is None:
-        raise ValueError(
-            "Final mode requires --best-epoch, "
-            "or an existing Expanding metadata: "
-            f"{VALIDATION_DIR / 'metadata.json'}"
-        )
-
-    if best_epoch <= 0:
-        raise ValueError(
-            "best_epoch must be >= 1"
-        )
-
-    preprocessor_path = (
-        FINAL_DATA_DIR
-        / "preprocessor.json"
-    )
-    preprocessor = load_preprocessor(
-        preprocessor_path
-    )
-
-    train_dataset = TabularNpyDataset(
-        FINAL_DATA_DIR / "train"
-    )
-
-    validate_dataset_schema(
-        train_dataset,
-        preprocessor,
-        "final/train",
-        require_target=True,
-    )
-
-    print("=" * 70)
-    print(EXPERIMENT_NAME)
-    print("=" * 70)
-    print("Mode          : final")
-    print(f"Variant       : {VARIANT}")
-    print(f"Device        : {device}")
-    if device.type == "cuda":
         print(
-            f"GPU           : "
-            f"{torch.cuda.get_device_name(0)}"
+            "Grid : "
+            f"{grid_best['weight_a']:.4f} / "
+            f"{grid_best['weight_b']:.4f} | "
+            f"Brier={grid_best['brier']:.10f}"
         )
-    print(f"PyTorch       : {torch.__version__}")
-    print(
-        f"Train rows    : "
-        f"{len(train_dataset):,}"
-    )
-    print(
-        f"Best epoch    : "
-        f"{best_epoch}"
-    )
-    print(
-        f"Numerical     : "
-        f"{train_dataset.numeric.shape[1]}"
-    )
-    print(
-        f"Categorical   : "
-        f"{train_dataset.categorical.shape[1]}"
-    )
-    print("=" * 70)
 
-    # Final preprocessor의 cardinality로
-    # 새로운 모델 구조를 생성한다.
-    seed_everything(SEED)
-
-    result = fit_final_model(
-        train_dataset,
-        preprocessor,
-        best_epoch,
-        device,
-    )
-
-    save_final_model(
-        result,
-        preprocessor,
-        best_epoch,
-    )
-
-
-def main() -> None:
-    args = parse_args()
-
-    seed_everything(SEED)
-    device = get_device()
-
-    if args.mode == "expanding":
-        run_expanding(device)
-    else:
-        run_final(
-            device,
-            args.best_epoch,
+        print(
+            "Exact: "
+            f"{exact_best['weight_a']:.8f} / "
+            f"{exact_best['weight_b']:.8f} | "
+            f"Brier={exact_best['brier']:.10f}"
         )
+
+    pair_grid_all = (
+        pd.concat(
+            pair_grid_results,
+            ignore_index=True,
+        )
+        .sort_values(
+            "brier"
+        )
+        .reset_index(
+            drop=True
+        )
+    )
+
+    pair_comparison = (
+        build_pair_comparison(
+            pair_grid_best,
+            pair_exact_best,
+            prediction_corr,
+            residual_corr,
+            optimization_single_summary,
+        )
+    )
+
+    # -----------------------------------------------------
+    # 6. Triple Search - search_df only
+    # -----------------------------------------------------
+    print(
+        "\n[6] Triple grid "
+        "(2023 제외)"
+    )
+
+    (
+        model_a,
+        model_b,
+        model_c,
+    ) = TRIPLE_MODELS
+
+    (
+        triple_grid_result,
+        triple_grid_best,
+    ) = search_triple_grid(
+        search_df,
+        model_a,
+        model_b,
+        model_c,
+        TRIPLE_WEIGHT_STEP,
+    )
+
+    print(
+        "Grid weights: "
+        f"{model_a}="
+        f"{triple_grid_best['weight_a']:.4f}, "
+        f"{model_b}="
+        f"{triple_grid_best['weight_b']:.4f}, "
+        f"{model_c}="
+        f"{triple_grid_best['weight_c']:.4f}"
+    )
+
+    print(
+        f"Brier="
+        f"{triple_grid_best['brier']:.10f}"
+    )
+
+    print(
+        "\n[7] Triple exact convex optimum "
+        "(2023 제외)"
+    )
+
+    triple_exact = (
+        search_triple_exact(
+            search_df,
+            model_a,
+            model_b,
+            model_c,
+        )
+    )
+
+    print(
+        "Exact weights: "
+        f"{model_a}="
+        f"{triple_exact['weight_a']:.10f}, "
+        f"{model_b}="
+        f"{triple_exact['weight_b']:.10f}, "
+        f"{model_c}="
+        f"{triple_exact['weight_c']:.10f}"
+    )
+
+    print(
+        f"Brier="
+        f"{triple_exact['brier']:.10f} | "
+        f"RawSkill="
+        f"{triple_exact['raw_skill']:.6f} | "
+        f"BSS="
+        f"{triple_exact['competition_bss']:.6f}"
+    )
+
+    # -----------------------------------------------------
+    # 8. MLP incremental value - search_df 기준
+    # -----------------------------------------------------
+    print(
+        f"\n[8] {INCREMENTAL_MODEL} "
+        "incremental value"
+    )
+
+    baseline_pair = (
+        find_pair_exact(
+            pair_exact_best,
+            BASELINE_PAIR[0],
+            BASELINE_PAIR[1],
+        )
+    )
+
+    incremental_value = (
+        evaluate_incremental_value(
+            baseline_pair,
+            triple_exact,
+            INCREMENTAL_MODEL,
+        )
+    )
+
+    for key, value in (
+        incremental_value.items()
+    ):
+        print(
+            f"{key}: {value}"
+        )
+
+    # -----------------------------------------------------
+    # 9. Optimization global best
+    # -----------------------------------------------------
+    global_candidates = []
+
+    for _, row in (
+        optimization_single_summary
+        .iterrows()
+    ):
+        model = row["model"]
+
+        global_candidates.append({
+            "ensemble_type":
+                "single",
+            "models":
+                model,
+            "brier":
+                float(
+                    row["brier"]
+                ),
+            "raw_skill":
+                float(
+                    row[
+                        "raw_skill"
+                    ]
+                ),
+            "competition_bss":
+                float(
+                    row[
+                        "competition_bss"
+                    ]
+                ),
+            "weights": {
+                model: 1.0
+            },
+            "prediction":
+                search_df[
+                    model
+                ].to_numpy(
+                    dtype=np.float64
+                ),
+        })
+
+    for item in pair_exact_best:
+        global_candidates.append({
+            "ensemble_type":
+                "pair_exact",
+            "models":
+                (
+                    f"{item['model_a']}+"
+                    f"{item['model_b']}"
+                ),
+            "brier":
+                item["brier"],
+            "raw_skill":
+                item[
+                    "raw_skill"
+                ],
+            "competition_bss":
+                item[
+                    "competition_bss"
+                ],
+            "weights": {
+                item["model_a"]:
+                    item[
+                        "weight_a"
+                    ],
+                item["model_b"]:
+                    item[
+                        "weight_b"
+                    ],
+            },
+            "prediction":
+                item[
+                    "prediction"
+                ],
+        })
+
+    global_candidates.append({
+        "ensemble_type":
+            "triple_exact",
+        "models":
+            (
+                f"{model_a}+"
+                f"{model_b}+"
+                f"{model_c}"
+            ),
+        "brier":
+            triple_exact[
+                "brier"
+            ],
+        "raw_skill":
+            triple_exact[
+                "raw_skill"
+            ],
+        "competition_bss":
+            triple_exact[
+                "competition_bss"
+            ],
+        "weights": {
+            model_a:
+                triple_exact[
+                    "weight_a"
+                ],
+            model_b:
+                triple_exact[
+                    "weight_b"
+                ],
+            model_c:
+                triple_exact[
+                    "weight_c"
+                ],
+        },
+        "prediction":
+            triple_exact[
+                "prediction"
+            ],
+    })
+
+    optimization_best = min(
+        global_candidates,
+        key=lambda item:
+            item["brier"],
+    )
+
+    print(
+        "\n[9] Optimization global best"
+    )
+
+    print(
+        f"Type    : "
+        f"{optimization_best['ensemble_type']}"
+    )
+
+    print(
+        f"Models  : "
+        f"{optimization_best['models']}"
+    )
+
+    print(
+        f"Weights : "
+        f"{optimization_best['weights']}"
+    )
+
+    print(
+        f"Brier   : "
+        f"{optimization_best['brier']:.10f}"
+    )
+
+    # -----------------------------------------------------
+    # 10. 새 고정 weight를 전체 OOF에 재적용
+    # -----------------------------------------------------
+    full_prediction = (
+        apply_fixed_weights(
+            full_df,
+            optimization_best[
+                "weights"
+            ],
+        )
+    )
+
+    full_oof_metrics = (
+        calculate_metrics(
+            full_df[
+                "target"
+            ].to_numpy(
+                dtype=np.float64
+            ),
+            full_prediction,
+        )
+    )
+
+    print(
+        "\n[10] Full 2021~2024 OOF 재평가"
+    )
+
+    print(
+        f"Optimization Brier : "
+        f"{optimization_best['brier']:.10f}"
+    )
+
+    print(
+        f"Full OOF Brier     : "
+        f"{full_oof_metrics['brier']:.10f}"
+    )
+
+    print(
+        f"Full OOF BSS       : "
+        f"{full_oof_metrics['competition_bss']:.6f}"
+    )
+
+    # -----------------------------------------------------
+    # 11. Fold robustness
+    # -----------------------------------------------------
+    fold_exact_optimum = (
+        search_fold_exact_optimum(
+            full_df,
+            model_names,
+        )
+    )
+
+    fold_ensemble_performance = (
+        evaluate_fixed_weights_by_fold(
+            full_df,
+            optimization_best[
+                "weights"
+            ],
+            label=(
+                "exclude_2023_fixed_weights"
+            ),
+        )
+    )
+
+    print(
+        "\n[11] Fold temporal robustness"
+    )
+
+    print(
+        fold_ensemble_performance[
+            [
+                "validation_season",
+                "brier",
+                "raw_skill",
+                "competition_bss",
+                "bias",
+            ]
+        ].to_string(
+            index=False,
+            float_format=lambda value:
+                f"{value:.8f}",
+        )
+    )
+
+    # -----------------------------------------------------
+    # 12. Save
+    # -----------------------------------------------------
+    save_outputs(
+        full_df=(
+            full_df
+        ),
+        search_df=(
+            search_df
+        ),
+        full_single_summary=(
+            full_single_summary
+        ),
+        optimization_single_summary=(
+            optimization_single_summary
+        ),
+        fold_single_summary=(
+            fold_single_summary
+        ),
+        prediction_corr=(
+            prediction_corr
+        ),
+        residual_corr=(
+            residual_corr
+        ),
+        fold_prediction_corr=(
+            fold_prediction_corr
+        ),
+        fold_residual_corr=(
+            fold_residual_corr
+        ),
+        pair_grid_all=(
+            pair_grid_all
+        ),
+        pair_grid_best=(
+            pair_grid_best
+        ),
+        pair_exact_best=(
+            pair_exact_best
+        ),
+        pair_comparison=(
+            pair_comparison
+        ),
+        triple_grid_result=(
+            triple_grid_result
+        ),
+        triple_grid_best=(
+            triple_grid_best
+        ),
+        triple_exact=(
+            triple_exact
+        ),
+        incremental_value=(
+            incremental_value
+        ),
+        fold_exact_optimum=(
+            fold_exact_optimum
+        ),
+        fold_ensemble_performance=(
+            fold_ensemble_performance
+        ),
+        optimization_best=(
+            optimization_best
+        ),
+        full_oof_metrics=(
+            full_oof_metrics
+        ),
+        full_prediction=(
+            full_prediction
+        ),
+    )
+
+    print(
+        "\n[저장 완료]"
+    )
+
+    print(
+        f"- {OUTPUT_DIR}"
+    )
 
 
 if __name__ == "__main__":
