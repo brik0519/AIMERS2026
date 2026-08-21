@@ -20,4 +20,4 @@ __pycache__/
 # 현
 data/data_analyzer.ipynb
 data/mlp_2024Validation/validation/ensemble_v*/oof_pred.csv
-validation/mlp_v*/fold_*/validation.npz
+validation/ensemble_v*/oof_pred.csv

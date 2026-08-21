@@ -1,0 +1,36 @@
+{
+  "experiment_name": "cb_v004",
+  "fold": 1,
+  "train_seasons": [
+    2019,
+    2020
+  ],
+  "validation_season": 2021,
+  "n_validation": 247088,
+  "model_type": "CatBoostClassifier",
+  "model_params": {
+    "iterations": 800,
+    "learning_rate": 0.07,
+    "depth": 8,
+    "loss_function": "Logloss",
+    "l2_leaf_reg": 10.0,
+    "random_strength": 1.0,
+    "random_seed": 42,
+    "max_ctr_complexity": 1,
+    "thread_count": -1,
+    "verbose": 100,
+    "allow_writing_files": false
+  },
+  "positive_rate": 0.5327616072006734,
+  "brier": 0.2457513365654018,
+  "baseline_brier": 0.24892667709362878,
+  "bss_raw": 1275.6127889951508,
+  "bss": 1275.6127889951508,
+  "prediction_mean": 0.5262576911800647,
+  "prediction_std": 0.04212216662838098,
+  "prediction_min": 0.39374616472257135,
+  "prediction_max": 0.691772859867672,
+  "elapsed_seconds": 29.30198645591736,
+  "best_iteration": 50,
+  "final_iterations": 51
+}
