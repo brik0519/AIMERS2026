@@ -1,0 +1,31 @@
+{
+  "experiment_name": "mlp_v003_hybrid",
+  "model_type": "TabularMLP",
+  "variant": "hybrid",
+  "validation": "4-Fold Expanding Window Validation",
+  "best_epoch": 4,
+  "training_config": {
+    "seed": 42,
+    "batch_size": 4096,
+    "learning_rate": 0.001,
+    "weight_decay": 1e-05,
+    "hidden_dims": [
+      256,
+      256,
+      128
+    ],
+    "dropout": 0.15,
+    "loss": "BCEWithLogitsLoss",
+    "scheduler": "CosineAnnealingLR",
+    "primary_metric": "Brier Score"
+  },
+  "preprocessing": {
+    "source": "mlp_preprocess.py",
+    "variant": "hybrid",
+    "count_state": true,
+    "raw_count_features_retained": true,
+    "unknown_index": 0,
+    "missing_index": 1
+  },
+  "full_training_seconds": 191.859845161438
+}
