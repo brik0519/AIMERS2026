@@ -1,0 +1,493 @@
+{
+  "experiment": {
+    "experiment_name": "cb_reg_v005",
+    "experiment_type": "old_050_trackman_tier_a_paired_ablation",
+    "model_type": "CatBoostRegressor",
+    "objective": "RMSE",
+    "random_seed": 42
+  },
+  "data": {
+    "train_seasons": [
+      2019,
+      2020,
+      2021,
+      2022,
+      2023
+    ],
+    "validation_season": 2024,
+    "n_train": 1221585,
+    "n_validation": 253507,
+    "target_mean_train": 0.5315815109059132,
+    "target_mean_validation": 0.4861049201797189
+  },
+  "weighting": {
+    "policy": "old_050",
+    "validation_weight_map": {
+      "2019": 0.5,
+      "2020": 0.5,
+      "2021": 0.5,
+      "2022": 0.5,
+      "2023": 1.0
+    },
+    "validation_normalized_weights": {
+      "2019": {
+        "raw_relative_weight": 0.5,
+        "normalized_weight_mean": 0.8326471771032852,
+        "n": 237413
+      },
+      "2020": {
+        "raw_relative_weight": 0.5,
+        "normalized_weight_mean": 0.8326471771032853,
+        "n": 244087
+      },
+      "2021": {
+        "raw_relative_weight": 0.5,
+        "normalized_weight_mean": 0.8326471771032854,
+        "n": 247088
+      },
+      "2022": {
+        "raw_relative_weight": 0.5,
+        "normalized_weight_mean": 0.8326471771032853,
+        "n": 247472
+      },
+      "2023": {
+        "raw_relative_weight": 1.0,
+        "normalized_weight_mean": 1.6652943542065706,
+        "n": 245525
+      }
+    },
+    "final_policy": "old_050_extended_2023_2024_recent",
+    "final_weight_map": {
+      "2019": 0.5,
+      "2020": 0.5,
+      "2021": 0.5,
+      "2022": 0.5,
+      "2023": 1.0,
+      "2024": 1.0
+    },
+    "final_normalized_weights": {
+      "2019": {
+        "raw_relative_weight": 0.5,
+        "normalized_weight_mean": 0.7472134475848525,
+        "n": 237413
+      },
+      "2020": {
+        "raw_relative_weight": 0.5,
+        "normalized_weight_mean": 0.7472134475848526,
+        "n": 244087
+      },
+      "2021": {
+        "raw_relative_weight": 0.5,
+        "normalized_weight_mean": 0.7472134475848525,
+        "n": 247088
+      },
+      "2022": {
+        "raw_relative_weight": 0.5,
+        "normalized_weight_mean": 0.7472134475848524,
+        "n": 247472
+      },
+      "2023": {
+        "raw_relative_weight": 1.0,
+        "normalized_weight_mean": 1.494426895169705,
+        "n": 245525
+      },
+      "2024": {
+        "raw_relative_weight": 1.0,
+        "normalized_weight_mean": 1.494426895169705,
+        "n": 253507
+      }
+    }
+  },
+  "features": {
+    "base_features": [
+      "season",
+      "game_month",
+      "game_dayofweek",
+      "inning",
+      "top_bottom",
+      "game_type",
+      "balls_before",
+      "strikes_before",
+      "outs_before",
+      "run_top_before",
+      "run_bot_before",
+      "run_total_before",
+      "score_diff_home",
+      "score_diff_pitcher_team",
+      "runner_on_1b",
+      "runner_on_2b",
+      "runner_on_3b",
+      "num_runners_on",
+      "base_state",
+      "home_win_expectancy",
+      "away_win_expectancy",
+      "li",
+      "pitcher_id",
+      "batter_id",
+      "pitcher_hand",
+      "batter_hand",
+      "pitcher_team_id",
+      "batter_team_id",
+      "asof_pitcher_n",
+      "asof_pitcher_success_rate",
+      "asof_pitcher_reverse_rate",
+      "asof_pitcher_middle_rate",
+      "asof_pitcher_ball_rate",
+      "asof_pitcher_strike_rate",
+      "asof_pitcher_prev1_game_success_rate",
+      "asof_pitcher_prev3_game_success_rate",
+      "asof_pitcher_prev5_game_success_rate",
+      "asof_pitcher_prev1_game_middle_rate",
+      "asof_pitcher_prev3_game_middle_rate",
+      "asof_pitcher_prev5_game_middle_rate",
+      "asof_batter_n",
+      "asof_batter_success_rate",
+      "asof_batter_middle_rate",
+      "asof_pitcher_pitchmix_n",
+      "asof_pitcher_fastball_rate",
+      "asof_pitcher_breaking_rate",
+      "asof_pitcher_offspeed_rate"
+    ],
+    "control_features": [
+      "season",
+      "game_month",
+      "game_dayofweek",
+      "inning",
+      "top_bottom",
+      "game_type",
+      "balls_before",
+      "strikes_before",
+      "outs_before",
+      "run_top_before",
+      "run_bot_before",
+      "run_total_before",
+      "score_diff_home",
+      "score_diff_pitcher_team",
+      "runner_on_1b",
+      "runner_on_2b",
+      "runner_on_3b",
+      "num_runners_on",
+      "base_state",
+      "home_win_expectancy",
+      "away_win_expectancy",
+      "li",
+      "pitcher_id",
+      "batter_id",
+      "pitcher_hand",
+      "batter_hand",
+      "pitcher_team_id",
+      "batter_team_id",
+      "asof_pitcher_n",
+      "asof_pitcher_reverse_rate",
+      "asof_pitcher_middle_rate",
+      "asof_pitcher_ball_rate",
+      "asof_pitcher_strike_rate",
+      "asof_pitcher_prev1_game_success_rate",
+      "asof_pitcher_prev3_game_success_rate",
+      "asof_pitcher_prev5_game_success_rate",
+      "asof_pitcher_prev1_game_middle_rate",
+      "asof_pitcher_prev3_game_middle_rate",
+      "asof_pitcher_prev5_game_middle_rate",
+      "asof_batter_n",
+      "asof_batter_middle_rate",
+      "asof_pitcher_pitchmix_n",
+      "asof_pitcher_fastball_rate",
+      "asof_pitcher_breaking_rate",
+      "asof_pitcher_offspeed_rate",
+      "hbeb_pitcher_success_rate",
+      "hbeb_batter_success_rate"
+    ],
+    "treatment_features": [
+      "season",
+      "game_month",
+      "game_dayofweek",
+      "inning",
+      "top_bottom",
+      "game_type",
+      "balls_before",
+      "strikes_before",
+      "outs_before",
+      "run_top_before",
+      "run_bot_before",
+      "run_total_before",
+      "score_diff_home",
+      "score_diff_pitcher_team",
+      "runner_on_1b",
+      "runner_on_2b",
+      "runner_on_3b",
+      "num_runners_on",
+      "base_state",
+      "home_win_expectancy",
+      "away_win_expectancy",
+      "li",
+      "pitcher_id",
+      "batter_id",
+      "pitcher_hand",
+      "batter_hand",
+      "pitcher_team_id",
+      "batter_team_id",
+      "asof_pitcher_n",
+      "asof_pitcher_reverse_rate",
+      "asof_pitcher_middle_rate",
+      "asof_pitcher_ball_rate",
+      "asof_pitcher_strike_rate",
+      "asof_pitcher_prev1_game_success_rate",
+      "asof_pitcher_prev3_game_success_rate",
+      "asof_pitcher_prev5_game_success_rate",
+      "asof_pitcher_prev1_game_middle_rate",
+      "asof_pitcher_prev3_game_middle_rate",
+      "asof_pitcher_prev5_game_middle_rate",
+      "asof_batter_n",
+      "asof_batter_middle_rate",
+      "asof_pitcher_pitchmix_n",
+      "asof_pitcher_fastball_rate",
+      "asof_pitcher_breaking_rate",
+      "asof_pitcher_offspeed_rate",
+      "tm_history_available",
+      "tm_n",
+      "tm_rel_speed_mean",
+      "tm_rel_speed_std",
+      "tm_spin_rate_mean",
+      "tm_spin_rate_std",
+      "tm_induced_vert_break_mean",
+      "tm_induced_vert_break_std",
+      "tm_rel_height_mean",
+      "tm_rel_height_std",
+      "tm_rel_side_mean",
+      "tm_rel_side_std",
+      "hbeb_pitcher_success_rate",
+      "hbeb_batter_success_rate"
+    ],
+    "categorical_features": [
+      "top_bottom",
+      "game_type",
+      "base_state",
+      "pitcher_id",
+      "batter_id",
+      "pitcher_team_id",
+      "batter_team_id",
+      "pitcher_hand",
+      "batter_hand"
+    ],
+    "hbeb_configs": [
+      {
+        "group_cols": [
+          "pitcher_hand"
+        ],
+        "n_col": "asof_pitcher_n",
+        "rate_col": "asof_pitcher_success_rate",
+        "new_col": "hbeb_pitcher_success_rate"
+      },
+      {
+        "group_cols": [
+          "batter_hand"
+        ],
+        "n_col": "asof_batter_n",
+        "rate_col": "asof_batter_success_rate",
+        "new_col": "hbeb_batter_success_rate"
+      }
+    ],
+    "trackman_features": [
+      "tm_history_available",
+      "tm_n",
+      "tm_rel_speed_mean",
+      "tm_rel_speed_std",
+      "tm_spin_rate_mean",
+      "tm_spin_rate_std",
+      "tm_induced_vert_break_mean",
+      "tm_induced_vert_break_std",
+      "tm_rel_height_mean",
+      "tm_rel_height_std",
+      "tm_rel_side_mean",
+      "tm_rel_side_std"
+    ]
+  },
+  "trackman": {
+    "enabled_in_control": false,
+    "enabled_in_treatment": true,
+    "allowed_tiers": [
+      "A"
+    ],
+    "validation_profile_path": "data/trackman/trackman_pitcher_profiles_fold_2024.csv",
+    "final_profile_path": "data/trackman/trackman_pitcher_profiles.csv",
+    "policy": "tier_a_only_fold_frozen_validation_and_target_season_frozen_profile",
+    "train_coverage_2024_holdout": {
+      "tm_available_count": 531221,
+      "tm_available_ratio": 0.4348620849142712,
+      "tm_unavailable_count": 690364,
+      "tm_unavailable_ratio": 0.5651379150857287
+    },
+    "validation_coverage_2024": {
+      "tm_available_count": 121122,
+      "tm_available_ratio": 0.4777856232766748,
+      "tm_unavailable_count": 132385,
+      "tm_unavailable_ratio": 0.5222143767233252
+    },
+    "final_train_coverage": {
+      "tm_available_count": 676243,
+      "tm_available_ratio": 0.45844123620763993,
+      "tm_unavailable_count": 798849,
+      "tm_unavailable_ratio": 0.5415587637923601
+    }
+  },
+  "model_params": {
+    "iterations": 800,
+    "learning_rate": 0.07,
+    "depth": 8,
+    "loss_function": "RMSE",
+    "l2_leaf_reg": 10.0,
+    "random_strength": 1.0,
+    "random_seed": 42,
+    "max_ctr_complexity": 1,
+    "thread_count": -1,
+    "verbose": 100,
+    "allow_writing_files": false
+  },
+  "control": {
+    "name": "control_old_050",
+    "n_train": 1221585,
+    "n_validation": 253507,
+    "positive_rate": 0.4861049201797189,
+    "brier": 0.24810883303257134,
+    "baseline_brier": 0.24980692675678798,
+    "bss_raw": 679.7624654619416,
+    "bss": 679.7624654619416,
+    "best_iteration": 115,
+    "final_iterations": 116,
+    "elapsed_seconds": 59.721914291381836,
+    "prediction_raw_mean": 0.4937314996874951,
+    "prediction_raw_std": 0.04060929679363975,
+    "prediction_raw_min": 0.3541005930774676,
+    "prediction_raw_max": 0.647331066486626,
+    "prediction_clip_mean": 0.4937314996874951,
+    "prediction_clip_std": 0.04060929679363975,
+    "prediction_clip_min": 0.3541005930774676,
+    "prediction_clip_max": 0.647331066486626,
+    "n_prediction_below_0": 0,
+    "ratio_prediction_below_0": 0.0,
+    "n_prediction_above_1": 0,
+    "ratio_prediction_above_1": 0.0,
+    "n_prediction_outside_0_1": 0,
+    "ratio_prediction_outside_0_1": 0.0,
+    "trackman_enabled": false,
+    "features_count": 47
+  },
+  "treatment": {
+    "name": "treatment_old_050_trackman_tier_a",
+    "n_train": 1221585,
+    "n_validation": 253507,
+    "positive_rate": 0.4861049201797189,
+    "brier": 0.24811002845143762,
+    "baseline_brier": 0.24980692675678798,
+    "bss_raw": 679.2839283445762,
+    "bss": 679.2839283445762,
+    "best_iteration": 239,
+    "final_iterations": 240,
+    "elapsed_seconds": 105.64416646957397,
+    "prediction_raw_mean": 0.49238597799042605,
+    "prediction_raw_std": 0.04294667673675827,
+    "prediction_raw_min": 0.3146772976004798,
+    "prediction_raw_max": 0.663917931526897,
+    "prediction_clip_mean": 0.49238597799042605,
+    "prediction_clip_std": 0.04294667673675827,
+    "prediction_clip_min": 0.3146772976004798,
+    "prediction_clip_max": 0.663917931526897,
+    "n_prediction_below_0": 0,
+    "ratio_prediction_below_0": 0.0,
+    "n_prediction_above_1": 0,
+    "ratio_prediction_above_1": 0.0,
+    "n_prediction_outside_0_1": 0,
+    "ratio_prediction_outside_0_1": 0.0,
+    "trackman_enabled": true,
+    "trackman_allowed_tiers": [
+      "A"
+    ],
+    "features_count": 59
+  },
+  "paired_comparison": {
+    "control_brier": 0.24810883303257134,
+    "treatment_brier": 0.24811002845143762,
+    "delta_brier": -1.1954188662843812e-06,
+    "control_bss": 679.7624654619416,
+    "treatment_bss": 679.2839283445762,
+    "delta_bss": -0.478537117365363,
+    "prediction_correlation": 0.9254120444904842,
+    "residual_correlation": 0.9994645847961517,
+    "prediction_mae_difference": 0.012609622254426304,
+    "prediction_rmse_difference": 0.016353644408440473,
+    "prediction_delta_mean": -0.0013455216970691248,
+    "prediction_delta_std": 0.01629819796175125
+  },
+  "trackman_subset_analysis": {
+    "available": {
+      "n": 121122,
+      "control_brier": 0.2482177945630053,
+      "treatment_brier": 0.24818541306175343,
+      "delta_brier": 3.2381501251871336e-05,
+      "prediction_correlation": 0.9380750723898899,
+      "mean_abs_delta_prediction": 0.012409988495621234
+    },
+    "unavailable": {
+      "n": 132385,
+      "control_brier": 0.24800914168922253,
+      "treatment_brier": 0.24804105738393986,
+      "delta_brier": -3.191569471733269e-05,
+      "prediction_correlation": 0.9089517350535051,
+      "mean_abs_delta_prediction": 0.01279227164925191
+    }
+  },
+  "prediction_change_analysis": {
+    "q1": {
+      "n": 63377,
+      "control_brier": 0.24853747253317154,
+      "treatment_brier": 0.24851711241338545,
+      "delta_brier": 2.0360119786094755e-05,
+      "prediction_correlation": 0.9976057779114484,
+      "mean_abs_delta_prediction": 0.002324483649192382
+    },
+    "q2": {
+      "n": 63377,
+      "control_brier": 0.24852085362687368,
+      "treatment_brier": 0.24848743468136722,
+      "delta_brier": 3.3418945506458186e-05,
+      "prediction_correlation": 0.9819986123040788,
+      "mean_abs_delta_prediction": 0.007307370359922305
+    },
+    "q3": {
+      "n": 63376,
+      "control_brier": 0.24779500322596315,
+      "treatment_brier": 0.24775621975809817,
+      "delta_brier": 3.8783467864983434e-05,
+      "prediction_correlation": 0.9455735767429367,
+      "mean_abs_delta_prediction": 0.013652943542501244
+    },
+    "q4": {
+      "n": 63377,
+      "control_brier": 0.24758199779248358,
+      "treatment_brier": 0.2476793413702954,
+      "delta_brier": -9.73435778118259e-05,
+      "prediction_correlation": 0.8270869782931312,
+      "mean_abs_delta_prediction": 0.02715370792823309
+    }
+  },
+  "selection": {
+    "artifact_model": "treatment",
+    "decision_status": "analysis_required",
+    "selection_note": "Validation에서는 Control/Treatment를 비교하지만 cb_reg_v005 artifact는 Treatment 정의로 저장한다."
+  },
+  "final_training": {
+    "training_seasons": [
+      2019,
+      2020,
+      2021,
+      2022,
+      2023,
+      2024
+    ],
+    "selected_model": "treatment_old_050_trackman_tier_a",
+    "final_iterations": 240,
+    "weight_policy": "old_050_extended",
+    "model_path": "model/cb_reg_v005/cb_reg_v005.pkl",
+    "elapsed_seconds": 98.50716543197632
+  }
+}
