@@ -1,0 +1,623 @@
+{
+  "experiment_name": "cb_reg_v006",
+  "validation_method": "expanding_window",
+  "model_type": "CatBoostRegressor",
+  "objective": "RMSE",
+  "prediction_for_evaluation": "clipped",
+  "model_params": {
+    "iterations": 800,
+    "learning_rate": 0.07,
+    "depth": 8,
+    "loss_function": "RMSE",
+    "l2_leaf_reg": 10.0,
+    "random_strength": 1.0,
+    "random_seed": 42,
+    "max_ctr_complexity": 1,
+    "thread_count": -1,
+    "verbose": 100,
+    "allow_writing_files": false
+  },
+  "early_stopping_rounds": 80,
+  "final_iteration_strategy": "latest_fold",
+  "hbeb_configs": [
+    {
+      "group_cols": [
+        "pitcher_hand"
+      ],
+      "n_col": "asof_pitcher_n",
+      "rate_col": "asof_pitcher_success_rate",
+      "new_col": "hbeb_pitcher_success_rate"
+    },
+    {
+      "group_cols": [
+        "batter_hand"
+      ],
+      "n_col": "asof_batter_n",
+      "rate_col": "asof_batter_success_rate",
+      "new_col": "hbeb_batter_success_rate"
+    }
+  ],
+  "hierarchical_conditional_eb": {
+    "enabled": true,
+    "hierarchy": [
+      "global",
+      "pitcher",
+      "pitcher_x_count_state"
+    ],
+    "features": [
+      "hc_pitcher_count_n",
+      "hc_pitcher_count_eb_rate"
+    ],
+    "count_state_source": [
+      "balls_before",
+      "strikes_before"
+    ],
+    "training_policy": "row_season_frozen_using_only_prior_seasons",
+    "validation_policy": "fold_train_static_lookup"
+  },
+  "folds": [
+    {
+      "experiment_name": "cb_reg_v006",
+      "fold": 1,
+      "train_seasons": [
+        2019,
+        2020
+      ],
+      "validation_season": 2021,
+      "n_train": 481500,
+      "n_validation": 247088,
+      "model_type": "CatBoostRegressor",
+      "model_params": {
+        "iterations": 800,
+        "learning_rate": 0.07,
+        "depth": 8,
+        "loss_function": "RMSE",
+        "l2_leaf_reg": 10.0,
+        "random_strength": 1.0,
+        "random_seed": 42,
+        "max_ctr_complexity": 1,
+        "thread_count": -1,
+        "verbose": 100,
+        "allow_writing_files": false
+      },
+      "positive_rate": 0.5327616072006734,
+      "raw_brier": 0.24580269862193896,
+      "raw_bss_raw": 1254.979381143151,
+      "raw_bss": 1254.979381143151,
+      "clipped_brier": 0.24580269862193896,
+      "clipped_bss_raw": 1254.979381143151,
+      "clipped_bss": 1254.979381143151,
+      "brier": 0.24580269862193896,
+      "baseline_brier": 0.24892667709362878,
+      "bss_raw": 1254.979381143151,
+      "bss": 1254.979381143151,
+      "prediction_raw_mean": 0.5249206287481756,
+      "prediction_raw_std": 0.044088355605590025,
+      "prediction_raw_min": 0.3703108461867791,
+      "prediction_raw_max": 0.6986864288996414,
+      "prediction_clip_mean": 0.5249206287481756,
+      "prediction_clip_std": 0.044088355605590025,
+      "prediction_clip_min": 0.3703108461867791,
+      "prediction_clip_max": 0.6986864288996414,
+      "elapsed_seconds": 18.431280851364136,
+      "best_iteration": 68,
+      "final_iterations": 69,
+      "n_prediction_below_0": 0,
+      "ratio_prediction_below_0": 0.0,
+      "n_prediction_above_1": 0,
+      "ratio_prediction_above_1": 0.0,
+      "n_prediction_outside_0_1": 0,
+      "ratio_prediction_outside_0_1": 0.0,
+      "hc_features": [
+        "hc_pitcher_count_n",
+        "hc_pitcher_count_eb_rate"
+      ],
+      "hc_train_diagnostics": {
+        "2019": {
+          "n_rows": 237413,
+          "exact_hit_count": 0,
+          "exact_hit_ratio": 0.0,
+          "parent_fallback_count": 0,
+          "parent_fallback_ratio": 0.0,
+          "safe_row_fallback_count": 237413,
+          "safe_row_fallback_ratio": 1.0,
+          "mean_support": 0.0,
+          "median_support": 0.0,
+          "prior_strength": 30.0,
+          "global_mean": 0.5,
+          "reference_seasons": [],
+          "n_reference": 0
+        },
+        "2020": {
+          "n_rows": 244087,
+          "exact_hit_count": 188620,
+          "exact_hit_ratio": 0.7727572545854552,
+          "parent_fallback_count": 846,
+          "parent_fallback_ratio": 0.003465977294980888,
+          "safe_row_fallback_count": 54621,
+          "safe_row_fallback_ratio": 0.22377676811956393,
+          "mean_support": 128.5331910343443,
+          "median_support": 65.0,
+          "prior_strength": 75.4148825862445,
+          "global_mean": 0.5646700054335694,
+          "reference_seasons": [
+            2019
+          ],
+          "n_reference": 237413
+        }
+      },
+      "hc_validation_diagnostics": {
+        "n_rows": 247088,
+        "exact_hit_count": 195791,
+        "exact_hit_ratio": 0.7923938030175484,
+        "parent_fallback_count": 478,
+        "parent_fallback_ratio": 0.0019345334455740464,
+        "safe_row_fallback_count": 50819,
+        "safe_row_fallback_ratio": 0.20567166353687755,
+        "mean_support": 216.07414767208445,
+        "median_support": 110.0,
+        "prior_strength": 105.56494210105464,
+        "global_mean": 0.5484693665628245
+      }
+    },
+    {
+      "experiment_name": "cb_reg_v006",
+      "fold": 2,
+      "train_seasons": [
+        2019,
+        2020,
+        2021
+      ],
+      "validation_season": 2022,
+      "n_train": 728588,
+      "n_validation": 247472,
+      "model_type": "CatBoostRegressor",
+      "model_params": {
+        "iterations": 800,
+        "learning_rate": 0.07,
+        "depth": 8,
+        "loss_function": "RMSE",
+        "l2_leaf_reg": 10.0,
+        "random_strength": 1.0,
+        "random_seed": 42,
+        "max_ctr_complexity": 1,
+        "thread_count": -1,
+        "verbose": 100,
+        "allow_writing_files": false
+      },
+      "positive_rate": 0.5289204435249241,
+      "raw_brier": 0.24340419034927804,
+      "raw_bss_raw": 2311.500320819082,
+      "raw_bss": 2311.500320819082,
+      "clipped_brier": 0.24340419034927804,
+      "clipped_bss_raw": 2311.500320819082,
+      "clipped_bss": 2311.500320819082,
+      "brier": 0.24340419034927804,
+      "baseline_brier": 0.24916360794632167,
+      "bss_raw": 2311.500320819082,
+      "bss": 2311.500320819082,
+      "prediction_raw_mean": 0.5325026121716919,
+      "prediction_raw_std": 0.07251462615407582,
+      "prediction_raw_min": 0.35287584560381413,
+      "prediction_raw_max": 0.8185124266475072,
+      "prediction_clip_mean": 0.5325026121716919,
+      "prediction_clip_std": 0.07251462615407582,
+      "prediction_clip_min": 0.35287584560381413,
+      "prediction_clip_max": 0.8185124266475072,
+      "elapsed_seconds": 47.03144025802612,
+      "best_iteration": 182,
+      "final_iterations": 183,
+      "n_prediction_below_0": 0,
+      "ratio_prediction_below_0": 0.0,
+      "n_prediction_above_1": 0,
+      "ratio_prediction_above_1": 0.0,
+      "n_prediction_outside_0_1": 0,
+      "ratio_prediction_outside_0_1": 0.0,
+      "hc_features": [
+        "hc_pitcher_count_n",
+        "hc_pitcher_count_eb_rate"
+      ],
+      "hc_train_diagnostics": {
+        "2019": {
+          "n_rows": 237413,
+          "exact_hit_count": 0,
+          "exact_hit_ratio": 0.0,
+          "parent_fallback_count": 0,
+          "parent_fallback_ratio": 0.0,
+          "safe_row_fallback_count": 237413,
+          "safe_row_fallback_ratio": 1.0,
+          "mean_support": 0.0,
+          "median_support": 0.0,
+          "prior_strength": 30.0,
+          "global_mean": 0.5,
+          "reference_seasons": [],
+          "n_reference": 0
+        },
+        "2020": {
+          "n_rows": 244087,
+          "exact_hit_count": 188620,
+          "exact_hit_ratio": 0.7727572545854552,
+          "parent_fallback_count": 846,
+          "parent_fallback_ratio": 0.003465977294980888,
+          "safe_row_fallback_count": 54621,
+          "safe_row_fallback_ratio": 0.22377676811956393,
+          "mean_support": 128.5331910343443,
+          "median_support": 65.0,
+          "prior_strength": 75.4148825862445,
+          "global_mean": 0.5646700054335694,
+          "reference_seasons": [
+            2019
+          ],
+          "n_reference": 237413
+        },
+        "2021": {
+          "n_rows": 247088,
+          "exact_hit_count": 195791,
+          "exact_hit_ratio": 0.7923938030175484,
+          "parent_fallback_count": 478,
+          "parent_fallback_ratio": 0.0019345334455740464,
+          "safe_row_fallback_count": 50819,
+          "safe_row_fallback_ratio": 0.20567166353687755,
+          "mean_support": 216.07414767208445,
+          "median_support": 110.0,
+          "prior_strength": 105.56494210105464,
+          "global_mean": 0.5484693665628245,
+          "reference_seasons": [
+            2019,
+            2020
+          ],
+          "n_reference": 481500
+        }
+      },
+      "hc_validation_diagnostics": {
+        "n_rows": 247472,
+        "exact_hit_count": 207872,
+        "exact_hit_ratio": 0.8399818969418763,
+        "parent_fallback_count": 650,
+        "parent_fallback_ratio": 0.0026265597724186977,
+        "safe_row_fallback_count": 38950,
+        "safe_row_fallback_ratio": 0.15739154328570504,
+        "mean_support": 324.1839036335424,
+        "median_support": 188.0,
+        "prior_strength": 108.10196694208018,
+        "global_mean": 0.5431423520563061
+      }
+    },
+    {
+      "experiment_name": "cb_reg_v006",
+      "fold": 3,
+      "train_seasons": [
+        2019,
+        2020,
+        2021,
+        2022
+      ],
+      "validation_season": 2023,
+      "n_train": 976060,
+      "n_validation": 245525,
+      "model_type": "CatBoostRegressor",
+      "model_params": {
+        "iterations": 800,
+        "learning_rate": 0.07,
+        "depth": 8,
+        "loss_function": "RMSE",
+        "l2_leaf_reg": 10.0,
+        "random_strength": 1.0,
+        "random_seed": 42,
+        "max_ctr_complexity": 1,
+        "thread_count": -1,
+        "verbose": 100,
+        "allow_writing_files": false
+      },
+      "positive_rate": 0.49995723449750534,
+      "raw_brier": 0.25136056441305277,
+      "raw_bss_raw": -544.2265007577163,
+      "raw_bss": 0.0,
+      "clipped_brier": 0.25136056441305277,
+      "clipped_bss_raw": -544.2265007577163,
+      "clipped_bss": 0.0,
+      "brier": 0.25136056441305277,
+      "baseline_brier": 0.24999999817111176,
+      "bss_raw": -544.2265007577163,
+      "bss": 0.0,
+      "prediction_raw_mean": 0.5362815311514404,
+      "prediction_raw_std": 0.012579551826759988,
+      "prediction_raw_min": 0.5196641941219636,
+      "prediction_raw_max": 0.5796909056447905,
+      "prediction_clip_mean": 0.5362815311514404,
+      "prediction_clip_std": 0.012579551826759988,
+      "prediction_clip_min": 0.5196641941219636,
+      "prediction_clip_max": 0.5796909056447905,
+      "elapsed_seconds": 22.661303281784058,
+      "best_iteration": 2,
+      "final_iterations": 3,
+      "n_prediction_below_0": 0,
+      "ratio_prediction_below_0": 0.0,
+      "n_prediction_above_1": 0,
+      "ratio_prediction_above_1": 0.0,
+      "n_prediction_outside_0_1": 0,
+      "ratio_prediction_outside_0_1": 0.0,
+      "hc_features": [
+        "hc_pitcher_count_n",
+        "hc_pitcher_count_eb_rate"
+      ],
+      "hc_train_diagnostics": {
+        "2019": {
+          "n_rows": 237413,
+          "exact_hit_count": 0,
+          "exact_hit_ratio": 0.0,
+          "parent_fallback_count": 0,
+          "parent_fallback_ratio": 0.0,
+          "safe_row_fallback_count": 237413,
+          "safe_row_fallback_ratio": 1.0,
+          "mean_support": 0.0,
+          "median_support": 0.0,
+          "prior_strength": 30.0,
+          "global_mean": 0.5,
+          "reference_seasons": [],
+          "n_reference": 0
+        },
+        "2020": {
+          "n_rows": 244087,
+          "exact_hit_count": 188620,
+          "exact_hit_ratio": 0.7727572545854552,
+          "parent_fallback_count": 846,
+          "parent_fallback_ratio": 0.003465977294980888,
+          "safe_row_fallback_count": 54621,
+          "safe_row_fallback_ratio": 0.22377676811956393,
+          "mean_support": 128.5331910343443,
+          "median_support": 65.0,
+          "prior_strength": 75.4148825862445,
+          "global_mean": 0.5646700054335694,
+          "reference_seasons": [
+            2019
+          ],
+          "n_reference": 237413
+        },
+        "2021": {
+          "n_rows": 247088,
+          "exact_hit_count": 195791,
+          "exact_hit_ratio": 0.7923938030175484,
+          "parent_fallback_count": 478,
+          "parent_fallback_ratio": 0.0019345334455740464,
+          "safe_row_fallback_count": 50819,
+          "safe_row_fallback_ratio": 0.20567166353687755,
+          "mean_support": 216.07414767208445,
+          "median_support": 110.0,
+          "prior_strength": 105.56494210105464,
+          "global_mean": 0.5484693665628245,
+          "reference_seasons": [
+            2019,
+            2020
+          ],
+          "n_reference": 481500
+        },
+        "2022": {
+          "n_rows": 247472,
+          "exact_hit_count": 207872,
+          "exact_hit_ratio": 0.8399818969418763,
+          "parent_fallback_count": 650,
+          "parent_fallback_ratio": 0.0026265597724186977,
+          "safe_row_fallback_count": 38950,
+          "safe_row_fallback_ratio": 0.15739154328570504,
+          "mean_support": 324.1839036335424,
+          "median_support": 188.0,
+          "prior_strength": 108.10196694208018,
+          "global_mean": 0.5431423520563061,
+          "reference_seasons": [
+            2019,
+            2020,
+            2021
+          ],
+          "n_reference": 728588
+        }
+      },
+      "hc_validation_diagnostics": {
+        "n_rows": 245525,
+        "exact_hit_count": 211457,
+        "exact_hit_ratio": 0.8612442724773445,
+        "parent_fallback_count": 190,
+        "parent_fallback_ratio": 0.0007738519499032686,
+        "safe_row_fallback_count": 33878,
+        "safe_row_fallback_ratio": 0.13798187557275227,
+        "mean_support": 418.1904001629162,
+        "median_support": 248.0,
+        "prior_strength": 99.28953450881022,
+        "global_mean": 0.5395365039034485
+      }
+    },
+    {
+      "experiment_name": "cb_reg_v006",
+      "fold": 4,
+      "train_seasons": [
+        2019,
+        2020,
+        2021,
+        2022,
+        2023
+      ],
+      "validation_season": 2024,
+      "n_train": 1221585,
+      "n_validation": 253507,
+      "model_type": "CatBoostRegressor",
+      "model_params": {
+        "iterations": 800,
+        "learning_rate": 0.07,
+        "depth": 8,
+        "loss_function": "RMSE",
+        "l2_leaf_reg": 10.0,
+        "random_strength": 1.0,
+        "random_seed": 42,
+        "max_ctr_complexity": 1,
+        "thread_count": -1,
+        "verbose": 100,
+        "allow_writing_files": false
+      },
+      "positive_rate": 0.4861049201797189,
+      "raw_brier": 0.24807478758055893,
+      "raw_bss_raw": 693.391171620894,
+      "raw_bss": 693.391171620894,
+      "clipped_brier": 0.24807478758055893,
+      "clipped_bss_raw": 693.391171620894,
+      "clipped_bss": 693.391171620894,
+      "brier": 0.24807478758055893,
+      "baseline_brier": 0.24980692675678798,
+      "bss_raw": 693.391171620894,
+      "bss": 693.391171620894,
+      "prediction_raw_mean": 0.4931195931731479,
+      "prediction_raw_std": 0.041215389949658524,
+      "prediction_raw_min": 0.3404264968947438,
+      "prediction_raw_max": 0.6501133683066366,
+      "prediction_clip_mean": 0.4931195931731479,
+      "prediction_clip_std": 0.041215389949658524,
+      "prediction_clip_min": 0.3404264968947438,
+      "prediction_clip_max": 0.6501133683066366,
+      "elapsed_seconds": 83.18842792510986,
+      "best_iteration": 193,
+      "final_iterations": 194,
+      "n_prediction_below_0": 0,
+      "ratio_prediction_below_0": 0.0,
+      "n_prediction_above_1": 0,
+      "ratio_prediction_above_1": 0.0,
+      "n_prediction_outside_0_1": 0,
+      "ratio_prediction_outside_0_1": 0.0,
+      "hc_features": [
+        "hc_pitcher_count_n",
+        "hc_pitcher_count_eb_rate"
+      ],
+      "hc_train_diagnostics": {
+        "2019": {
+          "n_rows": 237413,
+          "exact_hit_count": 0,
+          "exact_hit_ratio": 0.0,
+          "parent_fallback_count": 0,
+          "parent_fallback_ratio": 0.0,
+          "safe_row_fallback_count": 237413,
+          "safe_row_fallback_ratio": 1.0,
+          "mean_support": 0.0,
+          "median_support": 0.0,
+          "prior_strength": 30.0,
+          "global_mean": 0.5,
+          "reference_seasons": [],
+          "n_reference": 0
+        },
+        "2020": {
+          "n_rows": 244087,
+          "exact_hit_count": 188620,
+          "exact_hit_ratio": 0.7727572545854552,
+          "parent_fallback_count": 846,
+          "parent_fallback_ratio": 0.003465977294980888,
+          "safe_row_fallback_count": 54621,
+          "safe_row_fallback_ratio": 0.22377676811956393,
+          "mean_support": 128.5331910343443,
+          "median_support": 65.0,
+          "prior_strength": 75.4148825862445,
+          "global_mean": 0.5646700054335694,
+          "reference_seasons": [
+            2019
+          ],
+          "n_reference": 237413
+        },
+        "2021": {
+          "n_rows": 247088,
+          "exact_hit_count": 195791,
+          "exact_hit_ratio": 0.7923938030175484,
+          "parent_fallback_count": 478,
+          "parent_fallback_ratio": 0.0019345334455740464,
+          "safe_row_fallback_count": 50819,
+          "safe_row_fallback_ratio": 0.20567166353687755,
+          "mean_support": 216.07414767208445,
+          "median_support": 110.0,
+          "prior_strength": 105.56494210105464,
+          "global_mean": 0.5484693665628245,
+          "reference_seasons": [
+            2019,
+            2020
+          ],
+          "n_reference": 481500
+        },
+        "2022": {
+          "n_rows": 247472,
+          "exact_hit_count": 207872,
+          "exact_hit_ratio": 0.8399818969418763,
+          "parent_fallback_count": 650,
+          "parent_fallback_ratio": 0.0026265597724186977,
+          "safe_row_fallback_count": 38950,
+          "safe_row_fallback_ratio": 0.15739154328570504,
+          "mean_support": 324.1839036335424,
+          "median_support": 188.0,
+          "prior_strength": 108.10196694208018,
+          "global_mean": 0.5431423520563061,
+          "reference_seasons": [
+            2019,
+            2020,
+            2021
+          ],
+          "n_reference": 728588
+        },
+        "2023": {
+          "n_rows": 245525,
+          "exact_hit_count": 211457,
+          "exact_hit_ratio": 0.8612442724773445,
+          "parent_fallback_count": 190,
+          "parent_fallback_ratio": 0.0007738519499032686,
+          "safe_row_fallback_count": 33878,
+          "safe_row_fallback_ratio": 0.13798187557275227,
+          "mean_support": 418.1904001629162,
+          "median_support": 248.0,
+          "prior_strength": 99.28953450881022,
+          "global_mean": 0.5395365039034485,
+          "reference_seasons": [
+            2019,
+            2020,
+            2021,
+            2022
+          ],
+          "n_reference": 976060
+        }
+      },
+      "hc_validation_diagnostics": {
+        "n_rows": 253507,
+        "exact_hit_count": 203017,
+        "exact_hit_ratio": 0.8008339020224293,
+        "parent_fallback_count": 142,
+        "parent_fallback_ratio": 0.0005601423234861364,
+        "safe_row_fallback_count": 50348,
+        "safe_row_fallback_ratio": 0.1986059556540845,
+        "mean_support": 425.5074218857862,
+        "median_support": 216.0,
+        "prior_strength": 111.27271552598484,
+        "global_mean": 0.5315815109059132
+      }
+    }
+  ],
+  "summary": {
+    "n_oof": 993592,
+    "mean_fold_brier": 0.24716056024120717,
+    "std_fold_brier": 0.002933851973669255,
+    "weighted_fold_brier": 0.2471584078212322,
+    "best_fold_brier": 0.24340419034927804,
+    "worst_fold_brier": 0.25136056441305277,
+    "fold_brier_range": 0.007956374063774724,
+    "recent_2023_2024_mean_brier": 0.24971767599680583,
+    "mean_fold_bss": 1064.9677183957817,
+    "weighted_fold_bss": 1064.7242212756712,
+    "pooled_oof_raw_brier": 0.2471584078212322,
+    "pooled_oof_raw_bss_raw": 1081.5938789278557,
+    "pooled_oof_raw_bss": 1081.5938789278557,
+    "pooled_oof_clipped_brier": 0.2471584078212322,
+    "pooled_oof_clipped_baseline_brier": 0.24986088789049052,
+    "pooled_oof_clipped_bss_raw": 1081.5938789278557,
+    "pooled_oof_clipped_bss": 1081.5938789278557,
+    "pooled_oof_brier": 0.2471584078212322,
+    "pooled_oof_baseline_brier": 0.24986088789049052,
+    "pooled_oof_bss_raw": 1081.5938789278557,
+    "pooled_oof_bss": 1081.5938789278557,
+    "n_prediction_below_0": 0,
+    "ratio_prediction_below_0": 0.0,
+    "n_prediction_above_1": 0,
+    "ratio_prediction_above_1": 0.0,
+    "n_prediction_outside_0_1": 0,
+    "ratio_prediction_outside_0_1": 0.0
+  }
+}
