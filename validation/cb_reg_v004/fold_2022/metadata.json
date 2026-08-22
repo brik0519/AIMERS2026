@@ -1,0 +1,79 @@
+{
+  "experiment_name": "cb_reg_v004",
+  "fold": 2,
+  "train_seasons": [
+    2019,
+    2020,
+    2021
+  ],
+  "validation_season": 2022,
+  "n_train": 728588,
+  "n_validation": 247472,
+  "model_type": "CatBoostRegressor",
+  "model_params": {
+    "iterations": 800,
+    "learning_rate": 0.07,
+    "depth": 8,
+    "loss_function": "RMSE",
+    "l2_leaf_reg": 10.0,
+    "random_strength": 1.0,
+    "random_seed": 42,
+    "max_ctr_complexity": 1,
+    "thread_count": -1,
+    "verbose": 100,
+    "allow_writing_files": false
+  },
+  "positive_rate": 0.5289204435249241,
+  "raw_brier": 0.2434625868582879,
+  "raw_bss_raw": 2288.0633070869517,
+  "raw_bss": 2288.0633070869517,
+  "clipped_brier": 0.2434625868582879,
+  "clipped_bss_raw": 2288.0633070869517,
+  "clipped_bss": 2288.0633070869517,
+  "brier": 0.2434625868582879,
+  "baseline_brier": 0.24916360794632167,
+  "bss_raw": 2288.0633070869517,
+  "bss": 2288.0633070869517,
+  "prediction_raw_mean": 0.530933627018414,
+  "prediction_raw_std": 0.07048837811852517,
+  "prediction_raw_min": 0.34886630695091125,
+  "prediction_raw_max": 0.7914037023684745,
+  "prediction_clip_mean": 0.530933627018414,
+  "prediction_clip_std": 0.07048837811852517,
+  "prediction_clip_min": 0.34886630695091125,
+  "prediction_clip_max": 0.7914037023684745,
+  "elapsed_seconds": 46.536837577819824,
+  "best_iteration": 161,
+  "final_iterations": 162,
+  "n_prediction_below_0": 0,
+  "ratio_prediction_below_0": 0.0,
+  "n_prediction_above_1": 0,
+  "ratio_prediction_above_1": 0.0,
+  "n_prediction_outside_0_1": 0,
+  "ratio_prediction_outside_0_1": 0.0,
+  "trackman_train": {
+    "tm_available_count": 239782,
+    "tm_available_ratio": 0.3291050634926735
+  },
+  "trackman_validation": {
+    "tm_available_count": 102206,
+    "tm_available_ratio": 0.4130002586151161
+  },
+  "trackman_allowed_tiers": [
+    "A"
+  ],
+  "trackman_features": [
+    "tm_history_available",
+    "tm_n",
+    "tm_rel_speed_mean",
+    "tm_rel_speed_std",
+    "tm_spin_rate_mean",
+    "tm_spin_rate_std",
+    "tm_induced_vert_break_mean",
+    "tm_induced_vert_break_std",
+    "tm_rel_height_mean",
+    "tm_rel_height_std",
+    "tm_rel_side_mean",
+    "tm_rel_side_std"
+  ]
+}

@@ -1,1368 +1,510 @@
-# script.py: Ensemble v004 inference
-# cb_v002 + xgb_v002 + mlp_v003 모델을 고정 weight로 결합하여
-# test.csv 각 행을 독립적으로 예측하고 submission.csv를 생성한다.
+# script.py: CatBoost Regressor cb_reg_v004 추론 및 제출
+# cb_reg_v004 train.py에서 생성된 단일 Artifact(.pkl)를 로드하여
+# HB-EB Rate + Tier A 2025 Trackman frozen profile을 적용하고 예측한다.
+# 모든 경로 상수명은 프로젝트 표준 규칙을 엄격히 준수한다.
 
-from __future__ import annotations
-
-import math
+import time
 from pathlib import Path
-from typing import Any
 
 import joblib
 import numpy as np
 import pandas as pd
-import torch
-import torch.nn as nn
-
 
 # =========================================================
-# 실험 설정
+# 경로 (표준 규칙 준수)
 # =========================================================
-
-EXPERIMENT_NAME = "ensemble_v005"
+EXPERIMENT_NAME = "cb_reg_v004"
 
 DATA_DIR = Path("./data")
 
 MODEL_ROOT = Path("./model")
+MODEL_DIR = MODEL_ROOT / EXPERIMENT_NAME
+MODEL_PATH = MODEL_DIR / f"{EXPERIMENT_NAME}.pkl"
 
-CB_EXPERIMENT_NAME = "cb_v002"
-XGB_EXPERIMENT_NAME = "xgb_v002"
-MLP_EXPERIMENT_NAME = "mlp_v003"
-
-CB_MODEL_DIR = MODEL_ROOT / CB_EXPERIMENT_NAME
-CB_MODEL_PATH = (
-    CB_MODEL_DIR
-    / f"{CB_EXPERIMENT_NAME}.pkl"
-)
-
-XGB_MODEL_DIR = MODEL_ROOT / XGB_EXPERIMENT_NAME
-XGB_MODEL_PATH = (
-    XGB_MODEL_DIR
-    / f"{XGB_EXPERIMENT_NAME}.pkl"
-)
-
-MLP_MODEL_DIR = MODEL_ROOT / MLP_EXPERIMENT_NAME
-MLP_MODEL_PATH = (
-    MLP_MODEL_DIR
-    / f"{MLP_EXPERIMENT_NAME}.pkl"
-)
-
+VALIDATION_ROOT = Path("./validation")
+VALIDATION_DIR = VALIDATION_ROOT / EXPERIMENT_NAME
 
 OUTPUT_DIR = Path("./output")
 
 TEST_PATH = DATA_DIR / "test.csv"
-SAMPLE_SUB_PATH = (
-    DATA_DIR
-    / "sample_submission.csv"
-)
-OUTPUT_PATH = (
-    OUTPUT_DIR
-    / "submission.csv"
-)
+SAMPLE_SUB_PATH = DATA_DIR / "sample_submission.csv"
+OUTPUT_PATH = OUTPUT_DIR / "submission.csv"
 
+
+# =========================================================
+# 기본 설정
+# =========================================================
 ID = "row_id"
 TARGET = "control_success"
 
-MODEL_NAMES = (
-    CB_EXPERIMENT_NAME,
-    XGB_EXPERIMENT_NAME,
-    MLP_EXPERIMENT_NAME,
-)
+
+# =========================================================
+# HB-EB Rate 적용 함수 (Train과 동일 로직)
+# =========================================================
+def apply_hbeb(df, group_cols, n_col, rate_col, prior_df, global_prior):
+    """
+    Train 단계에서 추정된 사전 분포(prior_df)를 단순 병합(Lookup)하여
+    Test 데이터의 각 행을 철저히 독립적으로 변환합니다.
+    """
+    # 평가 데이터의 독립 예측 원칙 준수: 
+    # prior_df는 오직 Train에서만 만들어진 정적 데이터임
+    df_merged = df.merge(prior_df, on=group_cols, how='left')
+    
+    alpha = df_merged['alpha'].fillna(global_prior[0]).values
+    beta = df_merged['beta'].fillna(global_prior[1]).values
+    
+    S = df[n_col].values * df[rate_col].fillna(0).values
+    N = df[n_col].values
+    
+    eb_rate = (S + alpha) / (N + alpha + beta)
+    return eb_rate
+
 
 
 # =========================================================
-# Device
+# Trackman Tier A 2025 Frozen Profile
 # =========================================================
-
-def get_device() -> torch.device:
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-
-    if (
-        hasattr(
-            torch.backends,
-            "mps",
-        )
-        and torch.backends.mps.is_available()
-    ):
-        return torch.device("mps")
-
-    return torch.device("cpu")
-
-
-# =========================================================
-# Ensemble weight
-# =========================================================
-#
-# ensemble_v004 train.py 실행 후 metadata.json의
-# global_best.weights 값으로 반드시 교체한다.
-#
-# 평가 서버에서는 validation 결과 파일에 의존하지 않고,
-# 아래 고정 weight만 사용한다.
-#
-ENSEMBLE_WEIGHTS = {
-    "cb_v002": 0.857980818205651,
-    "xgb_v002": 0.09536337329674678,
-    "mlp_v003": 0.046655808497602244,
-}
-
-
-def load_ensemble_weights() -> dict[str, float]:
-    weights = {}
-
-    for model_name in MODEL_NAMES:
-        raw_weight = ENSEMBLE_WEIGHTS.get(
-            model_name
-        )
-
-        if raw_weight is None:
-            raise ValueError(
-                "ensemble_v005 weight가 아직 확정되지 않았습니다. "
-                "train_ensemble_v005.py 실행 후 "
-                "metadata.json의 global_best.weights를 "
-                "ENSEMBLE_WEIGHTS에 입력하세요."
-            )
-
-        weight = float(
-            raw_weight
-        )
-
-        if not np.isfinite(
-            weight
-        ):
-            raise ValueError(
-                f"{model_name} weight가 유한한 값이 아닙니다."
-            )
-
-        if weight < 0.0:
-            raise ValueError(
-                f"{model_name} weight가 음수입니다."
-            )
-
-        weights[
-            model_name
-        ] = weight
-
-    weight_sum = float(
-        sum(
-            weights.values()
-        )
-    )
-
-    if weight_sum <= 0.0:
-        raise ValueError(
-            "Ensemble weight 합이 0 이하입니다."
-        )
-
-    return {
-        model_name:
-            weight / weight_sum
-        for model_name, weight
-        in weights.items()
-    }
-
-
-# =========================================================
-# CatBoost preprocessing / inference
-# =========================================================
-
-CB_CAT_COLS = [
-    "top_bottom",
-    "game_type",
-    "base_state",
-    "pitcher_id",
-    "batter_id",
-    "pitcher_team_id",
-    "batter_team_id",
-    "pitcher_hand",
-    "batter_hand",
-]
-
-
-def prepare_cb_features(
-    df: pd.DataFrame,
-    features: list[str],
-    cat_cols: list[str],
-) -> pd.DataFrame:
-    missing_features = [
-        column
-        for column in features
-        if column not in df.columns
-    ]
-
-    if missing_features:
-        raise ValueError(
-            "CatBoost 입력 Feature가 없습니다: "
-            + ", ".join(
-                missing_features
-            )
-        )
-
-    X = df[
-        features
-    ].copy()
-
-    for column in cat_cols:
-        X[column] = (
-            X[column]
-            .fillna("__MISSING__")
-            .astype(str)
-        )
-
-    return X
-
-
-def predict_catboost(
-    test: pd.DataFrame,
-) -> np.ndarray:
-    if not CB_MODEL_PATH.exists():
-        raise FileNotFoundError(
-            f"CatBoost 모델이 없습니다: "
-            f"{CB_MODEL_PATH}"
-        )
-
-    model = joblib.load(
-        CB_MODEL_PATH
-    )
-
-    features = [
-        column
-        for column in test.columns
-        if column != ID
-    ]
-
-    cat_cols = [
-        column
-        for column in CB_CAT_COLS
-        if column in features
-    ]
-
-    X_test = prepare_cb_features(
-        test,
-        features,
-        cat_cols,
-    )
-
-    prediction = (
-        model.predict_proba(
-            X_test
-        )[:, 1]
-    )
-
-    return np.asarray(
-        prediction,
-        dtype=np.float64,
-    )
-
-
-# =========================================================
-# XGBoost preprocessing / inference
-# =========================================================
-
-def prepare_xgb_raw_features(
-    df: pd.DataFrame,
-    features: list[str],
-    id_like_cols: list[str],
-) -> pd.DataFrame:
-    missing_features = [
-        column
-        for column in features
-        if column not in df.columns
-    ]
-
-    if missing_features:
-        raise ValueError(
-            "XGBoost 입력 Feature가 없습니다: "
-            + ", ".join(
-                missing_features
-            )
-        )
-
-    X = df[
-        features
-    ].copy()
-
-    for column in id_like_cols:
-        if column in X.columns:
-            X[column] = (
-                pd.to_numeric(
-                    X[column],
-                    errors="coerce",
-                )
-            )
-
-    return X
-
-
-def predict_xgboost(
-    test: pd.DataFrame,
-) -> np.ndarray:
-    if not XGB_MODEL_PATH.exists():
-        raise FileNotFoundError(
-            f"XGBoost 모델이 없습니다: "
-            f"{XGB_MODEL_PATH}"
-        )
-
-    artifact = joblib.load(
-        XGB_MODEL_PATH
-    )
-
-    required_keys = {
-        "model",
-        "preprocessor",
-        "features",
-        "id_like_cols",
-    }
-
-    missing = (
-        required_keys
-        - set(
-            artifact.keys()
-        )
-    )
-
-    if missing:
-        raise ValueError(
-            "XGBoost artifact key 누락: "
-            + ", ".join(
-                sorted(missing)
-            )
-        )
-
-    model = artifact[
-        "model"
-    ]
-
-    preprocessor = artifact[
-        "preprocessor"
-    ]
-
-    features = artifact[
-        "features"
-    ]
-
-    id_like_cols = artifact[
-        "id_like_cols"
-    ]
-
-    X_raw = (
-        prepare_xgb_raw_features(
-            test,
-            features,
-            id_like_cols,
-        )
-    )
-
-    X_test = (
-        preprocessor.transform(
-            X_raw
-        )
-    )
-
-    prediction = (
-        model.predict_proba(
-            X_test
-        )[:, 1]
-    )
-
-    return np.asarray(
-        prediction,
-        dtype=np.float64,
-    )
-
-
-# =========================================================
-# MLP preprocessing
-# =========================================================
-
-def make_count_state(
-    balls: pd.Series,
-    strikes: pd.Series,
-) -> pd.Series:
-    balls_numeric = pd.to_numeric(
-        balls,
-        errors="coerce",
-    )
-
-    strikes_numeric = pd.to_numeric(
-        strikes,
-        errors="coerce",
-    )
-
-    missing = (
-        balls_numeric.isna()
-        | strikes_numeric.isna()
-    )
-
-    result = (
-        balls_numeric
-        .fillna(-1)
-        .astype(np.int16)
-        .astype(str)
-        + "-"
-        + strikes_numeric
-        .fillna(-1)
-        .astype(np.int16)
-        .astype(str)
-    )
-
-    result = result.astype(
-        object
-    )
-
-    result.loc[
-        missing
-    ] = None
-
-    return result
-
-
-def normalize_category_value(
-    value: Any,
-) -> str | None:
-    if pd.isna(
-        value
-    ):
-        return None
-
-    if isinstance(
-        value,
-        (
-            float,
-            np.floating,
-        ),
-    ):
-        if (
-            np.isfinite(
-                value
-            )
-            and float(
-                value
-            ).is_integer()
-        ):
-            return str(
-                int(
-                    value
-                )
-            )
-
-    if isinstance(
-        value,
-        (
-            int,
-            np.integer,
-        ),
-    ):
-        return str(
-            int(
-                value
-            )
-        )
-
-    return str(
-        value
-    )
-
-
-def build_mlp_feature_frame(
-    df: pd.DataFrame,
-    preprocessor: dict[str, Any],
-) -> pd.DataFrame:
-    X = df.copy()
-
-    if (
-        "count_state"
-        in preprocessor[
-            "categorical_columns"
-        ]
-    ):
-        required = {
-            "balls_before",
-            "strikes_before",
-        }
-
-        missing = (
-            required
-            - set(
-                X.columns
-            )
-        )
-
-        if missing:
-            raise ValueError(
-                "MLP count_state 생성 컬럼 누락: "
-                + ", ".join(
-                    sorted(
-                        missing
-                    )
-                )
-            )
-
-        X[
-            "count_state"
-        ] = make_count_state(
-            X["balls_before"],
-            X["strikes_before"],
-        )
-
-    required_features = (
-        list(
-            preprocessor[
-                "categorical_columns"
-            ]
-        )
-        + list(
-            preprocessor[
-                "numeric_columns"
-            ]
-        )
-    )
-
-    missing_features = [
-        column
-        for column in required_features
-        if column not in X.columns
-    ]
-
-    if missing_features:
-        raise ValueError(
-            "MLP 입력 Feature가 없습니다: "
-            + ", ".join(
-                missing_features
-            )
-        )
-
-    return X[
-        required_features
-    ].copy()
-
-
-def transform_mlp_categorical(
-    series: pd.Series,
-    mapping: dict[str, int],
-    unknown_index: int,
-    missing_index: int,
-) -> np.ndarray:
-    output = np.empty(
-        len(
-            series
-        ),
-        dtype=np.int64,
-    )
-
-    values = series.to_numpy(
-        dtype=object,
-        copy=False,
-    )
-
-    for index, raw_value in enumerate(
-        values
-    ):
-        value = normalize_category_value(
-            raw_value
-        )
-
-        if value is None:
-            output[
-                index
-            ] = missing_index
-        else:
-            output[
-                index
-            ] = mapping.get(
-                value,
-                unknown_index,
-            )
-
-    return output
-
-
-def transform_mlp_numeric(
-    series: pd.Series,
-    stats: dict[str, float],
-) -> np.ndarray:
-    numeric = pd.to_numeric(
-        series,
-        errors="coerce",
-    )
-
-    values = (
-        numeric
-        .replace(
-            [
-                np.inf,
-                -np.inf,
-            ],
-            np.nan,
-        )
-        .fillna(
-            float(
-                stats[
-                    "median"
-                ]
-            )
-        )
-        .to_numpy(
-            dtype=np.float64,
-            copy=False,
-        )
-    )
-
-    values = (
-        values
-        - float(
-            stats[
-                "mean"
-            ]
-        )
-    ) / float(
-        stats[
-            "std"
-        ]
-    )
-
-    values = values.astype(
-        np.float32,
-        copy=False,
-    )
-
-    if not np.isfinite(
-        values
-    ).all():
-        raise RuntimeError(
-            "MLP numeric transform 후 "
-            "NaN/Inf가 발생했습니다."
-        )
-
-    return values
-
-
-def transform_mlp_dataframe(
-    df: pd.DataFrame,
-    preprocessor: dict[str, Any],
-) -> tuple[
-    np.ndarray,
-    np.ndarray,
-]:
-    feature_frame = (
-        build_mlp_feature_frame(
-            df,
-            preprocessor,
-        )
-    )
-
-    categorical_columns = (
-        preprocessor[
-            "categorical_columns"
-        ]
-    )
-
-    numeric_columns = (
-        preprocessor[
-            "numeric_columns"
-        ]
-    )
-
-    unknown_index = int(
-        preprocessor[
-            "unknown_index"
-        ]
-    )
-
-    missing_index = int(
-        preprocessor[
-            "missing_index"
-        ]
-    )
-
-    categorical_arrays = []
-
-    for column in categorical_columns:
-        encoded = (
-            transform_mlp_categorical(
-                feature_frame[
-                    column
-                ],
-                preprocessor[
-                    "category_maps"
-                ][column],
-                unknown_index,
-                missing_index,
-            )
-        )
-
-        categorical_arrays.append(
-            encoded
-        )
-
-    if categorical_arrays:
-        categorical = np.column_stack(
-            categorical_arrays
-        ).astype(
-            np.int64,
-            copy=False,
-        )
-    else:
-        categorical = np.empty(
-            (
-                len(df),
-                0,
-            ),
-            dtype=np.int64,
-        )
-
-    numeric_arrays = []
-
-    for column in numeric_columns:
-        transformed = (
-            transform_mlp_numeric(
-                feature_frame[
-                    column
-                ],
-                preprocessor[
-                    "numeric_stats"
-                ][column],
-            )
-        )
-
-        numeric_arrays.append(
-            transformed
-        )
-
-    if numeric_arrays:
-        numeric = np.column_stack(
-            numeric_arrays
-        ).astype(
-            np.float32,
-            copy=False,
-        )
-    else:
-        numeric = np.empty(
-            (
-                len(df),
-                0,
-            ),
-            dtype=np.float32,
-        )
-
-    return (
-        numeric,
-        categorical,
-    )
-
-
-# =========================================================
-# MLP model
-# =========================================================
-
-class TabularMLP(
-    nn.Module
+def apply_trackman_profile_2025(
+    df,
+    profile_2025,
+    trackman_features,
+    allowed_tiers,
 ):
-    def __init__(
-        self,
-        cardinalities: list[int],
-        embedding_dims: list[int],
-        n_num_features: int,
-        hidden_dims: list[int],
-        dropout: float,
-    ) -> None:
-        super().__init__()
+    """
+    train.py artifact에 저장된 2025 frozen Trackman lookup을
+    pitcher_id 기준으로 각 Test 행에 독립적으로 적용한다.
 
-        self.embeddings = (
-            nn.ModuleList(
-                [
-                    nn.Embedding(
-                        num_embeddings=int(
-                            cardinality
-                        ),
-                        embedding_dim=int(
-                            dim
-                        ),
-                        padding_idx=0,
-                    )
-                    for cardinality, dim
-                    in zip(
-                        cardinalities,
-                        embedding_dims,
-                    )
-                ]
-            )
-        )
+    규칙:
+    - test 전체 통계/groupby/rolling을 사용하지 않는다.
+    - profile_2025는 train + 공식 Trackman history만으로 사전 생성된 정적 lookup이다.
+    - 허용 Tier 외 선수 또는 history가 없는 선수는 unavailable 처리한다.
+    """
+    df = df.copy()
+    profile = profile_2025.copy()
 
-        embedding_total = int(
-            sum(
-                embedding_dims
-            )
-        )
+    required_cols = [
+        "pitcher_id",
+        "confidence_tier",
+        "target_season",
+        *trackman_features,
+        "tm_history_max_season",
+    ]
 
-        input_dim = (
-            embedding_total
-            + int(
-                n_num_features
-            )
-        )
-
-        if input_dim <= 0:
-            raise ValueError(
-                "MLP input feature가 없습니다."
-            )
-
-        layers = []
-
-        prev_dim = input_dim
-
-        for hidden_dim in hidden_dims:
-            layers.extend(
-                [
-                    nn.Linear(
-                        prev_dim,
-                        hidden_dim,
-                    ),
-                    nn.LayerNorm(
-                        hidden_dim
-                    ),
-                    nn.SiLU(),
-                    nn.Dropout(
-                        dropout
-                    ),
-                ]
-            )
-
-            prev_dim = (
-                hidden_dim
-            )
-
-        self.backbone = (
-            nn.Sequential(
-                *layers
-            )
-        )
-
-        self.head = (
-            nn.Linear(
-                prev_dim,
-                1,
-            )
-        )
-
-    def forward(
-        self,
-        categorical: torch.Tensor,
-        numeric: torch.Tensor,
-    ) -> torch.Tensor:
-        parts = []
-
-        if len(
-            self.embeddings
-        ) > 0:
-            embedded = [
-                embedding(
-                    categorical[
-                        :,
-                        index,
-                    ]
-                )
-                for index, embedding
-                in enumerate(
-                    self.embeddings
-                )
-            ]
-
-            parts.append(
-                torch.cat(
-                    embedded,
-                    dim=1,
-                )
-            )
-
-        if numeric.shape[
-            1
-        ] > 0:
-            parts.append(
-                numeric
-            )
-
-        x = (
-            parts[
-                0
-            ]
-            if len(
-                parts
-            ) == 1
-            else torch.cat(
-                parts,
-                dim=1,
-            )
-        )
-
-        x = self.backbone(
-            x
-        )
-
-        return (
-            self.head(
-                x
-            )
-            .squeeze(
-                1
-            )
-        )
-
-
-def create_mlp_model(
-    model_config: dict[str, Any],
-) -> TabularMLP:
-    return TabularMLP(
-        cardinalities=(
-            model_config[
-                "cardinalities"
-            ]
-        ),
-        embedding_dims=(
-            model_config[
-                "embedding_dims"
-            ]
-        ),
-        n_num_features=(
-            model_config[
-                "n_num_features"
-            ]
-        ),
-        hidden_dims=(
-            model_config[
-                "hidden_dims"
-            ]
-        ),
-        dropout=(
-            model_config[
-                "dropout"
-            ]
-        ),
-    )
-
-
-def predict_mlp(
-    test: pd.DataFrame,
-    device: torch.device,
-) -> np.ndarray:
-    if not MLP_MODEL_PATH.exists():
-        raise FileNotFoundError(
-            f"MLP 모델이 없습니다: "
-            f"{MLP_MODEL_PATH}"
-        )
-
-    bundle = joblib.load(
-        MLP_MODEL_PATH
-    )
-
-    required_keys = {
-        "model_state_dict",
-        "model_config",
-        "preprocessor",
-    }
-
-    missing = (
-        required_keys
-        - set(
-            bundle.keys()
-        )
-    )
+    missing = [
+        c for c in required_cols
+        if c not in profile.columns
+    ]
 
     if missing:
         raise ValueError(
-            "MLP bundle key 누락: "
-            + ", ".join(
-                sorted(
-                    missing
-                )
-            )
+            "Artifact의 Trackman 2025 profile에 필수 컬럼이 없습니다: "
+            f"{missing}"
         )
 
-    preprocessor = (
-        bundle[
-            "preprocessor"
+    if profile["pitcher_id"].duplicated().any():
+        raise ValueError(
+            "Artifact의 Trackman 2025 profile에서 pitcher_id가 중복됩니다."
+        )
+
+    # 2025 frozen lookup인지 확인
+    if not (profile["target_season"] == 2025).all():
+        raise ValueError(
+            "Artifact Trackman profile에 target_season != 2025 행이 있습니다."
+        )
+
+    active_profile = profile.loc[
+        profile["confidence_tier"].isin(
+            allowed_tiers
+        )
+    ].copy()
+
+    if active_profile["pitcher_id"].duplicated().any():
+        raise ValueError(
+            "Tier filtering 후 Trackman 2025 lookup pitcher_id가 중복됩니다."
+        )
+
+    merged = df.merge(
+        active_profile,
+        on="pitcher_id",
+        how="left",
+        validate="many_to_one",
+        sort=False,
+    )
+
+    # test 자체의 season이 존재한다면 2025인지 확인한다.
+    if "season" in merged.columns:
+        non_2025 = (
+            merged["season"].notna()
+            & (merged["season"] != 2025)
+        )
+        if non_2025.any():
+            raise ValueError(
+                "cb_reg_v004의 2025 frozen Trackman lookup과 "
+                "test season이 일치하지 않습니다."
+            )
+
+    merged["tm_history_available"] = (
+        merged["tm_history_available"]
+        .fillna(0)
+        .astype(np.int8)
+    )
+
+    merged["tm_n"] = (
+        merged["tm_n"]
+        .fillna(0)
+        .astype(np.float64)
+    )
+
+    physical_cols = [
+        c
+        for c in trackman_features
+        if c not in {
+            "tm_history_available",
+            "tm_n",
+        }
+    ]
+
+    unavailable = (
+        merged["tm_history_available"] == 0
+    )
+
+    for col in physical_cols:
+        merged.loc[
+            unavailable,
+            col,
+        ] = np.nan
+
+    # 활성 profile은 Tier A only여야 한다.
+    available = (
+        merged["tm_history_available"] == 1
+    )
+
+    active_tiers = set(
+        merged.loc[
+            available,
+            "confidence_tier",
         ]
+        .dropna()
+        .unique()
     )
 
-    numeric, categorical = (
-        transform_mlp_dataframe(
-            test,
-            preprocessor,
-        )
-    )
-
-    model = create_mlp_model(
-        bundle[
-            "model_config"
-        ]
-    ).to(
-        device
-    )
-
-    model.load_state_dict(
-        bundle[
-            "model_state_dict"
-        ]
-    )
-
-    model.eval()
-
-    batch_size = 8192
-    predictions = []
-
-    with torch.inference_mode():
-        for start in range(
-            0,
-            len(test),
-            batch_size,
-        ):
-            end = min(
-                start
-                + batch_size,
-                len(test),
-            )
-
-            categorical_batch = (
-                torch.from_numpy(
-                    categorical[
-                        start:end
-                    ]
-                )
-                .to(
-                    device,
-                    dtype=torch.long,
-                )
-            )
-
-            numeric_batch = (
-                torch.from_numpy(
-                    numeric[
-                        start:end
-                    ]
-                )
-                .to(
-                    device,
-                    dtype=torch.float32,
-                )
-            )
-
-            logits = model(
-                categorical_batch,
-                numeric_batch,
-            )
-
-            probability = (
-                torch.sigmoid(
-                    logits
-                )
-                .detach()
-                .cpu()
-                .numpy()
-            )
-
-            predictions.append(
-                probability
-            )
-
-    return (
-        np.concatenate(
-            predictions
-        )
-        .astype(
-            np.float64,
-            copy=False,
-        )
-    )
-
-
-# =========================================================
-# Validation
-# =========================================================
-
-def validate_predictions(
-    prediction: np.ndarray,
-    n_expected: int,
-    model_name: str,
-) -> None:
-    prediction = np.asarray(
-        prediction,
-        dtype=np.float64,
-    )
-
-    if len(
-        prediction
-    ) != n_expected:
-        raise RuntimeError(
-            f"{model_name}: 예측 수와 "
-            "test 행 수가 다릅니다."
+    if not active_tiers.issubset(
+        set(allowed_tiers)
+    ):
+        raise ValueError(
+            "허용되지 않은 Trackman confidence tier가 활성화되었습니다: "
+            f"{active_tiers}"
         )
 
-    if not np.isfinite(
-        prediction
-    ).all():
-        raise RuntimeError(
-            f"{model_name}: 예측에 "
-            "NaN/Inf가 있습니다."
-        )
-
-    if not (
-        (
-            prediction
-            >= 0.0
-        )
+    # Future leakage audit:
+    # 2025 prediction에는 Trackman season <= 2024만 허용.
+    violation = (
+        available
         & (
-            prediction
-            <= 1.0
+            merged["tm_history_max_season"]
+            >= 2025
         )
-    ).all():
-        raise RuntimeError(
-            f"{model_name}: 예측이 "
-            "0~1 범위를 벗어났습니다."
+    )
+
+    if violation.any():
+        raise ValueError(
+            "Trackman future leakage 발견: "
+            "tm_history_max_season >= 2025"
         )
+
+    # 모델 Feature 값의 Inf 방지.
+    numeric = merged[
+        [
+            c for c in trackman_features
+            if c in merged.columns
+        ]
+    ].select_dtypes(
+        include=[np.number]
+    )
+
+    if np.isinf(
+        numeric.to_numpy(
+            dtype=np.float64
+        )
+    ).any():
+        raise ValueError(
+            "Trackman Feature에 Inf가 있습니다."
+        )
+
+    return merged
+
+
+# =========================================================
+# Feature 전처리
+# =========================================================
+def prepare_features(df, cat_cols):
+    """
+    범주형 결측값을 치환하고 문자열로 고정합니다.
+    """
+    df = df.copy()
+    for col in cat_cols:
+        df[col] = df[col].fillna("__MISSING__").astype(str)
+    return df
+
+
+# =========================================================
+# 제출 파일 생성
+# =========================================================
+def build_submission(sample_submission, test_ids, predictions):
+    """
+    row_id 기준으로 예측값을 매핑하고 제출 형식을 철저히 검증합니다.
+    """
+    pred_df = pd.DataFrame({
+        ID: test_ids,
+        TARGET: predictions,
+    })
+
+    if pred_df[ID].duplicated().any():
+        raise ValueError("예측 row_id에 중복이 있습니다.")
+
+    submission = sample_submission[[ID]].merge(
+        pred_df,
+        on=ID,
+        how="left",
+        validate="one_to_one",
+    )
+
+    if submission[TARGET].isna().any():
+        raise ValueError("제출 prediction에 NaN이 있습니다.")
+
+    if not np.isfinite(submission[TARGET].to_numpy(dtype=np.float64)).all():
+        raise ValueError("제출 prediction에 NaN 또는 Inf가 있습니다.")
+
+    if not submission[TARGET].between(0.0, 1.0).all():
+        raise ValueError("제출 prediction에 [0, 1] 범위를 벗어난 값이 있습니다.")
+
+    return submission
 
 
 # =========================================================
 # Main
 # =========================================================
+def main():
+    start_time = time.time()
+    
+    # -----------------------------------------------------
+    # 1. 단일 Artifact 로드
+    # -----------------------------------------------------
+    print("=" * 60)
+    print(f"CatBoost Regressor Inference : {EXPERIMENT_NAME}")
+    print("=" * 60)
+    
+    if not MODEL_PATH.exists():
+        raise FileNotFoundError(f"모델 Artifact 파일을 찾을 수 없습니다: {MODEL_PATH}")
 
-def main() -> None:
-    if not TEST_PATH.exists():
-        raise FileNotFoundError(
-            f"test.csv가 없습니다: "
-            f"{TEST_PATH}"
+    print("모델 Artifact 로드 중...")
+    artifact = joblib.load(MODEL_PATH)
+    
+    model = artifact["model"]
+    hbeb_priors = artifact["hbeb_priors"]
+    final_features = artifact["features"]
+    cat_cols = artifact["cat_cols"]
+
+    trackman_profile_2025 = artifact[
+        "trackman_profile_2025"
+    ]
+
+    trackman_features = artifact[
+        "trackman_features"
+    ]
+
+    trackman_allowed_tiers = artifact[
+        "trackman_allowed_tiers"
+    ]
+    
+    print(f"- 모델 타입: {type(model).__name__}")
+    print(f"- 사용 Feature 수: {len(final_features)}")
+
+    if type(model).__name__ != "CatBoostRegressor":
+        raise TypeError(
+            "cb_reg_v004 Artifact의 model은 CatBoostRegressor여야 합니다. "
+            f"actual={type(model).__name__}"
         )
 
-    if not SAMPLE_SUB_PATH.exists():
-        raise FileNotFoundError(
-            "sample_submission.csv가 없습니다: "
-            f"{SAMPLE_SUB_PATH}"
-        )
-
-    weights = (
-        load_ensemble_weights()
-    )
-
-    test = pd.read_csv(
-        TEST_PATH,
-        encoding="utf-8-sig",
-    )
-
-    submission = pd.read_csv(
-        SAMPLE_SUB_PATH,
-        encoding="utf-8-sig",
-    )
-
-    if ID not in test.columns:
+    artifact_experiment = artifact.get("experiment_name")
+    if artifact_experiment is not None and artifact_experiment != EXPERIMENT_NAME:
         raise ValueError(
-            f"test.csv에 {ID}가 없습니다."
+            "Artifact experiment_name이 script 설정과 다릅니다. "
+            f"artifact={artifact_experiment}, script={EXPERIMENT_NAME}"
         )
 
-    if ID not in submission.columns:
+    artifact_objective = artifact.get("objective")
+    if artifact_objective is not None and artifact_objective != "RMSE":
         raise ValueError(
-            f"sample_submission.csv에 "
-            f"{ID}가 없습니다."
+            "cb_reg_v004 Artifact objective는 RMSE여야 합니다. "
+            f"actual={artifact_objective}"
         )
 
-    if TARGET not in submission.columns:
+
+    if trackman_allowed_tiers != ["A"]:
         raise ValueError(
-            f"sample_submission.csv에 "
-            f"{TARGET}가 없습니다."
+            "cb_reg_v004는 Tier A only 실험이어야 합니다. "
+            f"artifact tiers={trackman_allowed_tiers}"
         )
 
-    if len(
-        test
-    ) != len(
-        submission
-    ):
+    expected_trackman_features = [
+        "tm_history_available",
+        "tm_n",
+        "tm_rel_speed_mean",
+        "tm_rel_speed_std",
+        "tm_spin_rate_mean",
+        "tm_spin_rate_std",
+        "tm_induced_vert_break_mean",
+        "tm_induced_vert_break_std",
+        "tm_rel_height_mean",
+        "tm_rel_height_std",
+        "tm_rel_side_mean",
+        "tm_rel_side_std",
+    ]
+
+    if list(trackman_features) != expected_trackman_features:
         raise ValueError(
-            "test.csv와 sample_submission.csv "
-            "행 수가 다릅니다."
+            "Artifact Trackman Feature 구성이 cb_reg_v004 정의와 다릅니다.\n"
+            f"artifact={trackman_features}"
         )
 
-    if not (
-        test[
-            ID
-        ]
-        .astype(
-            str
+    # -----------------------------------------------------
+    # 2. 데이터 로드
+    # -----------------------------------------------------
+    print("\nTest 데이터 로드 중...")
+    test_df = pd.read_csv(TEST_PATH, encoding="utf-8-sig")
+    sample_sub = pd.read_csv(SAMPLE_SUB_PATH, encoding="utf-8-sig")
+    
+    test_ids = test_df[ID].values
+    print(f"- Test 샘플 수: {len(test_df)}")
+
+    # -----------------------------------------------------
+    # 3. Tier A Trackman 2025 Frozen Profile
+    # -----------------------------------------------------
+    print("\nTier A Trackman 2025 frozen profile 적용 중...")
+
+    test_df = apply_trackman_profile_2025(
+        df=test_df,
+        profile_2025=trackman_profile_2025,
+        trackman_features=trackman_features,
+        allowed_tiers=trackman_allowed_tiers,
+    )
+
+    tm_available = (
+        test_df["tm_history_available"] == 1
+    )
+
+    print(
+        f"- Trackman available: "
+        f"{int(tm_available.sum()):,} / {len(test_df):,} "
+        f"({tm_available.mean():.2%})"
+    )
+
+    # -----------------------------------------------------
+    # 4. HB-EB Feature Engineering
+    # -----------------------------------------------------
+    print("\nHB-EB Rate 파생 변수 생성 중...")
+    for new_col, config in hbeb_priors.items():
+        test_df[new_col] = apply_hbeb(
+            df=test_df,
+            group_cols=config["group_cols"],
+            n_col=config["n_col"],
+            rate_col=config["rate_col"],
+            prior_df=config["prior_df"],
+            global_prior=config["global_prior"]
         )
-        .reset_index(
-            drop=True
-        )
-        .equals(
-            submission[
-                ID
-            ]
-            .astype(
-                str
-            )
-            .reset_index(
-                drop=True
-            )
-        )
-    ):
+    
+    # -----------------------------------------------------
+    # 5. Feature 준비 및 정렬
+    # -----------------------------------------------------
+    print("\n최종 Feature 정렬 중...")
+
+    missing_final_features = [
+        c
+        for c in final_features
+        if c not in test_df.columns
+    ]
+
+    if missing_final_features:
         raise ValueError(
-            "test.csv와 sample_submission.csv의 "
-            "row_id 순서가 다릅니다."
+            "추론에 필요한 Feature가 test_df에 없습니다: "
+            f"{missing_final_features}"
         )
 
-    device = get_device()
+    missing_trackman_model_features = [
+        c
+        for c in trackman_features
+        if c not in final_features
+    ]
 
-    print("=" * 80)
-    print("LG Aimers Ensemble v005 Inference")
-    print("=" * 80)
-    print(f"Rows       : {len(test):,}")
-    print(f"Device     : {device}")
-    print(f"Weights    : {weights}")
-    print("=" * 80)
-
-    # -----------------------------------------------------
-    # 각 모델 독립 추론
-    # -----------------------------------------------------
-
-    cb_prediction = (
-        predict_catboost(
-            test
+    if missing_trackman_model_features:
+        raise ValueError(
+            "Model final_features에 Trackman Feature가 누락되었습니다: "
+            f"{missing_trackman_model_features}"
         )
-    )
 
-    xgb_prediction = (
-        predict_xgboost(
-            test
-        )
+    X_test = prepare_features(
+        test_df[final_features],
+        cat_cols,
     )
-
-    mlp_prediction = (
-        predict_mlp(
-            test,
-            device,
-        )
-    )
-
-    validate_predictions(
-        cb_prediction,
-        len(
-            test
-        ),
-        CB_EXPERIMENT_NAME,
-    )
-
-    validate_predictions(
-        xgb_prediction,
-        len(
-            test
-        ),
-        XGB_EXPERIMENT_NAME,
-    )
-
-    validate_predictions(
-        mlp_prediction,
-        len(
-            test
-        ),
-        MLP_EXPERIMENT_NAME,
-    )
-
-    print()
-    print("[Single predictions]")
-
-    print(
-        f"{CB_EXPERIMENT_NAME:<10} "
-        f"mean={cb_prediction.mean():.6f} "
-        f"std={cb_prediction.std():.6f}"
-    )
-
-    print(
-        f"{XGB_EXPERIMENT_NAME:<10} "
-        f"mean={xgb_prediction.mean():.6f} "
-        f"std={xgb_prediction.std():.6f}"
-    )
-
-    print(
-        f"{MLP_EXPERIMENT_NAME:<10} "
-        f"mean={mlp_prediction.mean():.6f} "
-        f"std={mlp_prediction.std():.6f}"
-    )
+    
+    # 모델 학습 시의 Feature 순서와 완벽히 동일한지 검증
+    if list(model.feature_names_) != list(X_test.columns):
+        raise ValueError("추론 Feature 순서가 모델 학습 시와 다릅니다.")
 
     # -----------------------------------------------------
-    # 고정 weight ensemble
-    #
-    # weight는 공식 train의 OOF에서 미리 결정되었으며
-    # test의 분포/다른 행/통계로 재조정하지 않는다.
+    # 6. 모델 추론
     # -----------------------------------------------------
+    print("\n추론(Inference) 시작...")
+    # CatBoostRegressor는 predict()로 raw prediction을 생성한다.
+    pred_raw = model.predict(X_test)
+    pred_raw = np.asarray(pred_raw, dtype=np.float64)
 
-    prediction = (
-        weights[
-            CB_EXPERIMENT_NAME
-        ]
-        * cb_prediction
-        + weights[
-            XGB_EXPERIMENT_NAME
-        ]
-        * xgb_prediction
-        + weights[
-            MLP_EXPERIMENT_NAME
-        ]
-        * mlp_prediction
-    )
+    if not np.isfinite(pred_raw).all():
+        raise ValueError("Raw prediction에 NaN 또는 Inf가 있습니다.")
 
-    validate_predictions(
-        prediction,
-        len(
-            test
-        ),
-        EXPERIMENT_NAME,
-    )
+    # train.py의 Validation 정책과 동일하게 [0, 1] 범위로 clipping한다.
+    # 각 행의 prediction에 고정된 deterministic transform만 적용하므로
+    # 다른 test 행의 정보를 사용하지 않는다.
+    pred_prob = np.clip(pred_raw, 0.0, 1.0)
 
-    print()
-    print("[Ensemble prediction]")
+    below_zero = pred_raw < 0.0
+    above_one = pred_raw > 1.0
+    outside_range = below_zero | above_one
 
+    print("\n[Raw prediction diagnostics]")
+    print(f"- Mean       : {pred_raw.mean():.6f}")
+    print(f"- Std        : {pred_raw.std():.6f}")
+    print(f"- Min        : {pred_raw.min():.6f}")
+    print(f"- Max        : {pred_raw.max():.6f}")
     print(
-        f"mean={prediction.mean():.6f}"
+        f"- Outside    : {outside_range.sum()} "
+        f"({outside_range.mean():.6%})"
     )
-
-    print(
-        f"std ={prediction.std():.6f}"
-    )
-
-    print(
-        f"min ={prediction.min():.6f}"
-    )
-
-    print(
-        f"max ={prediction.max():.6f}"
-    )
-
+    
     # -----------------------------------------------------
-    # Submission
+    # 7. Submission 생성 및 저장
     # -----------------------------------------------------
-
-    submission = (
-        submission.copy()
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    
+    submission = build_submission(
+        sample_submission=sample_sub,
+        test_ids=test_ids,
+        predictions=pred_prob
     )
+    
+    submission.to_csv(OUTPUT_PATH, index=False, encoding="utf-8-sig")
 
-    submission[
-        TARGET
-    ] = prediction
-
-    OUTPUT_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    submission.to_csv(
-        OUTPUT_PATH,
-        index=False,
-        encoding="utf-8-sig",
-    )
-
-    print()
-    print("=" * 80)
-    print("Submission 저장 완료")
-    print("=" * 80)
-    print(f"- {OUTPUT_PATH}")
-    print("=" * 80)
-
+    elapsed_time = time.time() - start_time
+    
+    print("\n" + "=" * 60)
+    print("제출 파일 저장 완료")
+    print(f"- 저장 경로: {OUTPUT_PATH}")
+    print(f"- Prediction Mean: {submission[TARGET].mean():.6f}")
+    print(f"- Prediction Min : {submission[TARGET].min():.6f}")
+    print(f"- Prediction Max : {submission[TARGET].max():.6f}")
+    print(f"- 총 실행 시간: {elapsed_time:.2f} 초")
+    print("=" * 60)
 
 if __name__ == "__main__":
     main()

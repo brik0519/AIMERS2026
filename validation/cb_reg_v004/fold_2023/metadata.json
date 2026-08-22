@@ -1,0 +1,80 @@
+{
+  "experiment_name": "cb_reg_v004",
+  "fold": 3,
+  "train_seasons": [
+    2019,
+    2020,
+    2021,
+    2022
+  ],
+  "validation_season": 2023,
+  "n_train": 976060,
+  "n_validation": 245525,
+  "model_type": "CatBoostRegressor",
+  "model_params": {
+    "iterations": 800,
+    "learning_rate": 0.07,
+    "depth": 8,
+    "loss_function": "RMSE",
+    "l2_leaf_reg": 10.0,
+    "random_strength": 1.0,
+    "random_seed": 42,
+    "max_ctr_complexity": 1,
+    "thread_count": -1,
+    "verbose": 100,
+    "allow_writing_files": false
+  },
+  "positive_rate": 0.49995723449750534,
+  "raw_brier": 0.25142152754351893,
+  "raw_bss_raw": -568.611753122572,
+  "raw_bss": 0.0,
+  "clipped_brier": 0.25142152754351893,
+  "clipped_bss_raw": -568.611753122572,
+  "clipped_bss": 0.0,
+  "brier": 0.25142152754351893,
+  "baseline_brier": 0.24999999817111176,
+  "bss_raw": -568.611753122572,
+  "bss": 0.0,
+  "prediction_raw_mean": 0.5346441697844889,
+  "prediction_raw_std": 0.019234257754306962,
+  "prediction_raw_min": 0.5068780942558738,
+  "prediction_raw_max": 0.5963930257517136,
+  "prediction_clip_mean": 0.5346441697844889,
+  "prediction_clip_std": 0.019234257754306962,
+  "prediction_clip_min": 0.5068780942558738,
+  "prediction_clip_max": 0.5963930257517136,
+  "elapsed_seconds": 24.894521713256836,
+  "best_iteration": 4,
+  "final_iterations": 5,
+  "n_prediction_below_0": 0,
+  "ratio_prediction_below_0": 0.0,
+  "n_prediction_above_1": 0,
+  "ratio_prediction_above_1": 0.0,
+  "n_prediction_outside_0_1": 0,
+  "ratio_prediction_outside_0_1": 0.0,
+  "trackman_train": {
+    "tm_available_count": 384559,
+    "tm_available_ratio": 0.3939911480851587
+  },
+  "trackman_validation": {
+    "tm_available_count": 127617,
+    "tm_available_ratio": 0.5197719173200285
+  },
+  "trackman_allowed_tiers": [
+    "A"
+  ],
+  "trackman_features": [
+    "tm_history_available",
+    "tm_n",
+    "tm_rel_speed_mean",
+    "tm_rel_speed_std",
+    "tm_spin_rate_mean",
+    "tm_spin_rate_std",
+    "tm_induced_vert_break_mean",
+    "tm_induced_vert_break_std",
+    "tm_rel_height_mean",
+    "tm_rel_height_std",
+    "tm_rel_side_mean",
+    "tm_rel_side_std"
+  ]
+}
