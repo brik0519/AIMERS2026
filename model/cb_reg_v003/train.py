@@ -28,12 +28,19 @@ import numpy as np
 import pandas as pd
 from catboost import CatBoostRegressor
 
+# =========================================================
+# Feature 제외 설정 : script.py에서는 적용할 필요 없음.
+# =========================================================
+
+EXCLUDE_FEATURES = [
+    "asof_pitcher_pitchmix_n",
+]
 
 # =========================================================
 # 경로
 # =========================================================
 
-EXPERIMENT_NAME = "cb_reg_v003"
+EXPERIMENT_NAME = "cb_reg_v003_test"
 
 DATA_DIR = Path("./data")
 
@@ -1488,10 +1495,21 @@ def main():
         nrows=0,
     ).columns
 
+    # 기존코드
+    # base_features = [
+    #     c
+    #     for c in test_cols
+    #     if c != ID
+    # ]
+
+    # 새로 추가한 코드 : EXCUDE_FEATURES를 제외하는 내용.
     base_features = [
         c
         for c in test_cols
-        if c != ID
+        if (
+            c != ID
+            and c not in EXCLUDE_FEATURES
+        )
     ]
 
     cat_cols = [
