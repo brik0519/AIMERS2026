@@ -21,4 +21,5 @@ __pycache__/
 data/data_analyzer.ipynb
 data/mlp_2024Validation/
 data/mlp_2024Validation/validation/ensemble_v*/oof_pred.csv
+data/trackman/
 validation/ensemble_v*/oof_pred.csv
