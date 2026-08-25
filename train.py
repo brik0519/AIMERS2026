@@ -1,7 +1,7 @@
-# train.py: CatBoost Regressor cb_reg_v003
+# train.py: CatBoost Regressor cb_reg_v009 — Walk-Forward F Correction
 #
-# cb_v003의 HB-EB Feature Engineering + Expanding Window Validation 구조를 유지하면서
-# CatBoostClassifier(Logloss) -> CatBoostRegressor(RMSE) 변경 효과를 검증한다.
+# cb_reg_v003의 HB-EB Feature Engineering + Expanding Window Validation 구조를 그대로 유지하면서
+# 2023/2024 validation fold에서 past-only F anchor를 사용한 corrected-total Brier로 stage를 선택한다.
 #
 # 핵심 비교:
 #   Control   : cb_v003     = HB-EB + CatBoostClassifier + Logloss
@@ -28,19 +28,12 @@ import numpy as np
 import pandas as pd
 from catboost import CatBoostRegressor
 
-# =========================================================
-# Feature 제외 설정 : script.py에서는 적용할 필요 없음.
-# =========================================================
-
-EXCLUDE_FEATURES = [
-    "asof_pitcher_pitchmix_n",
-]
 
 # =========================================================
 # 경로
 # =========================================================
 
-EXPERIMENT_NAME = "cb_reg_v003_test"
+EXPERIMENT_NAME = "cb_reg_v009"
 
 DATA_DIR = Path("./data")
 
@@ -143,6 +136,66 @@ MODEL_PARAMS = {
 
 EARLY_STOPPING_ROUNDS = 80
 FINAL_ITERATION_STRATEGY = "latest_fold"
+
+# =========================================================
+# Experiment D: Walk-Forward F Correction
+# =========================================================
+#
+# 목적
+# ----
+# cb_reg_v008에서 2023에 성공한 corrected-total 정책이
+# 다음 시점인 2024에도 "미래 라벨을 보지 않고" 전이되는지 검증한다.
+#
+# Walk-forward anchor 정책
+# ------------------------
+# 2023 validation:
+#   - post-break F history가 아직 없음
+#   - anchor = 0.50 (사전 정의 neutral anchor)
+#
+# 2024 validation:
+#   - 2023은 이미 공식 training history
+#   - anchor = 2023 F 실제 성공률
+#   - 2024 label은 anchor 계산에 절대 사용하지 않음
+#
+# 2025 deployment 후보:
+#   - 2023, 2024는 모두 공식 train
+#   - anchor = 2023/2024 F season-equal mean
+#   - final delta는 final model의 2024 F train prediction으로 fit
+#   - artifact에 frozen 상수로 저장
+#
+# 각 corrected fold의 stage t:
+#   1. 같은 모델의 마지막 학습 시즌 F prediction을 reference로 사용
+#   2. reference prediction의 corrected mean이 past-only anchor가 되도록
+#      logit delta_t 계산
+#   3. validation R은 raw prediction 유지
+#   4. validation F에 delta_t row-wise 적용
+#   5. corrected R+F 전체 Brier로 best stage 선택
+#
+# 규칙 준수
+# ---------
+# - validation/test prediction 평균으로 delta를 fit하지 않는다.
+# - validation/test label로 anchor를 만들지 않는다.
+# - test 행 간 집계/평균/groupby/rolling/rank를 사용하지 않는다.
+# - 최종 inference는 current row의 game_type + raw prediction +
+#   artifact에 저장된 frozen delta만 사용한다.
+
+CORRECTED_TOTAL_ES_SEASONS = {
+    2023,
+    2024,
+}
+
+CORRECTED_TOTAL_F_GAME_TYPE = "F"
+CORRECTED_TOTAL_CORRECTION_METHOD = "logit_shift"
+
+NEUTRAL_F_ANCHOR = 0.50
+POST_BREAK_START_SEASON = 2023
+
+# 2025 deployment용 post-break anchor는 각 시즌을 동등하게 취급한다.
+FINAL_F_ANCHOR_POLICY = "season_equal_mean"
+
+CORRECTED_TOTAL_EVAL_PERIOD = 1
+CORRECTED_TOTAL_PATIENCE = EARLY_STOPPING_ROUNDS
+CORRECTION_EPS = 1e-6
 
 
 # =========================================================
@@ -424,6 +477,60 @@ def apply_hbeb_configs(
 # Feature 전처리
 # =========================================================
 
+
+def apply_saved_hbeb_priors(
+    df_apply,
+    base_features,
+    priors,
+):
+    """
+    이미 학습 단계에서 확정된 HB-EB prior artifact만 사용하여
+    df_apply에 동일한 HB-EB 변환을 적용한다.
+
+    중요:
+    - prior를 재추정하지 않는다.
+    - df_apply의 다른 행을 집계하지 않는다.
+    - 각 행은 저장된 prior lookup + 행 단위 산술만 사용한다.
+    """
+
+    transformed = df_apply.copy()
+    current_features = list(base_features)
+
+    for config in HBEB_CONFIGS:
+        new_col = config["new_col"]
+
+        if new_col not in priors:
+            raise KeyError(
+                f"저장된 HB-EB prior에 {new_col}이 없습니다."
+            )
+
+        prior_info = priors[new_col]
+
+        transformed[new_col] = apply_hbeb(
+            df=transformed,
+            group_cols=prior_info["group_cols"],
+            n_col=prior_info["n_col"],
+            rate_col=prior_info["rate_col"],
+            prior_df=prior_info["prior_df"],
+            global_prior=prior_info["global_prior"],
+        )
+
+        if config["rate_col"] in current_features:
+            current_features.remove(
+                config["rate_col"]
+            )
+
+        if new_col not in current_features:
+            current_features.append(
+                new_col
+            )
+
+    return (
+        transformed,
+        current_features,
+    )
+
+
 def prepare_features(
     df,
     cat_cols,
@@ -512,6 +619,648 @@ def calculate_metrics(
     }
 
 
+def get_walkforward_f_anchor(
+    df_train,
+    validation_season,
+):
+    """
+    validation_season을 예측하는 시점에 이용 가능한 train history만으로
+    F anchor를 결정한다.
+
+    2023:
+        post-break history가 없으므로 neutral 0.50.
+
+    2024+:
+        POST_BREAK_START_SEASON 이상이면서 validation_season보다 과거인
+        labeled seasons의 F prevalence를 season-equal mean으로 사용한다.
+
+    반환값 계산에 validation season의 label은 포함되지 않는다.
+    """
+
+    validation_season = int(
+        validation_season
+    )
+
+    eligible = (
+        df_train.loc[
+            (
+                df_train["season"]
+                >= POST_BREAK_START_SEASON
+            )
+            & (
+                df_train["season"]
+                < validation_season
+            )
+            & (
+                df_train["game_type"]
+                .astype(str)
+                == CORRECTED_TOTAL_F_GAME_TYPE
+            ),
+            [
+                "season",
+                TARGET,
+            ],
+        ]
+    )
+
+    if eligible.empty:
+        return {
+            "anchor": float(
+                NEUTRAL_F_ANCHOR
+            ),
+            "policy": "neutral_no_post_break_history",
+            "source_seasons": [],
+            "season_rates": {},
+        }
+
+    season_rates = (
+        eligible
+        .groupby(
+            "season",
+            sort=True,
+        )[TARGET]
+        .mean()
+    )
+
+    anchor = float(
+        season_rates.mean()
+    )
+
+    return {
+        "anchor": anchor,
+        "policy": "past_post_break_season_equal_mean",
+        "source_seasons": [
+            int(x)
+            for x in season_rates.index
+        ],
+        "season_rates": {
+            str(
+                int(season)
+            ): float(rate)
+            for season, rate
+            in season_rates.items()
+        },
+    }
+
+
+def get_final_f_anchor(
+    train,
+):
+    """
+    2025 deployment 후보용 anchor.
+
+    공식 train에 존재하는 post-break seasons(2023, 2024, ...)의
+    F prevalence를 season-equal mean으로 계산한다.
+    test 정보는 전혀 사용하지 않는다.
+    """
+
+    eligible = (
+        train.loc[
+            (
+                train["season"]
+                >= POST_BREAK_START_SEASON
+            )
+            & (
+                train["game_type"]
+                .astype(str)
+                == CORRECTED_TOTAL_F_GAME_TYPE
+            ),
+            [
+                "season",
+                TARGET,
+            ],
+        ]
+    )
+
+    if eligible.empty:
+        return {
+            "anchor": float(
+                NEUTRAL_F_ANCHOR
+            ),
+            "policy": "neutral_no_post_break_history",
+            "source_seasons": [],
+            "season_rates": {},
+        }
+
+    season_rates = (
+        eligible
+        .groupby(
+            "season",
+            sort=True,
+        )[TARGET]
+        .mean()
+    )
+
+    return {
+        "anchor": float(
+            season_rates.mean()
+        ),
+        "policy": (
+            FINAL_F_ANCHOR_POLICY
+        ),
+        "source_seasons": [
+            int(x)
+            for x in season_rates.index
+        ],
+        "season_rates": {
+            str(
+                int(season)
+            ): float(rate)
+            for season, rate
+            in season_rates.items()
+        },
+    }
+
+
+def _safe_logit(p, eps=CORRECTION_EPS):
+    p = np.clip(
+        np.asarray(p, dtype=np.float64),
+        eps,
+        1.0 - eps,
+    )
+    return np.log(p / (1.0 - p))
+
+
+def _sigmoid(z):
+    z = np.asarray(z, dtype=np.float64)
+    out = np.empty_like(z, dtype=np.float64)
+
+    pos = z >= 0
+
+    out[pos] = (
+        1.0
+        / (
+            1.0
+            + np.exp(-z[pos])
+        )
+    )
+
+    exp_z = np.exp(z[~pos])
+
+    out[~pos] = (
+        exp_z
+        / (
+            1.0
+            + exp_z
+        )
+    )
+
+    return out
+
+
+def solve_logit_delta_to_target_mean(
+    reference_pred,
+    target_mean,
+    max_iter=100,
+):
+    """
+    Train-only reference prediction의 보정 후 평균이 target_mean이 되도록
+    logit intercept delta를 계산한다.
+
+    Validation/Test prediction vector를 reference_pred로 넣어서는 안 된다.
+    """
+
+    reference_pred = np.clip(
+        np.asarray(
+            reference_pred,
+            dtype=np.float64,
+        ),
+        CORRECTION_EPS,
+        1.0 - CORRECTION_EPS,
+    )
+
+    if reference_pred.size == 0:
+        raise ValueError(
+            "F correction reference prediction이 비어 있습니다."
+        )
+
+    if not (0.0 < target_mean < 1.0):
+        raise ValueError(
+            "target_mean은 (0,1) 범위여야 합니다."
+        )
+
+    z = _safe_logit(reference_pred)
+
+    lo = -10.0
+    hi = 10.0
+
+    for _ in range(max_iter):
+        mid = 0.5 * (lo + hi)
+
+        mean_corrected = float(
+            np.mean(
+                _sigmoid(z + mid)
+            )
+        )
+
+        if mean_corrected < target_mean:
+            lo = mid
+        else:
+            hi = mid
+
+    delta = 0.5 * (lo + hi)
+
+    return {
+        "delta": float(delta),
+        "target_mean": float(target_mean),
+        "reference_raw_mean": float(
+            np.mean(reference_pred)
+        ),
+        "reference_corrected_mean": float(
+            np.mean(
+                _sigmoid(z + delta)
+            )
+        ),
+    }
+
+
+def apply_f_logit_correction(
+    pred,
+    game_type,
+    delta,
+):
+    """
+    Row-wise deterministic correction.
+
+    R(non-F): raw prediction 유지
+    F      : sigmoid(logit(raw) + frozen delta)
+    """
+
+    pred = np.asarray(
+        pred,
+        dtype=np.float64,
+    ).copy()
+
+    game_type = np.asarray(
+        game_type,
+    ).astype(str)
+
+    if len(pred) != len(game_type):
+        raise ValueError(
+            "prediction과 game_type 길이가 일치하지 않습니다."
+        )
+
+    f_mask = (
+        game_type
+        == CORRECTED_TOTAL_F_GAME_TYPE
+    )
+
+    if np.any(f_mask):
+        pred[f_mask] = _sigmoid(
+            _safe_logit(
+                pred[f_mask]
+            )
+            + float(delta)
+        )
+
+    return np.clip(
+        pred,
+        0.0,
+        1.0,
+    )
+
+
+def select_corrected_total_stage(
+    estimator,
+    X_val,
+    y_val,
+    val_game_type,
+    X_reference_f,
+    anchor,
+    patience,
+):
+    """
+    Walk-forward corrected-total stage selector.
+
+    각 candidate tree stage마다:
+      1. 같은 stage의 train-reference F prediction으로 delta를 fit
+      2. validation F에 해당 delta를 적용
+      3. corrected R+F 전체 Brier 계산
+      4. patience 기준 best stage 선택
+
+    delta fitting에는 validation prediction 평균/target을 사용하지 않는다.
+    """
+
+    y_val_np = np.asarray(
+        y_val,
+        dtype=np.float64,
+    )
+
+    game_type_np = np.asarray(
+        val_game_type,
+    ).astype(str)
+
+    r_mask = (
+        game_type_np
+        != CORRECTED_TOTAL_F_GAME_TYPE
+    )
+    f_mask = (
+        game_type_np
+        == CORRECTED_TOTAL_F_GAME_TYPE
+    )
+
+    if not np.any(r_mask):
+        raise ValueError(
+            "Validation R row가 없습니다."
+        )
+
+    if not np.any(f_mask):
+        raise ValueError(
+            "Validation F row가 없습니다."
+        )
+
+    if len(X_reference_f) == 0:
+        raise ValueError(
+            "Train-reference F row가 없습니다."
+        )
+
+    val_generator = estimator.staged_predict(
+        X_val,
+        eval_period=CORRECTED_TOTAL_EVAL_PERIOD,
+    )
+
+    ref_generator = estimator.staged_predict(
+        X_reference_f,
+        eval_period=CORRECTED_TOTAL_EVAL_PERIOD,
+    )
+
+    trajectory = []
+    best = None
+    no_improve = 0
+
+    for stage_number, (
+        val_pred_stage,
+        ref_pred_stage,
+    ) in enumerate(
+        zip(
+            val_generator,
+            ref_generator,
+        ),
+        start=1,
+    ):
+        val_pred_stage = np.asarray(
+            val_pred_stage,
+            dtype=np.float64,
+        )
+
+        ref_pred_stage = np.asarray(
+            ref_pred_stage,
+            dtype=np.float64,
+        )
+
+        delta_info = (
+            solve_logit_delta_to_target_mean(
+                reference_pred=ref_pred_stage,
+                target_mean=anchor,
+            )
+        )
+
+        raw_clip = np.clip(
+            val_pred_stage,
+            0.0,
+            1.0,
+        )
+
+        corrected = (
+            apply_f_logit_correction(
+                pred=val_pred_stage,
+                game_type=game_type_np,
+                delta=delta_info["delta"],
+            )
+        )
+
+        raw_total_brier = float(
+            np.mean(
+                (y_val_np - raw_clip) ** 2
+            )
+        )
+
+        corrected_total_brier = float(
+            np.mean(
+                (y_val_np - corrected) ** 2
+            )
+        )
+
+        r_brier = float(
+            np.mean(
+                (
+                    y_val_np[r_mask]
+                    - raw_clip[r_mask]
+                ) ** 2
+            )
+        )
+
+        f_raw_brier = float(
+            np.mean(
+                (
+                    y_val_np[f_mask]
+                    - raw_clip[f_mask]
+                ) ** 2
+            )
+        )
+
+        f_corrected_brier = float(
+            np.mean(
+                (
+                    y_val_np[f_mask]
+                    - corrected[f_mask]
+                ) ** 2
+            )
+        )
+
+        row = {
+            "stage_number": int(stage_number),
+            "best_iteration": int(
+                stage_number - 1
+            ),
+            "raw_total_brier": raw_total_brier,
+            "corrected_total_brier": (
+                corrected_total_brier
+            ),
+            "r_brier": r_brier,
+            "f_raw_brier": f_raw_brier,
+            "f_corrected_brier": (
+                f_corrected_brier
+            ),
+            "delta_f": float(
+                delta_info["delta"]
+            ),
+            "reference_raw_mean": float(
+                delta_info[
+                    "reference_raw_mean"
+                ]
+            ),
+            "reference_corrected_mean": float(
+                delta_info[
+                    "reference_corrected_mean"
+                ]
+            ),
+            "anchor": float(anchor),
+            "validation_raw_mean": float(
+                np.mean(raw_clip)
+            ),
+            "validation_corrected_mean": float(
+                np.mean(corrected)
+            ),
+            "validation_r_raw_mean": float(
+                np.mean(
+                    raw_clip[r_mask]
+                )
+            ),
+            "validation_f_raw_mean": float(
+                np.mean(
+                    raw_clip[f_mask]
+                )
+            ),
+            "validation_f_corrected_mean": float(
+                np.mean(
+                    corrected[f_mask]
+                )
+            ),
+        }
+
+        trajectory.append(row)
+
+        improved = (
+            best is None
+            or corrected_total_brier
+            < (
+                best[
+                    "corrected_total_brier"
+                ]
+                - 1e-15
+            )
+        )
+
+        if improved:
+            best = dict(row)
+            no_improve = 0
+        else:
+            no_improve += (
+                CORRECTED_TOTAL_EVAL_PERIOD
+            )
+
+        if (
+            stage_number == 1
+            or stage_number % 25 == 0
+            or improved
+        ):
+            print(
+                "Corrected-Total stage "
+                f"{stage_number:>3d} | "
+                f"raw={raw_total_brier:.8f} | "
+                f"corr={corrected_total_brier:.8f} | "
+                f"R={r_brier:.8f} | "
+                f"Fraw={f_raw_brier:.8f} | "
+                f"Fcorr={f_corrected_brier:.8f} | "
+                f"delta={delta_info['delta']:+.6f}"
+            )
+
+        if no_improve >= patience:
+            print(
+                "Corrected-Total staged evaluation "
+                f"stopped after {patience} "
+                "trees without improvement."
+            )
+            break
+
+    if best is None:
+        raise RuntimeError(
+            "Corrected-total best stage 선택 실패."
+        )
+
+    return best, pd.DataFrame(trajectory)
+
+
+def calculate_domain_metrics(
+    game_type,
+    y_true,
+    y_pred,
+):
+    """
+    Validation 전체 예측을 R(non-F) / F로 분리해 진단한다.
+
+    - R은 game_type != "F"로 정의한다.
+    - 이 함수는 평가/진단용이며 학습 Feature를 생성하지 않는다.
+    """
+
+    game_type = pd.Series(
+        game_type
+    ).astype(str).to_numpy()
+
+    y_true = np.asarray(
+        y_true,
+        dtype=np.float64,
+    )
+
+    y_pred = np.asarray(
+        y_pred,
+        dtype=np.float64,
+    )
+
+    if not (
+        len(game_type)
+        == len(y_true)
+        == len(y_pred)
+    ):
+        raise ValueError(
+            "Domain metric 입력 길이가 일치하지 않습니다."
+        )
+
+    masks = {
+        "R": (
+            game_type
+            != CORRECTED_TOTAL_F_GAME_TYPE
+        ),
+        "F": (
+            game_type
+            == CORRECTED_TOTAL_F_GAME_TYPE
+        ),
+    }
+
+    result = {}
+
+    for domain, mask in masks.items():
+        n = int(
+            np.sum(mask)
+        )
+
+        if n == 0:
+            result[domain] = {
+                "n": 0,
+                "share": 0.0,
+                "metrics": None,
+                "prediction_mean": None,
+                "prediction_std": None,
+            }
+            continue
+
+        metrics = calculate_metrics(
+            y_true[mask],
+            y_pred[mask],
+        )
+
+        result[domain] = {
+            "n": n,
+            "share": float(
+                n / len(y_true)
+            ),
+            "metrics": metrics,
+            "prediction_mean": float(
+                np.mean(
+                    y_pred[mask]
+                )
+            ),
+            "prediction_std": float(
+                np.std(
+                    y_pred[mask]
+                )
+            ),
+        }
+
+    return result
+
+
 def calculate_range_diagnostics(
     y_pred_raw,
 ):
@@ -565,6 +1314,7 @@ def save_fold_validation(
     validation_season,
     estimator,
     row_ids,
+    game_type,
     y_true,
     y_pred_raw,
     y_pred_clip,
@@ -574,6 +1324,11 @@ def save_fold_validation(
     best_iteration,
     final_iterations,
     n_train,
+    early_stopping_policy,
+    n_early_stopping_eval,
+    y_pred_model_raw=None,
+    y_pred_model_clip=None,
+    correction_metadata=None,
 ):
     fold_dir = (
         VALIDATION_DIR
@@ -587,6 +1342,10 @@ def save_fold_validation(
 
     row_ids = np.asarray(
         row_ids
+    )
+
+    game_type = np.asarray(
+        game_type
     )
 
     y_true = np.asarray(
@@ -604,11 +1363,41 @@ def save_fold_validation(
         dtype=np.float64,
     )
 
+    if y_pred_model_raw is None:
+        y_pred_model_raw = (
+            y_pred_raw.copy()
+        )
+    else:
+        y_pred_model_raw = np.asarray(
+            y_pred_model_raw,
+            dtype=np.float64,
+        )
+
+    if y_pred_model_clip is None:
+        y_pred_model_clip = np.clip(
+            y_pred_model_raw,
+            0.0,
+            1.0,
+        )
+    else:
+        y_pred_model_clip = np.asarray(
+            y_pred_model_clip,
+            dtype=np.float64,
+        )
+
+    if correction_metadata is None:
+        correction_metadata = {
+            "enabled": False,
+        }
+
     if not (
         len(row_ids)
+        == len(game_type)
         == len(y_true)
         == len(y_pred_raw)
         == len(y_pred_clip)
+        == len(y_pred_model_raw)
+        == len(y_pred_model_clip)
     ):
         raise ValueError(
             "Validation 저장 배열 길이가 일치하지 않습니다."
@@ -616,7 +1405,14 @@ def save_fold_validation(
 
     pred_df = pd.DataFrame({
         "row_id": row_ids,
+        "game_type": game_type,
         "target": y_true,
+        "prediction_model_raw": (
+            y_pred_model_raw
+        ),
+        "prediction_model_clip": (
+            y_pred_model_clip
+        ),
         "prediction_raw": (
             y_pred_raw
         ),
@@ -643,6 +1439,12 @@ def save_fold_validation(
         / "validation.npz",
         row_id=row_ids,
         target=y_true,
+        prediction_model_raw=(
+            y_pred_model_raw
+        ),
+        prediction_model_clip=(
+            y_pred_model_clip
+        ),
         prediction_raw=(
             y_pred_raw
         ),
@@ -666,6 +1468,14 @@ def save_fold_validation(
         )
     )
 
+    domain_metrics = (
+        calculate_domain_metrics(
+            game_type=game_type,
+            y_true=y_true,
+            y_pred=y_pred_clip,
+        )
+    )
+
     metadata = {
         "experiment_name": (
             EXPERIMENT_NAME
@@ -681,6 +1491,22 @@ def save_fold_validation(
         "n_train": int(n_train),
         "n_validation": int(
             len(y_true)
+        ),
+        "early_stopping_policy": (
+            early_stopping_policy
+        ),
+        "n_early_stopping_eval": int(
+            n_early_stopping_eval
+        ),
+        "early_stopping_eval_share": float(
+            n_early_stopping_eval
+            / len(y_true)
+        ),
+        "correction_metadata": (
+            correction_metadata
+        ),
+        "domain_metrics": (
+            domain_metrics
         ),
         "model_type": (
             type(estimator).__name__
@@ -1009,6 +1835,21 @@ def save_validation_summary(
         "early_stopping_rounds": (
             EARLY_STOPPING_ROUNDS
         ),
+        "early_stopping_policy": {
+            "default": "full_validation",
+            "special_validation_seasons": sorted(
+                [
+                    int(x)
+                    for x in CORRECTED_TOTAL_ES_SEASONS
+                ]
+            ),
+            "special_policy": "walkforward_corrected_total_R_raw_F_train_only_shift",
+            "corrected_game_type": (
+                CORRECTED_TOTAL_F_GAME_TYPE
+            ),
+            "training_rows": "R_and_F_all",
+            "fold_evaluation_rows": "R_and_F_all",
+        },
         "final_iteration_strategy": (
             FINAL_ITERATION_STRATEGY
         ),
@@ -1202,6 +2043,81 @@ def run_expanding_validation(
             df_val[ID]
         )
 
+        val_game_type = (
+            df_val["game_type"]
+            .astype(str)
+        )
+
+        # ---------------------------------------------
+        # Experiment C stage-selection 정책
+        # ---------------------------------------------
+
+        if (
+            validation_season
+            in CORRECTED_TOTAL_ES_SEASONS
+        ):
+            early_stopping_policy = (
+                "walkforward_corrected_total_R_raw_F_train_only_shift"
+            )
+
+            anchor_info = (
+                get_walkforward_f_anchor(
+                    df_train=df_train,
+                    validation_season=(
+                        validation_season
+                    ),
+                )
+            )
+
+            fold_f_anchor = float(
+                anchor_info[
+                    "anchor"
+                ]
+            )
+
+            reference_season = int(
+                max(train_seasons)
+            )
+
+            reference_mask = (
+                (
+                    df_train["season"]
+                    == reference_season
+                )
+                & (
+                    df_train["game_type"]
+                    .astype(str)
+                    == CORRECTED_TOTAL_F_GAME_TYPE
+                )
+            )
+
+            X_reference_f = (
+                X_train.loc[
+                    reference_mask
+                ]
+            )
+
+            if len(X_reference_f) == 0:
+                raise ValueError(
+                    "마지막 학습 시즌 F reference가 없습니다."
+                )
+
+            n_early_stopping_eval = (
+                len(y_val)
+            )
+
+        else:
+            early_stopping_policy = (
+                "full_validation"
+            )
+            anchor_info = None
+            fold_f_anchor = None
+            reference_season = None
+            X_reference_f = None
+            n_early_stopping_eval = (
+                len(y_val)
+            )
+
         print()
         print("=" * 72)
         print(
@@ -1225,6 +2141,36 @@ def run_expanding_validation(
         print(
             "Evaluation prediction : raw + clipped"
         )
+        print(
+            "Early stopping policy : "
+            f"{early_stopping_policy}"
+        )
+        print(
+            "Early stopping rows   : "
+            f"{n_early_stopping_eval:,} "
+            f"/ {len(y_val):,}"
+        )
+
+        if (
+            validation_season
+            in CORRECTED_TOTAL_ES_SEASONS
+        ):
+            print(
+                "F anchor policy      : "
+                f"{anchor_info['policy']}"
+            )
+            print(
+                "F anchor             : "
+                f"{fold_f_anchor:.6f}"
+            )
+            print(
+                "Anchor source seasons: "
+                f"{anchor_info['source_seasons']}"
+            )
+            print(
+                "Reference season     : "
+                f"{reference_season}"
+            )
 
         estimator = (
             CatBoostRegressor(
@@ -1234,39 +2180,265 @@ def run_expanding_validation(
 
         start_time = time.time()
 
-        estimator.fit(
-            X_train,
-            y_train,
-            cat_features=cat_cols,
-            eval_set=(
-                X_val,
-                y_val,
-            ),
-            early_stopping_rounds=(
-                EARLY_STOPPING_ROUNDS
-            ),
-            use_best_model=True,
-        )
+        correction_metadata = {
+            "enabled": False,
+        }
+        trajectory_df = None
+
+        if (
+            validation_season
+            in CORRECTED_TOTAL_ES_SEASONS
+        ):
+            # -------------------------------------------------
+            # Experiment C:
+            # 2023/2024 corrected folds에서는 내부 raw-overall early stopping을 끈다.
+            # -------------------------------------------------
+            estimator.fit(
+                X_train,
+                y_train,
+                cat_features=cat_cols,
+                verbose=(
+                    MODEL_PARAMS[
+                        "verbose"
+                    ]
+                ),
+            )
+
+            (
+                best_stage,
+                trajectory_df,
+            ) = select_corrected_total_stage(
+                estimator=estimator,
+                X_val=X_val,
+                y_val=y_val,
+                val_game_type=(
+                    val_game_type
+                ),
+                X_reference_f=(
+                    X_reference_f
+                ),
+                anchor=(
+                    fold_f_anchor
+                ),
+                patience=(
+                    CORRECTED_TOTAL_PATIENCE
+                ),
+            )
+
+            best_iteration = int(
+                best_stage[
+                    "best_iteration"
+                ]
+            )
+
+            final_iterations = (
+                best_iteration + 1
+            )
+
+            estimator.shrink(
+                ntree_end=(
+                    final_iterations
+                )
+            )
+
+            val_pred_model_raw = (
+                estimator.predict(
+                    X_val
+                )
+            )
+
+            val_pred_model_clip = (
+                np.clip(
+                    val_pred_model_raw,
+                    0.0,
+                    1.0,
+                )
+            )
+
+            selected_delta = float(
+                best_stage[
+                    "delta_f"
+                ]
+            )
+
+            # Experiment C의 최종 fold prediction은
+            # R raw + F corrected prediction이다.
+            val_pred_raw = (
+                apply_f_logit_correction(
+                    pred=(
+                        val_pred_model_raw
+                    ),
+                    game_type=(
+                        val_game_type
+                    ),
+                    delta=(
+                        selected_delta
+                    ),
+                )
+            )
+
+            val_pred_clip = (
+                np.clip(
+                    val_pred_raw,
+                    0.0,
+                    1.0,
+                )
+            )
+
+            correction_metadata = {
+                "enabled": True,
+                "method": (
+                    CORRECTED_TOTAL_CORRECTION_METHOD
+                ),
+                "domain": (
+                    CORRECTED_TOTAL_F_GAME_TYPE
+                ),
+                "anchor": float(
+                    fold_f_anchor
+                ),
+                "anchor_policy": (
+                    anchor_info[
+                        "policy"
+                    ]
+                ),
+                "anchor_source_seasons": (
+                    anchor_info[
+                        "source_seasons"
+                    ]
+                ),
+                "anchor_season_rates": (
+                    anchor_info[
+                        "season_rates"
+                    ]
+                ),
+                "reference_season": int(
+                    reference_season
+                ),
+                "reference_scope": (
+                    "same_model_last_training_season_F"
+                ),
+                "delta": float(
+                    selected_delta
+                ),
+                "reference_raw_mean": float(
+                    best_stage[
+                        "reference_raw_mean"
+                    ]
+                ),
+                "reference_corrected_mean": float(
+                    best_stage[
+                        "reference_corrected_mean"
+                    ]
+                ),
+                "selected_stage_number": int(
+                    best_stage[
+                        "stage_number"
+                    ]
+                ),
+                "selected_corrected_total_brier": float(
+                    best_stage[
+                        "corrected_total_brier"
+                    ]
+                ),
+                "selected_raw_total_brier": float(
+                    best_stage[
+                        "raw_total_brier"
+                    ]
+                ),
+                "selected_r_brier": float(
+                    best_stage[
+                        "r_brier"
+                    ]
+                ),
+                "selected_f_raw_brier": float(
+                    best_stage[
+                        "f_raw_brier"
+                    ]
+                ),
+                "selected_f_corrected_brier": float(
+                    best_stage[
+                        "f_corrected_brier"
+                    ]
+                ),
+                "validation_f_raw_mean": float(
+                    best_stage[
+                        "validation_f_raw_mean"
+                    ]
+                ),
+                "validation_f_corrected_mean": float(
+                    best_stage[
+                        "validation_f_corrected_mean"
+                    ]
+                ),
+                "uses_validation_prediction_mean_for_delta": False,
+                "uses_validation_target_for_delta": False,
+                "uses_test_distribution": False,
+                "row_independent_application": True,
+            }
+
+        else:
+            # -------------------------------------------------
+            # cb_reg_v003 original behavior
+            # -------------------------------------------------
+            estimator.fit(
+                X_train,
+                y_train,
+                cat_features=cat_cols,
+                eval_set=(
+                    X_val,
+                    y_val,
+                ),
+                early_stopping_rounds=(
+                    EARLY_STOPPING_ROUNDS
+                ),
+                use_best_model=True,
+            )
+
+            best_iteration = (
+                estimator
+                .get_best_iteration()
+            )
+
+            if (
+                best_iteration
+                is not None
+                and best_iteration >= 0
+            ):
+                final_iterations = (
+                    best_iteration + 1
+                )
+            else:
+                final_iterations = (
+                    MODEL_PARAMS[
+                        "iterations"
+                    ]
+                )
+
+            val_pred_model_raw = (
+                estimator.predict(
+                    X_val
+                )
+            )
+
+            val_pred_model_clip = (
+                np.clip(
+                    val_pred_model_raw,
+                    0.0,
+                    1.0,
+                )
+            )
+
+            val_pred_raw = (
+                val_pred_model_raw.copy()
+            )
+
+            val_pred_clip = (
+                val_pred_model_clip.copy()
+            )
 
         elapsed = (
             time.time()
             - start_time
-        )
-
-        # ---------------------------------------------
-        # Prediction
-        # ---------------------------------------------
-
-        val_pred_raw = (
-            estimator.predict(
-                X_val
-            )
-        )
-
-        val_pred_clip = np.clip(
-            val_pred_raw,
-            0.0,
-            1.0,
         )
 
         raw_metrics = (
@@ -1283,29 +2455,35 @@ def run_expanding_validation(
             )
         )
 
-        # ---------------------------------------------
-        # Best iteration
-        # ---------------------------------------------
-
-        best_iteration = (
-            estimator
-            .get_best_iteration()
+        model_raw_metrics = (
+            calculate_metrics(
+                y_val,
+                val_pred_model_clip,
+            )
         )
 
-        if (
-            best_iteration
-            is not None
-            and best_iteration >= 0
-        ):
-            final_iterations = (
-                best_iteration + 1
+        if trajectory_df is not None:
+            fold_dir = (
+                VALIDATION_DIR
+                / f"fold_{validation_season}"
+            )
+
+            # save_fold_validation이 exist_ok=False로 디렉터리를 만들므로
+            # trajectory는 임시 위치에 저장했다가 fold 저장 후 기록한다.
+            trajectory_path = (
+                VALIDATION_DIR
+                / (
+                    f"_trajectory_"
+                    f"{validation_season}.csv"
+                )
+            )
+
+            trajectory_df.to_csv(
+                trajectory_path,
+                index=False,
             )
         else:
-            final_iterations = (
-                MODEL_PARAMS[
-                    "iterations"
-                ]
-            )
+            trajectory_path = None
 
         pred_df, metadata = (
             save_fold_validation(
@@ -1318,6 +2496,9 @@ def run_expanding_validation(
                 ),
                 estimator=estimator,
                 row_ids=val_row_id,
+                game_type=(
+                    val_game_type
+                ),
                 y_true=y_val,
                 y_pred_raw=(
                     val_pred_raw
@@ -1341,8 +2522,34 @@ def run_expanding_validation(
                     final_iterations
                 ),
                 n_train=len(y_train),
+                early_stopping_policy=(
+                    early_stopping_policy
+                ),
+                n_early_stopping_eval=(
+                    n_early_stopping_eval
+                ),
+                y_pred_model_raw=(
+                    val_pred_model_raw
+                ),
+                y_pred_model_clip=(
+                    val_pred_model_clip
+                ),
+                correction_metadata=(
+                    correction_metadata
+                ),
             )
         )
+
+        if trajectory_path is not None:
+            target_trajectory_path = (
+                VALIDATION_DIR
+                / f"fold_{validation_season}"
+                / "corrected_total_trajectory.csv"
+            )
+
+            trajectory_path.replace(
+                target_trajectory_path
+            )
 
         fold_results.append(
             metadata
@@ -1379,6 +2586,72 @@ def run_expanding_validation(
             f"BSS              : "
             f"{clipped_metrics['bss']:.2f}"
         )
+
+        domain_metrics = (
+            metadata[
+                "domain_metrics"
+            ]
+        )
+
+        print()
+        print("[Model raw vs evaluated]")
+        print(
+            "Model raw Brier   : "
+            f"{model_raw_metrics['brier']:.8f}"
+        )
+        print(
+            "Evaluated Brier   : "
+            f"{clipped_metrics['brier']:.8f}"
+        )
+        print(
+            "Correction enabled: "
+            f"{correction_metadata.get('enabled', False)}"
+        )
+
+        if correction_metadata.get(
+            "enabled",
+            False,
+        ):
+            print(
+                "F delta          : "
+                f"{correction_metadata['delta']:+.8f}"
+            )
+            print(
+                "F anchor         : "
+                f"{correction_metadata['anchor']:.6f}"
+            )
+            print(
+                "Reference season : "
+                f"{correction_metadata['reference_season']}"
+            )
+
+        print()
+        print("[Domain diagnostics]")
+        for domain in (
+            "R",
+            "F",
+        ):
+            d = domain_metrics[
+                domain
+            ]
+
+            if d[
+                "metrics"
+            ] is None:
+                print(
+                    f"{domain}: no rows"
+                )
+                continue
+
+            print(
+                f"{domain} | "
+                f"n={d['n']:,} | "
+                f"share={d['share']:.2%} | "
+                f"Brier={d['metrics']['brier']:.8f} | "
+                f"BSS_raw={d['metrics']['bss_raw']:.2f} | "
+                f"pred_mean={d['prediction_mean']:.6f} | "
+                f"actual={d['metrics']['positive_rate']:.6f}"
+            )
 
         print()
         print("[Range diagnostics]")
@@ -1495,21 +2768,10 @@ def main():
         nrows=0,
     ).columns
 
-    # 기존코드
-    # base_features = [
-    #     c
-    #     for c in test_cols
-    #     if c != ID
-    # ]
-
-    # 새로 추가한 코드 : EXCUDE_FEATURES를 제외하는 내용.
     base_features = [
         c
         for c in test_cols
-        if (
-            c != ID
-            and c not in EXCLUDE_FEATURES
-        )
+        if c != ID
     ]
 
     cat_cols = [
@@ -1804,6 +3066,162 @@ def main():
     # 단일 Artifact 저장
     # -----------------------------------------------------
 
+    # -----------------------------------------------------
+    # 2025 deployment 후보용 frozen F correction
+    # -----------------------------------------------------
+    #
+    # 주의:
+    # - 공식 train(2019~2024)만 사용한다.
+    # - test prediction 평균/분포를 사용하지 않는다.
+    # - anchor는 post-break F seasons의 season-equal mean.
+    # - delta reference는 final model이 마지막 학습 시즌(2024)의
+    #   F training rows에 대해 낸 prediction이다.
+
+    final_anchor_info = (
+        get_final_f_anchor(
+            train
+        )
+    )
+
+    final_reference_season = int(
+        max(
+            train[
+                "season"
+            ].unique()
+        )
+    )
+
+    final_reference_mask = (
+        (
+            train[
+                "season"
+            ]
+            == final_reference_season
+        )
+        & (
+            train[
+                "game_type"
+            ].astype(str)
+            == CORRECTED_TOTAL_F_GAME_TYPE
+        )
+    )
+
+    final_reference_df = (
+        train.loc[
+            final_reference_mask
+        ].copy()
+    )
+
+    if final_reference_df.empty:
+        raise ValueError(
+            "Final F correction reference rows가 없습니다."
+        )
+
+    (
+        final_reference_transformed,
+        final_reference_features,
+    ) = apply_saved_hbeb_priors(
+        df_apply=(
+            final_reference_df
+        ),
+        base_features=(
+            base_features
+        ),
+        priors=(
+            final_priors_dict
+        ),
+    )
+
+    if (
+        final_reference_features
+        != final_features
+    ):
+        raise ValueError(
+            "Final F correction reference Feature 순서가 "
+            "최종 Feature와 일치하지 않습니다."
+        )
+
+    X_final_reference_f = (
+        prepare_features(
+            final_reference_transformed[
+                final_features
+            ],
+            cat_cols,
+        )
+    )
+
+    final_reference_pred = (
+        final_model.predict(
+            X_final_reference_f
+        )
+    )
+
+    final_delta_info = (
+        solve_logit_delta_to_target_mean(
+            reference_pred=(
+                final_reference_pred
+            ),
+            target_mean=float(
+                final_anchor_info[
+                    "anchor"
+                ]
+            ),
+        )
+    )
+
+    final_f_correction = {
+        "enabled": True,
+        "method": (
+            CORRECTED_TOTAL_CORRECTION_METHOD
+        ),
+        "domain": (
+            CORRECTED_TOTAL_F_GAME_TYPE
+        ),
+        "anchor": float(
+            final_anchor_info[
+                "anchor"
+            ]
+        ),
+        "anchor_policy": (
+            final_anchor_info[
+                "policy"
+            ]
+        ),
+        "anchor_source_seasons": (
+            final_anchor_info[
+                "source_seasons"
+            ]
+        ),
+        "anchor_season_rates": (
+            final_anchor_info[
+                "season_rates"
+            ]
+        ),
+        "reference_season": int(
+            final_reference_season
+        ),
+        "reference_scope": (
+            "same_final_model_latest_training_season_F"
+        ),
+        "delta": float(
+            final_delta_info[
+                "delta"
+            ]
+        ),
+        "reference_raw_mean": float(
+            final_delta_info[
+                "reference_raw_mean"
+            ]
+        ),
+        "reference_corrected_mean": float(
+            final_delta_info[
+                "reference_corrected_mean"
+            ]
+        ),
+        "uses_test_distribution": False,
+        "row_independent_application": True,
+    }
+
     final_artifact = {
         "model": final_model,
         "hbeb_priors": (
@@ -1820,6 +3238,22 @@ def main():
             "CatBoostRegressor"
         ),
         "objective": "RMSE",
+        "final_f_correction": (
+            final_f_correction
+        ),
+        "early_stopping_policy": {
+            "default": "full_validation",
+            "special_validation_seasons": sorted(
+                [
+                    int(x)
+                    for x in CORRECTED_TOTAL_ES_SEASONS
+                ]
+            ),
+            "special_policy": "walkforward_corrected_total_R_raw_F_train_only_shift",
+            "corrected_game_type": (
+                CORRECTED_TOTAL_F_GAME_TYPE
+            ),
+        },
         "final_iterations": int(
             final_iterations
         ),
@@ -1842,6 +3276,24 @@ def main():
             "CatBoostRegressor"
         ),
         "objective": "RMSE",
+        "final_f_correction": (
+            final_f_correction
+        ),
+        "early_stopping_policy": {
+            "default": "full_validation",
+            "special_validation_seasons": sorted(
+                [
+                    int(x)
+                    for x in CORRECTED_TOTAL_ES_SEASONS
+                ]
+            ),
+            "special_policy": "walkforward_corrected_total_R_raw_F_train_only_shift",
+            "corrected_game_type": (
+                CORRECTED_TOTAL_F_GAME_TYPE
+            ),
+            "training_rows": "R_and_F_all",
+            "fold_evaluation_rows": "R_and_F_all",
+        },
         "validation_method": (
             "expanding_window"
         ),
