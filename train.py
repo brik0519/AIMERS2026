@@ -1,22 +1,51 @@
-# train.py: CatBoost Regressor cb_reg_v009 — Walk-Forward F Correction
+# train.py: cb_reg_v018
+# V18-lite architecture
 #
-# cb_reg_v003의 HB-EB Feature Engineering + Expanding Window Validation 구조를 그대로 유지하면서
-# 2023/2024 validation fold에서 past-only F anchor를 사용한 corrected-total Brier로 stage를 선택한다.
+# Layer 0 : Row-local Dynamic Anchor
+# Layer 1 : General Residual CatBoost
+# Layer 2 : Conditional Residual CatBoost
 #
-# 핵심 비교:
-#   Control   : cb_v003     = HB-EB + CatBoostClassifier + Logloss
-#   Treatment : cb_reg_v003 = HB-EB + CatBoostRegressor  + RMSE
+# 핵심 구조
+# =========
 #
-# 평가 데이터 독립 추론 규칙:
-# - test.csv는 Feature schema 확인을 위해 header만 읽는다.
-# - Feature/Prior는 공식 train.csv만으로 생성한다.
-# - 다른 test 행 또는 test 전체 분포를 사용하지 않는다.
+#   anchor_i
+#       ↓
+#   r_general_target = y - anchor
+#       ↓
+#   General Residual CatBoost
+#       ↓
+#   OOF general residual prediction
+#       ↓
+#   r_conditional_target = y - anchor - general_oof_pred
+#       ↓
+#   Conditional Residual CatBoost
+#       ↓
+#   final = clip(anchor + gamma_g * general_pred + gamma_c * conditional_pred, 0, 1)
 #
-# Validation 저장:
-# - fold별 pred.csv / validation.npz / metadata.json
-# - pooled OOF pred.csv / validation.npz / metadata.json
-# - Regressor raw prediction과 clipped prediction을 모두 저장
-# - [0, 1] 범위 이탈 진단 저장
+# 중요
+# ----
+# 1) Layer 2 target 생성 시 Layer 1의 in-sample prediction을 절대 사용하지 않는다.
+#    반드시 season-expanding OOF prediction을 사용한다.
+# 2) Conditional feature는 strictly-past pitcher_id × batter_hand delta(A0_ZERO)를 사용한다.
+# 3) 첫 실험에서는 gamma_g = gamma_c = 1.0으로 고정한다.
+# 4) Dynamic anchor / conditional bank는 모두 train-only frozen state + row-local ASOF만 사용한다.
+# 5) test 내부 groupby/mean/rank/rolling/transform을 사용하지 않는다.
+#
+# 출력
+# ----
+# model/cb_reg_v018/cb_reg_v018.pkl
+# model/cb_reg_v018/final_metadata.json
+# validation/cb_reg_v018/oof_pred.csv
+# validation/cb_reg_v018/layer_comparison.csv
+# validation/cb_reg_v018/fold_YYYY/metadata.json
+#
+# 이 파일은 구조 실험용이다.
+# 우선 Layer 2의 순수 증분:
+#
+#   BSS(anchor + general + conditional)
+# - BSS(anchor + general)
+#
+# 이 2021/2022/2023/2024에서 어떻게 움직이는지가 핵심 판정값이다.
 
 import json
 import shutil
@@ -29,34 +58,81 @@ import pandas as pd
 from catboost import CatBoostRegressor
 
 
-# =========================================================
+# =============================================================================
 # 경로
-# =========================================================
+# =============================================================================
 
-EXPERIMENT_NAME = "cb_reg_v009"
+EXPERIMENT_NAME = "cb_reg_v018"
 
 DATA_DIR = Path("./data")
+TRAIN_PATH = DATA_DIR / "train.csv"
 
 MODEL_ROOT = Path("./model")
 MODEL_DIR = MODEL_ROOT / EXPERIMENT_NAME
 MODEL_PATH = MODEL_DIR / f"{EXPERIMENT_NAME}.pkl"
+METADATA_PATH = MODEL_DIR / "final_metadata.json"
 
 VALIDATION_ROOT = Path("./validation")
 VALIDATION_DIR = VALIDATION_ROOT / EXPERIMENT_NAME
 
-OUTPUT_DIR = Path("./output")
 
-TEST_PATH = DATA_DIR / "test.csv"
-SAMPLE_SUB_PATH = DATA_DIR / "sample_submission.csv"
-OUTPUT_PATH = OUTPUT_DIR / "submission.csv"
-
-
-# =========================================================
+# =============================================================================
 # 기본 설정
-# =========================================================
+# =============================================================================
 
 ID = "row_id"
 TARGET = "control_success"
+SEASON_COL = "season"
+
+BASE_FEATURES = [
+    "season",
+    "game_month",
+    "game_dayofweek",
+    "inning",
+    "top_bottom",
+    "game_type",
+    "balls_before",
+    "strikes_before",
+    "outs_before",
+    "run_top_before",
+    "run_bot_before",
+    "run_total_before",
+    "score_diff_home",
+    "score_diff_pitcher_team",
+    "runner_on_1b",
+    "runner_on_2b",
+    "runner_on_3b",
+    "num_runners_on",
+    "base_state",
+    "home_win_expectancy",
+    "away_win_expectancy",
+    "li",
+    "pitcher_id",
+    "batter_id",
+    "pitcher_hand",
+    "batter_hand",
+    "pitcher_team_id",
+    "batter_team_id",
+    "asof_pitcher_n",
+    "asof_pitcher_success_rate",
+    "asof_pitcher_reverse_rate",
+    "asof_pitcher_middle_rate",
+    "asof_pitcher_ball_rate",
+    "asof_pitcher_strike_rate",
+    "asof_pitcher_prev1_game_success_rate",
+    "asof_pitcher_prev3_game_success_rate",
+    "asof_pitcher_prev5_game_success_rate",
+    "asof_pitcher_prev1_game_middle_rate",
+    "asof_pitcher_prev3_game_middle_rate",
+    "asof_pitcher_prev5_game_middle_rate",
+    "asof_batter_n",
+    "asof_batter_success_rate",
+    "asof_batter_middle_rate",
+    "asof_pitcher_pitchmix_n",
+    "asof_pitcher_fastball_rate",
+    "asof_pitcher_breaking_rate",
+    "asof_pitcher_offspeed_rate",
+]
 
 CAT_COLS = [
     "top_bottom",
@@ -71,32 +147,112 @@ CAT_COLS = [
 ]
 
 EXPANDING_FOLDS = [
-    {
-        "fold": 1,
-        "train_seasons": [2019, 2020],
-        "validation_season": 2021,
-    },
-    {
-        "fold": 2,
-        "train_seasons": [2019, 2020, 2021],
-        "validation_season": 2022,
-    },
-    {
-        "fold": 3,
-        "train_seasons": [2019, 2020, 2021, 2022],
-        "validation_season": 2023,
-    },
-    {
-        "fold": 4,
-        "train_seasons": [2019, 2020, 2021, 2022, 2023],
-        "validation_season": 2024,
-    },
+    ([2019, 2020], 2021),
+    ([2019, 2020, 2021], 2022),
+    ([2019, 2020, 2021, 2022], 2023),
+    ([2019, 2020, 2021, 2022, 2023], 2024),
 ]
 
+MODEL_PARAMS = {
+    "iterations": 800,
+    "learning_rate": 0.07,
+    "depth": 8,
+    "loss_function": "RMSE",
+    "eval_metric": "RMSE",
+    "l2_leaf_reg": 10.0,
+    "random_strength": 1.0,
+    "random_seed": 42,
+    "max_ctr_complexity": 1,
+    "thread_count": -1,
+    "verbose": 100,
+    "allow_writing_files": False,
+}
 
-# =========================================================
-# HB-EB 설정
-# =========================================================
+EARLY_STOPPING_ROUNDS = 80
+
+# 처음에는 구조 자체만 본다.
+GAMMA_GENERAL = 1.0
+GAMMA_CONDITIONAL = 1.0
+
+# Dynamic Anchor
+ANCHOR_STRENGTH = 80.0
+
+# Platoon conditional
+PLATOON_STRENGTH = 80.0
+CF_KEY_COLS = ["pitcher_id", "batter_hand"]
+CF_PARENT_COLS = ["pitcher_id"]
+CF_COL = "cf_platoon_delta"
+
+# Layer 2는 "conditional residual" 전용이지만,
+# conditional만 주면 capacity가 너무 작을 수 있으므로
+# 1차 최소형은 General context + conditional feature를 같이 준다.
+# 순수 conditional-only arm은 후속 ablation으로 분리한다.
+LAYER2_USE_BASE_FEATURES = True
+
+FINAL_ITERATION_STRATEGY = "latest_fold"
+
+
+# =============================================================================
+# 공통 유틸
+# =============================================================================
+
+def brier_score(y_true, pred):
+    y = np.asarray(y_true, dtype=np.float64)
+    p = np.asarray(pred, dtype=np.float64)
+    return float(np.mean((p - y) ** 2))
+
+
+def baseline_brier(y_true):
+    y = np.asarray(y_true, dtype=np.float64)
+    r = float(np.mean(y))
+    return float(np.mean((y - r) ** 2))
+
+
+def bss_raw(y_true, pred):
+    bs = brier_score(y_true, pred)
+    base = baseline_brier(y_true)
+    if base <= 0.0:
+        return 0.0
+    return 1e5 * (base - bs) / base
+
+
+def ensure_columns(df, cols, name):
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        raise KeyError(f"{name}: missing columns: {missing}")
+
+
+def sanitize_categoricals(df, cat_cols):
+    out = df.copy()
+    for c in cat_cols:
+        if c in out.columns:
+            out[c] = out[c].astype("string").fillna("__MISSING__").astype(str)
+    return out
+
+
+def json_default(x):
+    if isinstance(x, (np.integer,)):
+        return int(x)
+    if isinstance(x, (np.floating,)):
+        return float(x)
+    if isinstance(x, (np.bool_,)):
+        return bool(x)
+    if isinstance(x, np.ndarray):
+        return x.tolist()
+    if isinstance(x, Path):
+        return str(x)
+    raise TypeError(type(x).__name__)
+
+
+def write_json(path, obj):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2, default=json_default)
+
+
+# =============================================================================
+# HB-EB — cb_reg_v003-compatible
+# =============================================================================
 
 HBEB_CONFIGS = [
     {
@@ -113,3287 +269,1281 @@ HBEB_CONFIGS = [
     },
 ]
 
-
-# =========================================================
-# CatBoost 설정
-# =========================================================
-
-# cb_v003와 capacity 관련 설정을 동일하게 유지하고
-# objective만 Logloss -> RMSE로 변경한다.
-MODEL_PARAMS = {
-    "iterations": 800,
-    "learning_rate": 0.07,
-    "depth": 8,
-    "loss_function": "RMSE",
-    "l2_leaf_reg": 10.0,
-    "random_strength": 1.0,
-    "random_seed": 42,
-    "max_ctr_complexity": 1,
-    "thread_count": -1,
-    "verbose": 100,
-    "allow_writing_files": False,
-}
-
-EARLY_STOPPING_ROUNDS = 80
-FINAL_ITERATION_STRATEGY = "latest_fold"
-
-# =========================================================
-# Experiment D: Walk-Forward F Correction
-# =========================================================
-#
-# 목적
-# ----
-# cb_reg_v008에서 2023에 성공한 corrected-total 정책이
-# 다음 시점인 2024에도 "미래 라벨을 보지 않고" 전이되는지 검증한다.
-#
-# Walk-forward anchor 정책
-# ------------------------
-# 2023 validation:
-#   - post-break F history가 아직 없음
-#   - anchor = 0.50 (사전 정의 neutral anchor)
-#
-# 2024 validation:
-#   - 2023은 이미 공식 training history
-#   - anchor = 2023 F 실제 성공률
-#   - 2024 label은 anchor 계산에 절대 사용하지 않음
-#
-# 2025 deployment 후보:
-#   - 2023, 2024는 모두 공식 train
-#   - anchor = 2023/2024 F season-equal mean
-#   - final delta는 final model의 2024 F train prediction으로 fit
-#   - artifact에 frozen 상수로 저장
-#
-# 각 corrected fold의 stage t:
-#   1. 같은 모델의 마지막 학습 시즌 F prediction을 reference로 사용
-#   2. reference prediction의 corrected mean이 past-only anchor가 되도록
-#      logit delta_t 계산
-#   3. validation R은 raw prediction 유지
-#   4. validation F에 delta_t row-wise 적용
-#   5. corrected R+F 전체 Brier로 best stage 선택
-#
-# 규칙 준수
-# ---------
-# - validation/test prediction 평균으로 delta를 fit하지 않는다.
-# - validation/test label로 anchor를 만들지 않는다.
-# - test 행 간 집계/평균/groupby/rolling/rank를 사용하지 않는다.
-# - 최종 inference는 current row의 game_type + raw prediction +
-#   artifact에 저장된 frozen delta만 사용한다.
-
-CORRECTED_TOTAL_ES_SEASONS = {
-    2023,
-    2024,
-}
-
-CORRECTED_TOTAL_F_GAME_TYPE = "F"
-CORRECTED_TOTAL_CORRECTION_METHOD = "logit_shift"
-
-NEUTRAL_F_ANCHOR = 0.50
-POST_BREAK_START_SEASON = 2023
-
-# 2025 deployment용 post-break anchor는 각 시즌을 동등하게 취급한다.
-FINAL_F_ANCHOR_POLICY = "season_equal_mean"
-
-CORRECTED_TOTAL_EVAL_PERIOD = 1
-CORRECTED_TOTAL_PATIENCE = EARLY_STOPPING_ROUNDS
-CORRECTION_EPS = 1e-6
+HBEB_MIN_GROUP_ROWS = 30
 
 
-# =========================================================
-# HB-EB
-# =========================================================
+def _safe_mom_beta(mu, var):
+    mu = float(np.clip(mu, 1e-6, 1.0 - 1e-6))
+    k = mu * (1.0 - mu)
 
-def compute_hbeb_priors(
-    df_train,
-    group_cols,
-    rate_col,
-):
-    """
-    train subset만으로 HB-EB prior를 추정한다.
+    if (not np.isfinite(var)) or var <= 0.0 or var >= k:
+        var = 0.5 * k
 
-    Validation/Test 정보를 prior 추정에 사용하지 않는다.
-    """
+    m = k / var - 1.0
+    if (not np.isfinite(m)) or m <= 0.0:
+        m = 1.0
 
-    g_mu = float(
-        df_train[rate_col].mean()
-    )
+    return mu * m, (1.0 - mu) * m
 
-    g_var = float(
-        df_train[rate_col].var()
-    )
 
-    max_bernoulli_var = (
-        g_mu * (1.0 - g_mu)
-    )
+def compute_hbeb_priors(df_train, group_cols, rate_col):
+    rate = pd.to_numeric(df_train[rate_col], errors="coerce")
+    valid = rate.notna()
 
-    if (
-        not np.isfinite(g_var)
-        or g_var <= 0.0
-        or g_var >= max_bernoulli_var
-    ):
-        g_var = (
-            max_bernoulli_var * 0.5
-        )
+    global_mu = float(rate[valid].mean())
+    global_var = float(rate[valid].var(ddof=1))
+    global_alpha, global_beta = _safe_mom_beta(global_mu, global_var)
 
-    g_m = (
-        max_bernoulli_var / g_var
-    ) - 1.0
-
-    g_alpha = g_mu * g_m
-    g_beta = (
-        1.0 - g_mu
-    ) * g_m
+    work = df_train.loc[valid, list(group_cols)].copy()
+    work[rate_col] = rate.loc[valid].to_numpy()
 
     stats = (
-        df_train
-        .groupby(
-            group_cols,
-            dropna=False,
-        )[rate_col]
-        .agg(
-            ["mean", "var", "count"]
-        )
+        work.groupby(group_cols, dropna=False, observed=True)[rate_col]
+        .agg(["mean", "var", "count"])
         .reset_index()
     )
 
-    group_max_var = (
-        stats["mean"]
-        * (
-            1.0 - stats["mean"]
+    alphas = []
+    betas = []
+    valid_prior = []
+
+    for row in stats.itertuples(index=False):
+        mu = float(getattr(row, "mean"))
+        var = float(getattr(row, "var"))
+        count = int(getattr(row, "count"))
+
+        ok = (
+            count >= HBEB_MIN_GROUP_ROWS
+            and np.isfinite(var)
+            and var > 0.0
+            and np.isfinite(mu)
+            and 0.0 < mu < 1.0
         )
+
+        if ok:
+            a, b = _safe_mom_beta(mu, var)
+        else:
+            a, b = global_alpha, global_beta
+
+        alphas.append(a)
+        betas.append(b)
+        valid_prior.append(bool(ok))
+
+    prior_df = stats[list(group_cols)].copy()
+    prior_df["alpha"] = alphas
+    prior_df["beta"] = betas
+    prior_df["valid_group_prior"] = valid_prior
+
+    return prior_df, {
+        "alpha": float(global_alpha),
+        "beta": float(global_beta),
+        "mean": float(global_alpha / (global_alpha + global_beta)),
+        "strength": float(global_alpha + global_beta),
+    }
+
+
+def apply_hbeb(df, group_cols, n_col, rate_col, prior_df, global_prior):
+    lookup = (
+        df[list(group_cols)]
+        .reset_index(drop=True)
+        .merge(prior_df, on=list(group_cols), how="left", sort=False)
     )
 
-    valid_mask = (
-        stats["var"].notna()
-        & np.isfinite(stats["var"])
-        & (stats["var"] > 0.0)
-        & (stats["var"] < group_max_var)
-        & (stats["count"] >= 30)
+    alpha = (
+        pd.to_numeric(lookup["alpha"], errors="coerce")
+        .fillna(global_prior["alpha"])
+        .to_numpy(np.float64)
+    )
+    beta = (
+        pd.to_numeric(lookup["beta"], errors="coerce")
+        .fillna(global_prior["beta"])
+        .to_numpy(np.float64)
     )
 
-    stats["alpha"] = g_alpha
-    stats["beta"] = g_beta
+    n = pd.to_numeric(df[n_col], errors="coerce").fillna(0.0).to_numpy(np.float64)
+    rate = pd.to_numeric(df[rate_col], errors="coerce").fillna(0.0).to_numpy(np.float64)
 
-    if valid_mask.any():
-        mu = stats.loc[
-            valid_mask,
-            "mean",
-        ]
+    n = np.clip(n, 0.0, None)
+    rate = np.clip(rate, 0.0, 1.0)
 
-        var = stats.loc[
-            valid_mask,
-            "var",
-        ]
+    success_count = n * rate
+    denom = n + alpha + beta
 
-        m = (
-            mu * (1.0 - mu) / var
-        ) - 1.0
-
-        stats.loc[
-            valid_mask,
-            "alpha",
-        ] = mu * m
-
-        stats.loc[
-            valid_mask,
-            "beta",
-        ] = (
-            1.0 - mu
-        ) * m
-
-    prior_df = stats[
-        group_cols
-        + [
-            "alpha",
-            "beta",
-        ]
-    ].copy()
-
-    return (
-        prior_df,
-        (
-            float(g_alpha),
-            float(g_beta),
-        ),
-    )
+    eb = (success_count + alpha) / denom
+    return pd.Series(eb, index=df.index, dtype=np.float64)
 
 
-def apply_hbeb(
-    df,
-    group_cols,
-    n_col,
-    rate_col,
-    prior_df,
-    global_prior,
-):
-    """
-    train-only prior를 lookup하여 각 행을 독립적으로 변환한다.
-    """
+def apply_hbeb_configs(df_train, df_apply, base_features, priors=None):
+    out = df_apply.copy()
+    features = list(base_features)
+    out_priors = {}
 
-    original_index = df.index
+    for cfg in HBEB_CONFIGS:
+        new_col = cfg["new_col"]
 
-    lookup_df = (
-        df[group_cols]
-        .merge(
+        if priors is None:
+            prior_df, global_prior = compute_hbeb_priors(
+                df_train, cfg["group_cols"], cfg["rate_col"]
+            )
+        else:
+            saved = priors[new_col]
+            prior_df = saved["prior_df"].copy()
+            global_prior = dict(saved["global_prior"])
+
+        out[new_col] = apply_hbeb(
+            out,
+            cfg["group_cols"],
+            cfg["n_col"],
+            cfg["rate_col"],
             prior_df,
-            on=group_cols,
+            global_prior,
+        )
+
+        if cfg["rate_col"] in features:
+            features.remove(cfg["rate_col"])
+        if new_col not in features:
+            features.append(new_col)
+
+        out_priors[new_col] = {
+            "config": dict(cfg),
+            "prior_df": prior_df,
+            "global_prior": global_prior,
+        }
+
+    return out, features, out_priors
+
+
+# =============================================================================
+# Layer 0 — Dynamic Anchor
+# =============================================================================
+
+def build_pitcher_history_bank(history_df):
+    ensure_columns(
+        history_df,
+        ["pitcher_id", TARGET],
+        "build_pitcher_history_bank",
+    )
+
+    if len(history_df) == 0:
+        return {
+            "pitcher_table": pd.DataFrame(
+                columns=["pitcher_id", "hist_n", "hist_success"]
+            ),
+            "global_rate": 0.5,
+            "history_seasons": [],
+        }
+
+    y = pd.to_numeric(history_df[TARGET], errors="raise").to_numpy(np.float64)
+
+    temp = history_df[["pitcher_id"]].copy()
+    temp["__y"] = y
+
+    table = (
+        temp.groupby("pitcher_id", dropna=False, observed=True)["__y"]
+        .agg(hist_n="size", hist_success="sum")
+        .reset_index()
+    )
+
+    return {
+        "pitcher_table": table,
+        "global_rate": float(np.mean(y)),
+        "history_seasons": sorted(
+            int(x) for x in pd.unique(history_df[SEASON_COL])
+        ),
+    }
+
+
+def reconstruct_current_season_pitcher_state(df_apply, bank):
+    """
+    현재 행의 asof_pitcher_n / asof_pitcher_success_rate 에서
+    frozen history cumulative count를 빼 current-season pitcher state를 복원한다.
+
+    current_n = max(asof_n - history_n, 0)
+    current_success = clip(asof_n*asof_rate - history_success, 0, current_n)
+
+    anchor =
+        (current_success + K * history_parent_rate)
+        / (current_n + K)
+
+    unseen / reconstruction anomaly는 history parent/global fallback으로 처리한다.
+    """
+    ensure_columns(
+        df_apply,
+        [
+            "pitcher_id",
+            "asof_pitcher_n",
+            "asof_pitcher_success_rate",
+        ],
+        "reconstruct_current_season_pitcher_state",
+    )
+
+    n_rows = len(df_apply)
+
+    lookup = (
+        df_apply[["pitcher_id"]]
+        .reset_index(drop=True)
+        .merge(
+            bank["pitcher_table"],
+            on="pitcher_id",
             how="left",
             sort=False,
         )
     )
 
-    alpha = (
-        lookup_df["alpha"]
-        .fillna(global_prior[0])
-        .to_numpy(dtype=np.float64)
-    )
-
-    beta = (
-        lookup_df["beta"]
-        .fillna(global_prior[1])
-        .to_numpy(dtype=np.float64)
-    )
-
-    n = (
-        df[n_col]
+    hist_n = (
+        pd.to_numeric(lookup["hist_n"], errors="coerce")
         .fillna(0.0)
-        .to_numpy(dtype=np.float64)
+        .to_numpy(np.float64)
     )
-
-    rate = (
-        df[rate_col]
+    hist_success = (
+        pd.to_numeric(lookup["hist_success"], errors="coerce")
         .fillna(0.0)
-        .to_numpy(dtype=np.float64)
+        .to_numpy(np.float64)
     )
 
-    success_count = n * rate
-
-    denominator = (
-        n + alpha + beta
+    asof_n = (
+        pd.to_numeric(df_apply["asof_pitcher_n"], errors="coerce")
+        .fillna(0.0)
+        .to_numpy(np.float64)
+    )
+    asof_rate = (
+        pd.to_numeric(df_apply["asof_pitcher_success_rate"], errors="coerce")
+        .fillna(bank["global_rate"])
+        .to_numpy(np.float64)
     )
 
-    eb_rate = (
-        success_count + alpha
-    ) / denominator
+    asof_n = np.clip(asof_n, 0.0, None)
+    asof_rate = np.clip(asof_rate, 0.0, 1.0)
 
-    return pd.Series(
-        eb_rate,
-        index=original_index,
-        dtype=np.float64,
+    asof_success = asof_n * asof_rate
+
+    current_n_raw = asof_n - hist_n
+    current_success_raw = asof_success - hist_success
+
+    invalid = (
+        (current_n_raw < -1e-8)
+        | (current_success_raw < -1e-8)
+        | (current_success_raw - current_n_raw > 1e-8)
     )
 
+    current_n = np.clip(current_n_raw, 0.0, None)
+    current_success = np.clip(current_success_raw, 0.0, current_n)
 
-def apply_hbeb_configs(
-    df_train,
-    df_apply,
-    base_features,
-):
-    """
-    df_train만으로 prior를 추정하고 df_apply에 HB-EB feature를 적용한다.
-
-    반환:
-    - 변환된 df_apply
-    - 최종 feature 목록
-    - 추론용 prior artifact
-    """
-
-    transformed = (
-        df_apply.copy()
+    hist_rate = np.divide(
+        hist_success,
+        np.maximum(hist_n, 1.0),
+        out=np.full(n_rows, bank["global_rate"], dtype=np.float64),
+        where=hist_n > 0.0,
     )
 
-    current_features = (
-        list(base_features)
+    anchor = (
+        current_success + ANCHOR_STRENGTH * hist_rate
+    ) / (
+        current_n + ANCHOR_STRENGTH
     )
 
-    priors = {}
-
-    for config in HBEB_CONFIGS:
-        prior_df, global_prior = (
-            compute_hbeb_priors(
-                df_train=df_train,
-                group_cols=config[
-                    "group_cols"
-                ],
-                rate_col=config[
-                    "rate_col"
-                ],
-            )
-        )
-
-        transformed[
-            config["new_col"]
-        ] = apply_hbeb(
-            df=transformed,
-            group_cols=config[
-                "group_cols"
-            ],
-            n_col=config["n_col"],
-            rate_col=config[
-                "rate_col"
-            ],
-            prior_df=prior_df,
-            global_prior=global_prior,
-        )
-
-        if (
-            config["rate_col"]
-            in current_features
-        ):
-            current_features.remove(
-                config["rate_col"]
-            )
-
-        if (
-            config["new_col"]
-            not in current_features
-        ):
-            current_features.append(
-                config["new_col"]
-            )
-
-        priors[
-            config["new_col"]
-        ] = {
-            "prior_df": prior_df,
-            "global_prior": (
-                global_prior
-            ),
-            "group_cols": list(
-                config["group_cols"]
-            ),
-            "n_col": config["n_col"],
-            "rate_col": (
-                config["rate_col"]
-            ),
-        }
-
-    return (
-        transformed,
-        current_features,
-        priors,
-    )
-
-
-# =========================================================
-# Feature 전처리
-# =========================================================
-
-
-def apply_saved_hbeb_priors(
-    df_apply,
-    base_features,
-    priors,
-):
-    """
-    이미 학습 단계에서 확정된 HB-EB prior artifact만 사용하여
-    df_apply에 동일한 HB-EB 변환을 적용한다.
-
-    중요:
-    - prior를 재추정하지 않는다.
-    - df_apply의 다른 행을 집계하지 않는다.
-    - 각 행은 저장된 prior lookup + 행 단위 산술만 사용한다.
-    """
-
-    transformed = df_apply.copy()
-    current_features = list(base_features)
-
-    for config in HBEB_CONFIGS:
-        new_col = config["new_col"]
-
-        if new_col not in priors:
-            raise KeyError(
-                f"저장된 HB-EB prior에 {new_col}이 없습니다."
-            )
-
-        prior_info = priors[new_col]
-
-        transformed[new_col] = apply_hbeb(
-            df=transformed,
-            group_cols=prior_info["group_cols"],
-            n_col=prior_info["n_col"],
-            rate_col=prior_info["rate_col"],
-            prior_df=prior_info["prior_df"],
-            global_prior=prior_info["global_prior"],
-        )
-
-        if config["rate_col"] in current_features:
-            current_features.remove(
-                config["rate_col"]
-            )
-
-        if new_col not in current_features:
-            current_features.append(
-                new_col
-            )
-
-    return (
-        transformed,
-        current_features,
-    )
-
-
-def prepare_features(
-    df,
-    cat_cols,
-):
-    """
-    cb_v003와 동일한 범주형 전처리.
-    """
-
-    df = df.copy()
-
-    for col in cat_cols:
-        df[col] = (
-            df[col]
-            .fillna("__MISSING__")
-            .astype(str)
-        )
-
-    return df
-
-
-# =========================================================
-# Metric
-# =========================================================
-
-def calculate_metrics(
-    y_true,
-    y_pred,
-):
-    y_true = np.asarray(
-        y_true,
-        dtype=np.float64,
-    )
-
-    y_pred = np.asarray(
-        y_pred,
-        dtype=np.float64,
-    )
-
-    positive_rate = float(
-        np.mean(y_true)
-    )
-
-    brier = float(
-        np.mean(
-            (
-                y_pred - y_true
-            ) ** 2
-        )
-    )
-
-    baseline_brier = float(
-        positive_rate
-        * (
-            1.0 - positive_rate
-        )
-    )
-
-    if baseline_brier <= 0.0:
-        bss_raw = 0.0
-        bss = 0.0
-    else:
-        bss_raw = float(
-            100000.0
-            * (
-                1.0
-                - brier
-                / baseline_brier
-            )
-        )
-
-        bss = max(
-            0.0,
-            bss_raw,
-        )
-
-    return {
-        "positive_rate": (
-            positive_rate
-        ),
-        "brier": brier,
-        "baseline_brier": (
-            baseline_brier
-        ),
-        "bss_raw": bss_raw,
-        "bss": bss,
+    return anchor.astype(np.float64), {
+        "n_rows": int(n_rows),
+        "anchor_mean": float(np.mean(anchor)) if n_rows else 0.0,
+        "anchor_std": float(np.std(anchor)) if n_rows else 0.0,
+        "current_n_mean": float(np.mean(current_n)) if n_rows else 0.0,
+        "current_n_median": float(np.median(current_n)) if n_rows else 0.0,
+        "invalid_reconstruction_rows": int(np.sum(invalid)),
+        "invalid_reconstruction_rate": float(np.mean(invalid)) if n_rows else 0.0,
+        "history_seasons": list(bank["history_seasons"]),
+        "history_global_rate": float(bank["global_rate"]),
     }
 
 
-def get_walkforward_f_anchor(
-    df_train,
-    validation_season,
-):
-    """
-    validation_season을 예측하는 시점에 이용 가능한 train history만으로
-    F anchor를 결정한다.
-
-    2023:
-        post-break history가 없으므로 neutral 0.50.
-
-    2024+:
-        POST_BREAK_START_SEASON 이상이면서 validation_season보다 과거인
-        labeled seasons의 F prevalence를 season-equal mean으로 사용한다.
-
-    반환값 계산에 validation season의 label은 포함되지 않는다.
-    """
-
-    validation_season = int(
-        validation_season
-    )
-
-    eligible = (
-        df_train.loc[
-            (
-                df_train["season"]
-                >= POST_BREAK_START_SEASON
-            )
-            & (
-                df_train["season"]
-                < validation_season
-            )
-            & (
-                df_train["game_type"]
-                .astype(str)
-                == CORRECTED_TOTAL_F_GAME_TYPE
-            ),
-            [
-                "season",
-                TARGET,
-            ],
-        ]
-    )
-
-    if eligible.empty:
-        return {
-            "anchor": float(
-                NEUTRAL_F_ANCHOR
-            ),
-            "policy": "neutral_no_post_break_history",
-            "source_seasons": [],
-            "season_rates": {},
-        }
-
-    season_rates = (
-        eligible
-        .groupby(
-            "season",
-            sort=True,
-        )[TARGET]
-        .mean()
-    )
-
-    anchor = float(
-        season_rates.mean()
-    )
-
-    return {
-        "anchor": anchor,
-        "policy": "past_post_break_season_equal_mean",
-        "source_seasons": [
-            int(x)
-            for x in season_rates.index
-        ],
-        "season_rates": {
-            str(
-                int(season)
-            ): float(rate)
-            for season, rate
-            in season_rates.items()
-        },
-    }
-
-
-def get_final_f_anchor(
-    train,
-):
-    """
-    2025 deployment 후보용 anchor.
-
-    공식 train에 존재하는 post-break seasons(2023, 2024, ...)의
-    F prevalence를 season-equal mean으로 계산한다.
-    test 정보는 전혀 사용하지 않는다.
-    """
-
-    eligible = (
-        train.loc[
-            (
-                train["season"]
-                >= POST_BREAK_START_SEASON
-            )
-            & (
-                train["game_type"]
-                .astype(str)
-                == CORRECTED_TOTAL_F_GAME_TYPE
-            ),
-            [
-                "season",
-                TARGET,
-            ],
-        ]
-    )
-
-    if eligible.empty:
-        return {
-            "anchor": float(
-                NEUTRAL_F_ANCHOR
-            ),
-            "policy": "neutral_no_post_break_history",
-            "source_seasons": [],
-            "season_rates": {},
-        }
-
-    season_rates = (
-        eligible
-        .groupby(
-            "season",
-            sort=True,
-        )[TARGET]
-        .mean()
-    )
-
-    return {
-        "anchor": float(
-            season_rates.mean()
-        ),
-        "policy": (
-            FINAL_F_ANCHOR_POLICY
-        ),
-        "source_seasons": [
-            int(x)
-            for x in season_rates.index
-        ],
-        "season_rates": {
-            str(
-                int(season)
-            ): float(rate)
-            for season, rate
-            in season_rates.items()
-        },
-    }
-
-
-def _safe_logit(p, eps=CORRECTION_EPS):
-    p = np.clip(
-        np.asarray(p, dtype=np.float64),
-        eps,
-        1.0 - eps,
-    )
-    return np.log(p / (1.0 - p))
-
-
-def _sigmoid(z):
-    z = np.asarray(z, dtype=np.float64)
-    out = np.empty_like(z, dtype=np.float64)
-
-    pos = z >= 0
-
-    out[pos] = (
-        1.0
-        / (
-            1.0
-            + np.exp(-z[pos])
-        )
-    )
-
-    exp_z = np.exp(z[~pos])
-
-    out[~pos] = (
-        exp_z
-        / (
-            1.0
-            + exp_z
-        )
-    )
-
-    return out
-
-
-def solve_logit_delta_to_target_mean(
-    reference_pred,
-    target_mean,
-    max_iter=100,
-):
-    """
-    Train-only reference prediction의 보정 후 평균이 target_mean이 되도록
-    logit intercept delta를 계산한다.
-
-    Validation/Test prediction vector를 reference_pred로 넣어서는 안 된다.
-    """
-
-    reference_pred = np.clip(
-        np.asarray(
-            reference_pred,
-            dtype=np.float64,
-        ),
-        CORRECTION_EPS,
-        1.0 - CORRECTION_EPS,
-    )
-
-    if reference_pred.size == 0:
-        raise ValueError(
-            "F correction reference prediction이 비어 있습니다."
-        )
-
-    if not (0.0 < target_mean < 1.0):
-        raise ValueError(
-            "target_mean은 (0,1) 범위여야 합니다."
-        )
-
-    z = _safe_logit(reference_pred)
-
-    lo = -10.0
-    hi = 10.0
-
-    for _ in range(max_iter):
-        mid = 0.5 * (lo + hi)
-
-        mean_corrected = float(
-            np.mean(
-                _sigmoid(z + mid)
-            )
-        )
-
-        if mean_corrected < target_mean:
-            lo = mid
-        else:
-            hi = mid
-
-    delta = 0.5 * (lo + hi)
-
-    return {
-        "delta": float(delta),
-        "target_mean": float(target_mean),
-        "reference_raw_mean": float(
-            np.mean(reference_pred)
-        ),
-        "reference_corrected_mean": float(
-            np.mean(
-                _sigmoid(z + delta)
-            )
-        ),
-    }
-
-
-def apply_f_logit_correction(
-    pred,
-    game_type,
-    delta,
-):
-    """
-    Row-wise deterministic correction.
-
-    R(non-F): raw prediction 유지
-    F      : sigmoid(logit(raw) + frozen delta)
-    """
-
-    pred = np.asarray(
-        pred,
-        dtype=np.float64,
-    ).copy()
-
-    game_type = np.asarray(
-        game_type,
-    ).astype(str)
-
-    if len(pred) != len(game_type):
-        raise ValueError(
-            "prediction과 game_type 길이가 일치하지 않습니다."
-        )
-
-    f_mask = (
-        game_type
-        == CORRECTED_TOTAL_F_GAME_TYPE
-    )
-
-    if np.any(f_mask):
-        pred[f_mask] = _sigmoid(
-            _safe_logit(
-                pred[f_mask]
-            )
-            + float(delta)
-        )
-
-    return np.clip(
-        pred,
-        0.0,
-        1.0,
-    )
-
-
-def select_corrected_total_stage(
-    estimator,
-    X_val,
-    y_val,
-    val_game_type,
-    X_reference_f,
-    anchor,
-    patience,
-):
-    """
-    Walk-forward corrected-total stage selector.
-
-    각 candidate tree stage마다:
-      1. 같은 stage의 train-reference F prediction으로 delta를 fit
-      2. validation F에 해당 delta를 적용
-      3. corrected R+F 전체 Brier 계산
-      4. patience 기준 best stage 선택
-
-    delta fitting에는 validation prediction 평균/target을 사용하지 않는다.
-    """
-
-    y_val_np = np.asarray(
-        y_val,
-        dtype=np.float64,
-    )
-
-    game_type_np = np.asarray(
-        val_game_type,
-    ).astype(str)
-
-    r_mask = (
-        game_type_np
-        != CORRECTED_TOTAL_F_GAME_TYPE
-    )
-    f_mask = (
-        game_type_np
-        == CORRECTED_TOTAL_F_GAME_TYPE
-    )
-
-    if not np.any(r_mask):
-        raise ValueError(
-            "Validation R row가 없습니다."
-        )
-
-    if not np.any(f_mask):
-        raise ValueError(
-            "Validation F row가 없습니다."
-        )
-
-    if len(X_reference_f) == 0:
-        raise ValueError(
-            "Train-reference F row가 없습니다."
-        )
-
-    val_generator = estimator.staged_predict(
-        X_val,
-        eval_period=CORRECTED_TOTAL_EVAL_PERIOD,
-    )
-
-    ref_generator = estimator.staged_predict(
-        X_reference_f,
-        eval_period=CORRECTED_TOTAL_EVAL_PERIOD,
-    )
-
-    trajectory = []
-    best = None
-    no_improve = 0
-
-    for stage_number, (
-        val_pred_stage,
-        ref_pred_stage,
-    ) in enumerate(
-        zip(
-            val_generator,
-            ref_generator,
-        ),
-        start=1,
-    ):
-        val_pred_stage = np.asarray(
-            val_pred_stage,
-            dtype=np.float64,
-        )
-
-        ref_pred_stage = np.asarray(
-            ref_pred_stage,
-            dtype=np.float64,
-        )
-
-        delta_info = (
-            solve_logit_delta_to_target_mean(
-                reference_pred=ref_pred_stage,
-                target_mean=anchor,
-            )
-        )
-
-        raw_clip = np.clip(
-            val_pred_stage,
-            0.0,
-            1.0,
-        )
-
-        corrected = (
-            apply_f_logit_correction(
-                pred=val_pred_stage,
-                game_type=game_type_np,
-                delta=delta_info["delta"],
-            )
-        )
-
-        raw_total_brier = float(
-            np.mean(
-                (y_val_np - raw_clip) ** 2
-            )
-        )
-
-        corrected_total_brier = float(
-            np.mean(
-                (y_val_np - corrected) ** 2
-            )
-        )
-
-        r_brier = float(
-            np.mean(
-                (
-                    y_val_np[r_mask]
-                    - raw_clip[r_mask]
-                ) ** 2
-            )
-        )
-
-        f_raw_brier = float(
-            np.mean(
-                (
-                    y_val_np[f_mask]
-                    - raw_clip[f_mask]
-                ) ** 2
-            )
-        )
-
-        f_corrected_brier = float(
-            np.mean(
-                (
-                    y_val_np[f_mask]
-                    - corrected[f_mask]
-                ) ** 2
-            )
-        )
-
-        row = {
-            "stage_number": int(stage_number),
-            "best_iteration": int(
-                stage_number - 1
-            ),
-            "raw_total_brier": raw_total_brier,
-            "corrected_total_brier": (
-                corrected_total_brier
-            ),
-            "r_brier": r_brier,
-            "f_raw_brier": f_raw_brier,
-            "f_corrected_brier": (
-                f_corrected_brier
-            ),
-            "delta_f": float(
-                delta_info["delta"]
-            ),
-            "reference_raw_mean": float(
-                delta_info[
-                    "reference_raw_mean"
-                ]
-            ),
-            "reference_corrected_mean": float(
-                delta_info[
-                    "reference_corrected_mean"
-                ]
-            ),
-            "anchor": float(anchor),
-            "validation_raw_mean": float(
-                np.mean(raw_clip)
-            ),
-            "validation_corrected_mean": float(
-                np.mean(corrected)
-            ),
-            "validation_r_raw_mean": float(
-                np.mean(
-                    raw_clip[r_mask]
-                )
-            ),
-            "validation_f_raw_mean": float(
-                np.mean(
-                    raw_clip[f_mask]
-                )
-            ),
-            "validation_f_corrected_mean": float(
-                np.mean(
-                    corrected[f_mask]
-                )
-            ),
-        }
-
-        trajectory.append(row)
-
-        improved = (
-            best is None
-            or corrected_total_brier
-            < (
-                best[
-                    "corrected_total_brier"
-                ]
-                - 1e-15
-            )
-        )
-
-        if improved:
-            best = dict(row)
-            no_improve = 0
-        else:
-            no_improve += (
-                CORRECTED_TOTAL_EVAL_PERIOD
-            )
-
-        if (
-            stage_number == 1
-            or stage_number % 25 == 0
-            or improved
-        ):
-            print(
-                "Corrected-Total stage "
-                f"{stage_number:>3d} | "
-                f"raw={raw_total_brier:.8f} | "
-                f"corr={corrected_total_brier:.8f} | "
-                f"R={r_brier:.8f} | "
-                f"Fraw={f_raw_brier:.8f} | "
-                f"Fcorr={f_corrected_brier:.8f} | "
-                f"delta={delta_info['delta']:+.6f}"
-            )
-
-        if no_improve >= patience:
-            print(
-                "Corrected-Total staged evaluation "
-                f"stopped after {patience} "
-                "trees without improvement."
-            )
-            break
-
-    if best is None:
-        raise RuntimeError(
-            "Corrected-total best stage 선택 실패."
-        )
-
-    return best, pd.DataFrame(trajectory)
-
-
-def calculate_domain_metrics(
-    game_type,
-    y_true,
-    y_pred,
-):
-    """
-    Validation 전체 예측을 R(non-F) / F로 분리해 진단한다.
-
-    - R은 game_type != "F"로 정의한다.
-    - 이 함수는 평가/진단용이며 학습 Feature를 생성하지 않는다.
-    """
-
-    game_type = pd.Series(
-        game_type
-    ).astype(str).to_numpy()
-
-    y_true = np.asarray(
-        y_true,
-        dtype=np.float64,
-    )
-
-    y_pred = np.asarray(
-        y_pred,
-        dtype=np.float64,
-    )
-
-    if not (
-        len(game_type)
-        == len(y_true)
-        == len(y_pred)
-    ):
-        raise ValueError(
-            "Domain metric 입력 길이가 일치하지 않습니다."
-        )
-
-    masks = {
-        "R": (
-            game_type
-            != CORRECTED_TOTAL_F_GAME_TYPE
-        ),
-        "F": (
-            game_type
-            == CORRECTED_TOTAL_F_GAME_TYPE
-        ),
-    }
-
-    result = {}
-
-    for domain, mask in masks.items():
-        n = int(
-            np.sum(mask)
-        )
-
-        if n == 0:
-            result[domain] = {
-                "n": 0,
-                "share": 0.0,
-                "metrics": None,
-                "prediction_mean": None,
-                "prediction_std": None,
+def build_strictly_past_dynamic_anchor(df):
+    pieces = []
+    diagnostics = []
+
+    seasons = sorted(int(x) for x in pd.unique(df[SEASON_COL]))
+    season_int = df[SEASON_COL].astype(int)
+
+    for season in seasons:
+        current = df.loc[season_int == season]
+        history = df.loc[season_int < season]
+
+        if len(history) == 0:
+            anchor = np.full(len(current), 0.5, dtype=np.float64)
+            diag = {
+                "n_rows": int(len(current)),
+                "anchor_mean": 0.5,
+                "anchor_std": 0.0,
+                "current_n_mean": 0.0,
+                "current_n_median": 0.0,
+                "invalid_reconstruction_rows": 0,
+                "invalid_reconstruction_rate": 0.0,
+                "history_seasons": [],
+                "history_global_rate": 0.5,
             }
+        else:
+            bank = build_pitcher_history_bank(history)
+            anchor, diag = reconstruct_current_season_pitcher_state(current, bank)
+
+        part = pd.Series(anchor, index=current.index, name="dynamic_anchor")
+        pieces.append(part)
+        diag["target_season"] = int(season)
+        diagnostics.append(diag)
+
+    result = pd.concat(pieces).sort_index().reindex(df.index)
+    return result, diagnostics
+
+
+def build_validation_dynamic_anchor(history_df, validation_df):
+    valid_seasons = sorted(
+        int(x) for x in pd.unique(validation_df[SEASON_COL])
+    )
+    if len(valid_seasons) != 1:
+        raise ValueError("validation_df must contain exactly one season")
+
+    validation_season = valid_seasons[0]
+
+    if bool((history_df[SEASON_COL].astype(int) >= validation_season).any()):
+        raise RuntimeError(
+            "Dynamic anchor leakage guard failed: validation/future season in history."
+        )
+
+    bank = build_pitcher_history_bank(history_df)
+    anchor, diag = reconstruct_current_season_pitcher_state(validation_df, bank)
+    diag["target_season"] = validation_season
+
+    return pd.Series(anchor, index=validation_df.index), diag, bank
+
+
+# =============================================================================
+# Layer 2 feature — Strictly-Past Platoon A0_ZERO
+# =============================================================================
+
+def build_platoon_bank(history_df):
+    ensure_columns(
+        history_df,
+        CF_KEY_COLS + [TARGET],
+        "build_platoon_bank",
+    )
+
+    if len(history_df) == 0:
+        return {
+            "cell_table": pd.DataFrame(
+                columns=CF_KEY_COLS + ["cell_n", "cell_success"]
+            ),
+            "parent_table": pd.DataFrame(
+                columns=CF_PARENT_COLS
+                + ["parent_n", "parent_success", "parent_rate"]
+            ),
+            "global_rate": 0.5,
+            "history_seasons": [],
+        }
+
+    y = pd.to_numeric(history_df[TARGET], errors="raise").to_numpy(np.float64)
+
+    tmp = history_df[CF_KEY_COLS].copy()
+    tmp[TARGET] = y
+
+    cell = (
+        tmp.groupby(CF_KEY_COLS, dropna=False, observed=True)[TARGET]
+        .agg(cell_n="size", cell_success="sum")
+        .reset_index()
+    )
+
+    parent = (
+        history_df[CF_PARENT_COLS]
+        .assign(__y=y)
+        .groupby(CF_PARENT_COLS, dropna=False, observed=True)["__y"]
+        .agg(parent_n="size", parent_success="sum")
+        .reset_index()
+    )
+    parent["parent_rate"] = (
+        parent["parent_success"] / parent["parent_n"].clip(lower=1)
+    )
+
+    return {
+        "cell_table": cell,
+        "parent_table": parent,
+        "global_rate": float(np.mean(y)),
+        "history_seasons": sorted(
+            int(x) for x in pd.unique(history_df[SEASON_COL])
+        ),
+    }
+
+
+def apply_platoon_bank(df_apply, bank):
+    n_rows = len(df_apply)
+
+    parent_lookup = (
+        df_apply[CF_PARENT_COLS]
+        .reset_index(drop=True)
+        .merge(
+            bank["parent_table"],
+            on=CF_PARENT_COLS,
+            how="left",
+            sort=False,
+        )
+    )
+    parent_rate = (
+        pd.to_numeric(parent_lookup["parent_rate"], errors="coerce")
+        .fillna(bank["global_rate"])
+        .to_numpy(np.float64)
+    )
+
+    cell_lookup = (
+        df_apply[CF_KEY_COLS]
+        .reset_index(drop=True)
+        .merge(
+            bank["cell_table"],
+            on=CF_KEY_COLS,
+            how="left",
+            sort=False,
+        )
+    )
+
+    cell_n = (
+        pd.to_numeric(cell_lookup["cell_n"], errors="coerce")
+        .fillna(0.0)
+        .to_numpy(np.float64)
+    )
+    cell_success = (
+        pd.to_numeric(cell_lookup["cell_success"], errors="coerce")
+        .fillna(0.0)
+        .to_numpy(np.float64)
+    )
+
+    cell_n = np.clip(cell_n, 0.0, None)
+    cell_success = np.clip(cell_success, 0.0, None)
+
+    posterior_rate = (
+        cell_success + PLATOON_STRENGTH * parent_rate
+    ) / (
+        cell_n + PLATOON_STRENGTH
+    )
+
+    delta = posterior_rate - parent_rate
+
+    out = df_apply.copy()
+    # v014 A0_ZERO: unseen cell == delta 0
+    out[CF_COL] = np.where(cell_n > 0.0, delta, 0.0).astype(np.float64)
+
+    return out, {
+        "n_rows": int(n_rows),
+        "unseen_cell_rows": int(np.sum(cell_n <= 0.0)),
+        "unseen_cell_rate": float(np.mean(cell_n <= 0.0)) if n_rows else 0.0,
+        "mean_abs_delta": float(np.mean(np.abs(out[CF_COL]))) if n_rows else 0.0,
+        "history_seasons": list(bank["history_seasons"]),
+    }
+
+
+def build_strictly_past_platoon_features(df):
+    pieces = []
+    diagnostics = []
+
+    seasons = sorted(int(x) for x in pd.unique(df[SEASON_COL]))
+    season_int = df[SEASON_COL].astype(int)
+
+    for season in seasons:
+        current = df.loc[season_int == season]
+        history = df.loc[season_int < season]
+
+        if len(history) == 0:
+            transformed = current.copy()
+            transformed[CF_COL] = 0.0
+            diag = {
+                "n_rows": int(len(current)),
+                "unseen_cell_rows": int(len(current)),
+                "unseen_cell_rate": 1.0 if len(current) else 0.0,
+                "mean_abs_delta": 0.0,
+                "history_seasons": [],
+            }
+        else:
+            bank = build_platoon_bank(history)
+            transformed, diag = apply_platoon_bank(current, bank)
+
+        diag["target_season"] = int(season)
+        diagnostics.append(diag)
+        pieces.append(transformed)
+
+    result = pd.concat(pieces).sort_index().reindex(df.index)
+    return result, diagnostics
+
+
+def build_validation_platoon_features(history_df, validation_df):
+    validation_season = int(
+        pd.unique(validation_df[SEASON_COL])[0]
+    )
+
+    if bool((history_df[SEASON_COL].astype(int) >= validation_season).any()):
+        raise RuntimeError(
+            "Conditional leakage guard failed: validation/future season in history."
+        )
+
+    bank = build_platoon_bank(history_df)
+    transformed, diag = apply_platoon_bank(validation_df, bank)
+    diag["target_season"] = validation_season
+
+    return transformed, diag, bank
+
+
+# =============================================================================
+# CatBoost helper
+# =============================================================================
+
+def fit_model(X_train, y_train, X_valid, y_valid, cat_cols, label):
+    print()
+    print(f"[{label}]")
+
+    model = CatBoostRegressor(**MODEL_PARAMS)
+    model.fit(
+        X_train,
+        y_train,
+        cat_features=cat_cols,
+        eval_set=(X_valid, y_valid),
+        early_stopping_rounds=EARLY_STOPPING_ROUNDS,
+        use_best_model=True,
+        verbose=100,
+    )
+
+    best_iteration = int(model.get_best_iteration())
+    return model, best_iteration, best_iteration + 1
+
+
+# =============================================================================
+# Layer 1 OOF builder
+# =============================================================================
+
+def build_general_oof_for_training(df_train_raw, hbeb_features, hbeb_priors):
+    """
+    Layer 2 training target용 General Residual OOF를 만든다.
+
+    train 구간 안에서 다시 expanding:
+      earliest season은 OOF 생성 불가 -> 0 residual prediction
+      이후 season s는 season < s 로 General Residual model 학습 후 s 예측
+
+    이 prediction만 Layer 2 target 생성에 사용한다.
+    """
+    season_int = df_train_raw[SEASON_COL].astype(int)
+    seasons = sorted(int(x) for x in pd.unique(df_train_raw[SEASON_COL]))
+
+    general_oof = pd.Series(0.0, index=df_train_raw.index, dtype=np.float64)
+    records = []
+
+    for season in seasons:
+        valid_mask = season_int == season
+        hist_mask = season_int < season
+
+        df_valid = df_train_raw.loc[valid_mask].copy()
+        df_hist = df_train_raw.loc[hist_mask].copy()
+
+        if len(df_hist) == 0:
+            records.append({
+                "target_season": int(season),
+                "status": "cold_start_zero",
+                "n_train": 0,
+                "n_valid": int(len(df_valid)),
+                "best_iteration": None,
+            })
             continue
 
-        metrics = calculate_metrics(
-            y_true[mask],
-            y_pred[mask],
+        # HBEB for inner OOF
+        hist_hbeb, hist_features, inner_priors = apply_hbeb_configs(
+            df_hist, df_hist, BASE_FEATURES, priors=None
+        )
+        valid_hbeb, valid_features, _ = apply_hbeb_configs(
+            df_hist, df_valid, BASE_FEATURES, priors=inner_priors
         )
 
-        result[domain] = {
-            "n": n,
-            "share": float(
-                n / len(y_true)
-            ),
-            "metrics": metrics,
-            "prediction_mean": float(
-                np.mean(
-                    y_pred[mask]
-                )
-            ),
-            "prediction_std": float(
-                np.std(
-                    y_pred[mask]
-                )
-            ),
-        }
+        if hist_features != valid_features:
+            raise RuntimeError("Inner OOF HBEB manifest mismatch.")
 
-    return result
+        # Dynamic anchor
+        hist_anchor, _ = build_strictly_past_dynamic_anchor(df_hist)
+        valid_anchor, _, _ = build_validation_dynamic_anchor(df_hist, df_valid)
 
+        hist_hbeb["dynamic_anchor"] = hist_anchor
+        valid_hbeb["dynamic_anchor"] = valid_anchor
 
-def calculate_range_diagnostics(
-    y_pred_raw,
-):
-    y_pred_raw = np.asarray(
-        y_pred_raw,
-        dtype=np.float64,
-    )
+        y_hist = hist_hbeb[TARGET].to_numpy(np.float64)
+        y_valid = valid_hbeb[TARGET].to_numpy(np.float64)
 
-    below_zero = (
-        y_pred_raw < 0.0
-    )
+        target_hist = y_hist - hist_hbeb["dynamic_anchor"].to_numpy(np.float64)
+        target_valid = y_valid - valid_hbeb["dynamic_anchor"].to_numpy(np.float64)
 
-    above_one = (
-        y_pred_raw > 1.0
-    )
+        hist_hbeb = sanitize_categoricals(hist_hbeb, CAT_COLS)
+        valid_hbeb = sanitize_categoricals(valid_hbeb, CAT_COLS)
 
-    outside = (
-        below_zero
-        | above_one
-    )
-
-    return {
-        "n_prediction_below_0": int(
-            np.sum(below_zero)
-        ),
-        "ratio_prediction_below_0": float(
-            np.mean(below_zero)
-        ),
-        "n_prediction_above_1": int(
-            np.sum(above_one)
-        ),
-        "ratio_prediction_above_1": float(
-            np.mean(above_one)
-        ),
-        "n_prediction_outside_0_1": int(
-            np.sum(outside)
-        ),
-        "ratio_prediction_outside_0_1": float(
-            np.mean(outside)
-        ),
-    }
-
-
-# =========================================================
-# Validation 저장
-# =========================================================
-
-def save_fold_validation(
-    fold,
-    train_seasons,
-    validation_season,
-    estimator,
-    row_ids,
-    game_type,
-    y_true,
-    y_pred_raw,
-    y_pred_clip,
-    raw_metrics,
-    clipped_metrics,
-    elapsed_seconds,
-    best_iteration,
-    final_iterations,
-    n_train,
-    early_stopping_policy,
-    n_early_stopping_eval,
-    y_pred_model_raw=None,
-    y_pred_model_clip=None,
-    correction_metadata=None,
-):
-    fold_dir = (
-        VALIDATION_DIR
-        / f"fold_{validation_season}"
-    )
-
-    fold_dir.mkdir(
-        parents=True,
-        exist_ok=False,
-    )
-
-    row_ids = np.asarray(
-        row_ids
-    )
-
-    game_type = np.asarray(
-        game_type
-    )
-
-    y_true = np.asarray(
-        y_true,
-        dtype=np.float64,
-    )
-
-    y_pred_raw = np.asarray(
-        y_pred_raw,
-        dtype=np.float64,
-    )
-
-    y_pred_clip = np.asarray(
-        y_pred_clip,
-        dtype=np.float64,
-    )
-
-    if y_pred_model_raw is None:
-        y_pred_model_raw = (
-            y_pred_raw.copy()
+        model, best_it, final_it = fit_model(
+            hist_hbeb[hist_features],
+            target_hist,
+            valid_hbeb[valid_features],
+            target_valid,
+            CAT_COLS,
+            f"Layer1 inner OOF -> {season}",
         )
+
+        pred = model.predict(valid_hbeb[valid_features])
+        general_oof.loc[df_valid.index] = pred
+
+        records.append({
+            "target_season": int(season),
+            "status": "trained",
+            "n_train": int(len(df_hist)),
+            "n_valid": int(len(df_valid)),
+            "best_iteration": int(best_it),
+            "final_iterations": int(final_it),
+            "pred_mean": float(np.mean(pred)),
+            "pred_std": float(np.std(pred)),
+        })
+
+    return general_oof, records
+
+
+# =============================================================================
+# Fold
+# =============================================================================
+
+def train_fold(df_all, train_seasons, validation_season):
+    start = time.time()
+
+    season_int = df_all[SEASON_COL].astype(int)
+    df_train_raw = df_all.loc[season_int.isin(train_seasons)].copy()
+    df_valid_raw = df_all.loc[season_int == validation_season].copy()
+
+    print()
+    print("=" * 96)
+    print(
+        f"Fold: {min(train_seasons)}~{max(train_seasons)} -> {validation_season}"
+    )
+    print("=" * 96)
+
+    # -----------------------------------------------------------------
+    # HB-EB
+    # -----------------------------------------------------------------
+    df_train_hbeb, hbeb_features, hbeb_priors = apply_hbeb_configs(
+        df_train_raw,
+        df_train_raw,
+        BASE_FEATURES,
+        priors=None,
+    )
+    df_valid_hbeb, valid_hbeb_features, _ = apply_hbeb_configs(
+        df_train_raw,
+        df_valid_raw,
+        BASE_FEATURES,
+        priors=hbeb_priors,
+    )
+
+    if hbeb_features != valid_hbeb_features:
+        raise RuntimeError("HBEB feature mismatch.")
+
+    # -----------------------------------------------------------------
+    # Layer 0: Dynamic Anchor
+    # -----------------------------------------------------------------
+    train_anchor, train_anchor_diag = build_strictly_past_dynamic_anchor(
+        df_train_raw
+    )
+    valid_anchor, valid_anchor_diag, anchor_bank = build_validation_dynamic_anchor(
+        df_train_raw,
+        df_valid_raw,
+    )
+
+    df_train_hbeb["dynamic_anchor"] = train_anchor
+    df_valid_hbeb["dynamic_anchor"] = valid_anchor
+
+    y_train = df_train_hbeb[TARGET].to_numpy(np.float64)
+    y_valid = df_valid_hbeb[TARGET].to_numpy(np.float64)
+
+    anchor_train = train_anchor.to_numpy(np.float64)
+    anchor_valid = valid_anchor.to_numpy(np.float64)
+
+    target_general_train = y_train - anchor_train
+    target_general_valid = y_valid - anchor_valid
+
+    # -----------------------------------------------------------------
+    # Layer 1: General Residual
+    # -----------------------------------------------------------------
+    train_l1 = sanitize_categoricals(df_train_hbeb, CAT_COLS)
+    valid_l1 = sanitize_categoricals(df_valid_hbeb, CAT_COLS)
+
+    general_model, general_best_it, general_final_it = fit_model(
+        train_l1[hbeb_features],
+        target_general_train,
+        valid_l1[hbeb_features],
+        target_general_valid,
+        CAT_COLS,
+        "Layer1 General Residual",
+    )
+
+    general_valid_pred = general_model.predict(valid_l1[hbeb_features])
+
+    pred_anchor = np.clip(anchor_valid, 0.0, 1.0)
+    pred_general_raw = anchor_valid + GAMMA_GENERAL * general_valid_pred
+    pred_general = np.clip(pred_general_raw, 0.0, 1.0)
+
+    anchor_brier = brier_score(y_valid, pred_anchor)
+    anchor_bss = bss_raw(y_valid, pred_anchor)
+
+    general_brier = brier_score(y_valid, pred_general)
+    general_bss = bss_raw(y_valid, pred_general)
+
+    # -----------------------------------------------------------------
+    # Layer 1 OOF predictions for Layer 2 training target
+    # -----------------------------------------------------------------
+    print()
+    print("[Layer1 OOF generation for Layer2 target]")
+    general_train_oof, inner_oof_meta = build_general_oof_for_training(
+        df_train_raw,
+        hbeb_features,
+        hbeb_priors,
+    )
+
+    # -----------------------------------------------------------------
+    # Layer 2 conditional feature
+    # -----------------------------------------------------------------
+    train_cf, train_cf_diag = build_strictly_past_platoon_features(
+        df_train_hbeb
+    )
+    valid_cf, valid_cf_diag, conditional_bank = (
+        build_validation_platoon_features(
+            df_train_raw,
+            df_valid_hbeb,
+        )
+    )
+
+    # Layer 2 target:
+    # y - anchor - Layer1 OOF prediction
+    target_conditional_train = (
+        y_train
+        - anchor_train
+        - GAMMA_GENERAL * general_train_oof.to_numpy(np.float64)
+    )
+
+    # validation target은 현재 fold의 honest Layer1 valid prediction을 사용
+    target_conditional_valid = (
+        y_valid
+        - anchor_valid
+        - GAMMA_GENERAL * general_valid_pred
+    )
+
+    if LAYER2_USE_BASE_FEATURES:
+        layer2_features = list(hbeb_features) + [CF_COL]
+        layer2_cat_cols = list(CAT_COLS)
     else:
-        y_pred_model_raw = np.asarray(
-            y_pred_model_raw,
-            dtype=np.float64,
-        )
+        layer2_features = [CF_COL]
+        layer2_cat_cols = []
 
-    if y_pred_model_clip is None:
-        y_pred_model_clip = np.clip(
-            y_pred_model_raw,
-            0.0,
-            1.0,
-        )
-    else:
-        y_pred_model_clip = np.asarray(
-            y_pred_model_clip,
-            dtype=np.float64,
-        )
+    train_cf = sanitize_categoricals(train_cf, CAT_COLS)
+    valid_cf = sanitize_categoricals(valid_cf, CAT_COLS)
 
-    if correction_metadata is None:
-        correction_metadata = {
-            "enabled": False,
-        }
+    conditional_model, cond_best_it, cond_final_it = fit_model(
+        train_cf[layer2_features],
+        target_conditional_train,
+        valid_cf[layer2_features],
+        target_conditional_valid,
+        layer2_cat_cols,
+        "Layer2 Conditional Residual",
+    )
 
-    if not (
-        len(row_ids)
-        == len(game_type)
-        == len(y_true)
-        == len(y_pred_raw)
-        == len(y_pred_clip)
-        == len(y_pred_model_raw)
-        == len(y_pred_model_clip)
-    ):
-        raise ValueError(
-            "Validation 저장 배열 길이가 일치하지 않습니다."
-        )
+    conditional_valid_pred = conditional_model.predict(
+        valid_cf[layer2_features]
+    )
+
+    pred_final_raw = (
+        anchor_valid
+        + GAMMA_GENERAL * general_valid_pred
+        + GAMMA_CONDITIONAL * conditional_valid_pred
+    )
+    pred_final = np.clip(pred_final_raw, 0.0, 1.0)
+
+    final_brier = brier_score(y_valid, pred_final)
+    final_bss = bss_raw(y_valid, pred_final)
+
+    layer2_delta_brier = general_brier - final_brier
+    layer2_delta_bss = final_bss - general_bss
+
+    print()
+    print("[Fold comparison]")
+    print(
+        f"L0 Anchor-only       Brier={anchor_brier:.8f} "
+        f"BSS={anchor_bss:.2f}"
+    )
+    print(
+        f"L1 General Residual  Brier={general_brier:.8f} "
+        f"BSS={general_bss:.2f} iter={general_final_it}"
+    )
+    print(
+        f"L2 + Conditional     Brier={final_brier:.8f} "
+        f"BSS={final_bss:.2f} iter={cond_final_it} "
+        f"ΔvsL1={layer2_delta_bss:+.2f}"
+    )
+
+    # -----------------------------------------------------------------
+    # 저장
+    # -----------------------------------------------------------------
+    fold_dir = VALIDATION_DIR / f"fold_{validation_season}"
+    fold_dir.mkdir(parents=True, exist_ok=True)
 
     pred_df = pd.DataFrame({
-        "row_id": row_ids,
-        "game_type": game_type,
-        "target": y_true,
-        "prediction_model_raw": (
-            y_pred_model_raw
+        ID: (
+            df_valid_raw[ID].to_numpy()
+            if ID in df_valid_raw.columns
+            else df_valid_raw.index.to_numpy()
         ),
-        "prediction_model_clip": (
-            y_pred_model_clip
-        ),
-        "prediction_raw": (
-            y_pred_raw
-        ),
-        "prediction_clip": (
-            y_pred_clip
-        ),
-        # 기존 OOF/ensemble 분석 코드와 호환
-        "prediction": (
-            y_pred_clip
-        ),
-        "validation_season": (
-            validation_season
-        ),
+        "season": int(validation_season),
+        "target": y_valid,
+        "anchor": anchor_valid,
+        "general_residual_pred": general_valid_pred,
+        "conditional_residual_pred": conditional_valid_pred,
+        "pred_anchor": pred_anchor,
+        "pred_general": pred_general,
+        "pred_final": pred_final,
+        CF_COL: valid_cf[CF_COL].to_numpy(np.float64),
     })
-
     pred_df.to_csv(
         fold_dir / "pred.csv",
         index=False,
         encoding="utf-8-sig",
     )
 
-    np.savez_compressed(
-        fold_dir
-        / "validation.npz",
-        row_id=row_ids,
-        target=y_true,
-        prediction_model_raw=(
-            y_pred_model_raw
-        ),
-        prediction_model_clip=(
-            y_pred_model_clip
-        ),
-        prediction_raw=(
-            y_pred_raw
-        ),
-        prediction_clip=(
-            y_pred_clip
-        ),
-        prediction=(
-            y_pred_clip
-        ),
-        validation_season=(
-            np.full(
-                len(y_true),
-                validation_season,
-            )
-        ),
-    )
-
-    range_diag = (
-        calculate_range_diagnostics(
-            y_pred_raw
-        )
-    )
-
-    domain_metrics = (
-        calculate_domain_metrics(
-            game_type=game_type,
-            y_true=y_true,
-            y_pred=y_pred_clip,
-        )
-    )
-
     metadata = {
-        "experiment_name": (
-            EXPERIMENT_NAME
-        ),
-        "fold": int(fold),
-        "train_seasons": [
-            int(s)
-            for s in train_seasons
-        ],
-        "validation_season": int(
-            validation_season
-        ),
-        "n_train": int(n_train),
-        "n_validation": int(
-            len(y_true)
-        ),
-        "early_stopping_policy": (
-            early_stopping_policy
-        ),
-        "n_early_stopping_eval": int(
-            n_early_stopping_eval
-        ),
-        "early_stopping_eval_share": float(
-            n_early_stopping_eval
-            / len(y_true)
-        ),
-        "correction_metadata": (
-            correction_metadata
-        ),
-        "domain_metrics": (
-            domain_metrics
-        ),
-        "model_type": (
-            type(estimator).__name__
-        ),
-        "model_params": (
-            MODEL_PARAMS
-        ),
-        "positive_rate": float(
-            clipped_metrics[
-                "positive_rate"
-            ]
-        ),
-
-        "raw_brier": float(
-            raw_metrics["brier"]
-        ),
-        "raw_bss_raw": float(
-            raw_metrics["bss_raw"]
-        ),
-        "raw_bss": float(
-            raw_metrics["bss"]
-        ),
-
-        "clipped_brier": float(
-            clipped_metrics[
-                "brier"
-            ]
-        ),
-        "clipped_bss_raw": float(
-            clipped_metrics[
-                "bss_raw"
-            ]
-        ),
-        "clipped_bss": float(
-            clipped_metrics[
-                "bss"
-            ]
-        ),
-
-        # 기존 분석 코드 호환용
-        "brier": float(
-            clipped_metrics[
-                "brier"
-            ]
-        ),
-        "baseline_brier": float(
-            clipped_metrics[
-                "baseline_brier"
-            ]
-        ),
-        "bss_raw": float(
-            clipped_metrics[
-                "bss_raw"
-            ]
-        ),
-        "bss": float(
-            clipped_metrics[
-                "bss"
-            ]
-        ),
-
-        "prediction_raw_mean": float(
-            np.mean(y_pred_raw)
-        ),
-        "prediction_raw_std": float(
-            np.std(y_pred_raw)
-        ),
-        "prediction_raw_min": float(
-            np.min(y_pred_raw)
-        ),
-        "prediction_raw_max": float(
-            np.max(y_pred_raw)
-        ),
-
-        "prediction_clip_mean": float(
-            np.mean(y_pred_clip)
-        ),
-        "prediction_clip_std": float(
-            np.std(y_pred_clip)
-        ),
-        "prediction_clip_min": float(
-            np.min(y_pred_clip)
-        ),
-        "prediction_clip_max": float(
-            np.max(y_pred_clip)
-        ),
-
-        "elapsed_seconds": float(
-            elapsed_seconds
-        ),
-        "best_iteration": int(
-            best_iteration
-        ),
-        "final_iterations": int(
-            final_iterations
-        ),
-        **range_diag,
+        "experiment_name": EXPERIMENT_NAME,
+        "train_seasons": [int(x) for x in train_seasons],
+        "validation_season": int(validation_season),
+        "n_train": int(len(df_train_raw)),
+        "n_validation": int(len(df_valid_raw)),
+        "gamma_general": GAMMA_GENERAL,
+        "gamma_conditional": GAMMA_CONDITIONAL,
+        "layer0": {
+            "type": "row_local_dynamic_anchor",
+            "strength": ANCHOR_STRENGTH,
+            "train_diagnostics": train_anchor_diag,
+            "valid_diagnostics": valid_anchor_diag,
+            "brier": anchor_brier,
+            "bss": anchor_bss,
+        },
+        "layer1": {
+            "type": "general_residual_catboost",
+            "features": hbeb_features,
+            "best_iteration": general_best_it,
+            "final_iterations": general_final_it,
+            "brier": general_brier,
+            "bss": general_bss,
+            "train_residual_target_mean": float(
+                np.mean(target_general_train)
+            ),
+            "valid_residual_target_mean": float(
+                np.mean(target_general_valid)
+            ),
+            "inner_oof": inner_oof_meta,
+        },
+        "layer2": {
+            "type": "conditional_residual_catboost",
+            "features": layer2_features,
+            "conditional_feature": CF_COL,
+            "best_iteration": cond_best_it,
+            "final_iterations": cond_final_it,
+            "train_target_mean": float(
+                np.mean(target_conditional_train)
+            ),
+            "valid_target_mean": float(
+                np.mean(target_conditional_valid)
+            ),
+            "train_conditional_diagnostics": train_cf_diag,
+            "valid_conditional_diagnostics": valid_cf_diag,
+            "brier": final_brier,
+            "bss": final_bss,
+            "delta_brier_vs_layer1": layer2_delta_brier,
+            "delta_bss_vs_layer1": layer2_delta_bss,
+        },
+        "prediction": {
+            "outside_0_1_raw_rate": float(
+                np.mean(
+                    (pred_final_raw < 0.0)
+                    | (pred_final_raw > 1.0)
+                )
+            ),
+            "mean": float(np.mean(pred_final)),
+            "std": float(np.std(pred_final)),
+        },
+        "elapsed_seconds": float(time.time() - start),
     }
 
-    with open(
-        fold_dir / "metadata.json",
-        "w",
-        encoding="utf-8",
-    ) as f:
-        json.dump(
-            metadata,
-            f,
-            indent=2,
-            ensure_ascii=False,
+    write_json(fold_dir / "metadata.json", metadata)
+
+    return {
+        "metadata": metadata,
+        "pred_df": pred_df,
+        "general_model": general_model,
+        "conditional_model": conditional_model,
+        "hbeb_priors": hbeb_priors,
+        "anchor_bank": anchor_bank,
+        "conditional_bank": conditional_bank,
+        "hbeb_features": hbeb_features,
+        "layer2_features": layer2_features,
+    }
+
+
+# =============================================================================
+# Main
+# =============================================================================
+
+def main():
+    global_start = time.time()
+
+    if VALIDATION_DIR.exists():
+        raise FileExistsError(
+            f"{VALIDATION_DIR} exists. Change EXPERIMENT_NAME."
+        )
+    if MODEL_DIR.exists():
+        raise FileExistsError(
+            f"{MODEL_DIR} exists. Change EXPERIMENT_NAME."
         )
 
-    return (
-        pred_df,
-        metadata,
+    VALIDATION_DIR.mkdir(parents=True, exist_ok=False)
+    MODEL_DIR.mkdir(parents=True, exist_ok=False)
+
+    df = pd.read_csv(TRAIN_PATH, encoding="utf-8-sig")
+    ensure_columns(
+        df,
+        BASE_FEATURES + [TARGET],
+        "train.csv",
     )
 
+    print("=" * 96)
+    print(f"Experiment           : {EXPERIMENT_NAME}")
+    print("Architecture         : V18-lite")
+    print("Layer 0              : Row-local Dynamic Anchor")
+    print("Layer 1              : General Residual CatBoost")
+    print("Layer 2              : Conditional Residual CatBoost")
+    print(f"Conditional feature  : {CF_COL} (A0_ZERO)")
+    print(f"Gamma general        : {GAMMA_GENERAL}")
+    print(f"Gamma conditional    : {GAMMA_CONDITIONAL}")
+    print(f"Train shape          : {df.shape}")
+    print("=" * 96)
 
-def save_validation_summary(
-    fold_results,
-    oof,
-):
+    fold_results = []
+    oof_parts = []
+
+    latest = None
+
+    for train_seasons, validation_season in EXPANDING_FOLDS:
+        result = train_fold(
+            df,
+            train_seasons,
+            validation_season,
+        )
+        fold_results.append(result["metadata"])
+        oof_parts.append(result["pred_df"])
+        latest = result
+
+    # -----------------------------------------------------------------
+    # OOF
+    # -----------------------------------------------------------------
+    oof = pd.concat(
+        oof_parts,
+        axis=0,
+        ignore_index=True,
+    )
     oof.to_csv(
-        VALIDATION_DIR
-        / "oof_pred.csv",
+        VALIDATION_DIR / "oof_pred.csv",
         index=False,
         encoding="utf-8-sig",
     )
 
-    np.savez_compressed(
-        VALIDATION_DIR
-        / "oof_validation.npz",
-        row_id=oof[
-            "row_id"
-        ].to_numpy(),
-        target=oof[
-            "target"
-        ].to_numpy(),
-        prediction_raw=oof[
-            "prediction_raw"
-        ].to_numpy(),
-        prediction_clip=oof[
-            "prediction_clip"
-        ].to_numpy(),
-        prediction=oof[
-            "prediction"
-        ].to_numpy(),
-        validation_season=oof[
-            "validation_season"
-        ].to_numpy(),
+    comparison_rows = []
+
+    for meta in fold_results:
+        season = meta["validation_season"]
+
+        comparison_rows.extend([
+            {
+                "season": season,
+                "layer": "L0_ANCHOR",
+                "brier": meta["layer0"]["brier"],
+                "bss": meta["layer0"]["bss"],
+                "delta_bss_vs_previous": 0.0,
+            },
+            {
+                "season": season,
+                "layer": "L1_GENERAL",
+                "brier": meta["layer1"]["brier"],
+                "bss": meta["layer1"]["bss"],
+                "delta_bss_vs_previous": (
+                    meta["layer1"]["bss"]
+                    - meta["layer0"]["bss"]
+                ),
+            },
+            {
+                "season": season,
+                "layer": "L2_CONDITIONAL",
+                "brier": meta["layer2"]["brier"],
+                "bss": meta["layer2"]["bss"],
+                "delta_bss_vs_previous": (
+                    meta["layer2"]["delta_bss_vs_layer1"]
+                ),
+            },
+        ])
+
+    comparison_df = pd.DataFrame(comparison_rows)
+    comparison_df.to_csv(
+        VALIDATION_DIR / "layer_comparison.csv",
+        index=False,
     )
 
-    raw_oof_metrics = (
-        calculate_metrics(
-            oof["target"],
-            oof[
-                "prediction_raw"
-            ],
-        )
-    )
-
-    clipped_oof_metrics = (
-        calculate_metrics(
-            oof["target"],
-            oof[
-                "prediction_clip"
-            ],
-        )
-    )
-
-    fold_briers = np.asarray(
-        [
-            x["brier"]
-            for x in fold_results
-        ],
-        dtype=np.float64,
-    )
-
-    fold_bss = np.asarray(
-        [
-            x["bss"]
-            for x in fold_results
-        ],
-        dtype=np.float64,
-    )
-
-    fold_sizes = np.asarray(
-        [
-            x["n_validation"]
-            for x in fold_results
-        ],
-        dtype=np.float64,
-    )
-
-    recent_briers = [
-        x["brier"]
-        for x in fold_results
-        if x["validation_season"]
-        in (2023, 2024)
-    ]
-
-    range_diag = (
-        calculate_range_diagnostics(
-            oof[
-                "prediction_raw"
-            ]
-        )
-    )
-
-    summary = {
-        "n_oof": int(len(oof)),
-        "mean_fold_brier": float(
-            np.mean(fold_briers)
-        ),
-        "std_fold_brier": float(
-            np.std(fold_briers)
-        ),
-        "weighted_fold_brier": float(
-            np.average(
-                fold_briers,
-                weights=fold_sizes,
-            )
-        ),
-        "best_fold_brier": float(
-            np.min(fold_briers)
-        ),
-        "worst_fold_brier": float(
-            np.max(fold_briers)
-        ),
-        "fold_brier_range": float(
-            np.max(fold_briers)
-            - np.min(fold_briers)
-        ),
-        "recent_2023_2024_mean_brier": float(
-            np.mean(
-                recent_briers
-            )
-        ),
-        "mean_fold_bss": float(
-            np.mean(fold_bss)
-        ),
-        "weighted_fold_bss": float(
-            np.average(
-                fold_bss,
-                weights=fold_sizes,
-            )
-        ),
-
-        "pooled_oof_raw_brier": float(
-            raw_oof_metrics[
-                "brier"
-            ]
-        ),
-        "pooled_oof_raw_bss_raw": float(
-            raw_oof_metrics[
-                "bss_raw"
-            ]
-        ),
-        "pooled_oof_raw_bss": float(
-            raw_oof_metrics[
-                "bss"
-            ]
-        ),
-
-        "pooled_oof_clipped_brier": float(
-            clipped_oof_metrics[
-                "brier"
-            ]
-        ),
-        "pooled_oof_clipped_baseline_brier": float(
-            clipped_oof_metrics[
-                "baseline_brier"
-            ]
-        ),
-        "pooled_oof_clipped_bss_raw": float(
-            clipped_oof_metrics[
-                "bss_raw"
-            ]
-        ),
-        "pooled_oof_clipped_bss": float(
-            clipped_oof_metrics[
-                "bss"
-            ]
-        ),
-
-        # 기존 분석 코드 호환
-        "pooled_oof_brier": float(
-            clipped_oof_metrics[
-                "brier"
-            ]
-        ),
-        "pooled_oof_baseline_brier": float(
-            clipped_oof_metrics[
-                "baseline_brier"
-            ]
-        ),
-        "pooled_oof_bss_raw": float(
-            clipped_oof_metrics[
-                "bss_raw"
-            ]
-        ),
-        "pooled_oof_bss": float(
-            clipped_oof_metrics[
-                "bss"
-            ]
-        ),
-        **range_diag,
-    }
-
-    metadata = {
-        "experiment_name": (
-            EXPERIMENT_NAME
-        ),
-        "validation_method": (
-            "expanding_window"
-        ),
-        "model_type": (
-            "CatBoostRegressor"
-        ),
-        "objective": "RMSE",
-        "prediction_for_evaluation": (
-            "clipped"
-        ),
-        "model_params": (
-            MODEL_PARAMS
-        ),
-        "early_stopping_rounds": (
-            EARLY_STOPPING_ROUNDS
-        ),
-        "early_stopping_policy": {
-            "default": "full_validation",
-            "special_validation_seasons": sorted(
-                [
-                    int(x)
-                    for x in CORRECTED_TOTAL_ES_SEASONS
-                ]
-            ),
-            "special_policy": "walkforward_corrected_total_R_raw_F_train_only_shift",
-            "corrected_game_type": (
-                CORRECTED_TOTAL_F_GAME_TYPE
-            ),
-            "training_rows": "R_and_F_all",
-            "fold_evaluation_rows": "R_and_F_all",
-        },
-        "final_iteration_strategy": (
-            FINAL_ITERATION_STRATEGY
-        ),
-        "hbeb_configs": (
-            HBEB_CONFIGS
-        ),
-        "folds": fold_results,
-        "summary": summary,
-    }
-
-    with open(
-        VALIDATION_DIR
-        / "metadata.json",
-        "w",
-        encoding="utf-8",
-    ) as f:
-        json.dump(
-            metadata,
-            f,
-            indent=2,
-            ensure_ascii=False,
-        )
-
-    return summary
-
-
-# =========================================================
-# Expanding Window Validation
-# =========================================================
-
-def run_expanding_validation(
-    train,
-    base_features,
-    cat_cols,
-):
-    fold_results = []
-    oof_frames = []
-    final_features = None
-
-    for fold_config in (
-        EXPANDING_FOLDS
-    ):
-        fold = (
-            fold_config["fold"]
-        )
-
-        train_seasons = (
-            fold_config[
-                "train_seasons"
-            ]
-        )
-
-        validation_season = (
-            fold_config[
-                "validation_season"
-            ]
-        )
-
-        train_mask = (
-            train["season"].isin(
-                train_seasons
-            )
-        )
-
-        val_mask = (
-            train["season"]
-            == validation_season
-        )
-
-        df_train = (
-            train.loc[
-                train_mask
-            ]
-            .copy()
-        )
-
-        df_val = (
-            train.loc[
-                val_mask
-            ]
-            .copy()
-        )
-
-        # ---------------------------------------------
-        # Fold train-only HB-EB prior
-        # ---------------------------------------------
-
-        current_features = (
-            list(base_features)
-        )
-
-        for config in (
-            HBEB_CONFIGS
-        ):
-            (
-                prior_df,
-                global_prior,
-            ) = compute_hbeb_priors(
-                df_train=df_train,
-                group_cols=config[
-                    "group_cols"
-                ],
-                rate_col=config[
-                    "rate_col"
-                ],
-            )
-
-            df_train[
-                config["new_col"]
-            ] = apply_hbeb(
-                df=df_train,
-                group_cols=config[
-                    "group_cols"
-                ],
-                n_col=config["n_col"],
-                rate_col=config[
-                    "rate_col"
-                ],
-                prior_df=prior_df,
-                global_prior=(
-                    global_prior
-                ),
-            )
-
-            df_val[
-                config["new_col"]
-            ] = apply_hbeb(
-                df=df_val,
-                group_cols=config[
-                    "group_cols"
-                ],
-                n_col=config["n_col"],
-                rate_col=config[
-                    "rate_col"
-                ],
-                prior_df=prior_df,
-                global_prior=(
-                    global_prior
-                ),
-            )
-
-            if (
-                config["rate_col"]
-                in current_features
-            ):
-                current_features.remove(
-                    config["rate_col"]
-                )
-
-            if (
-                config["new_col"]
-                not in current_features
-            ):
-                current_features.append(
-                    config["new_col"]
-                )
-
-        final_features = (
-            current_features
-        )
-
-        X_train = (
-            prepare_features(
-                df_train[
-                    current_features
-                ],
-                cat_cols,
-            )
-        )
-
-        y_train = (
-            df_train[TARGET]
-            .astype(np.float64)
-        )
-
-        X_val = (
-            prepare_features(
-                df_val[
-                    current_features
-                ],
-                cat_cols,
-            )
-        )
-
-        y_val = (
-            df_val[TARGET]
-            .astype(np.float64)
-        )
-
-        val_row_id = (
-            df_val[ID]
-        )
-
-        val_game_type = (
-            df_val["game_type"]
-            .astype(str)
-        )
-
-        # ---------------------------------------------
-        # Experiment C stage-selection 정책
-        # ---------------------------------------------
-
-        if (
-            validation_season
-            in CORRECTED_TOTAL_ES_SEASONS
-        ):
-            early_stopping_policy = (
-                "walkforward_corrected_total_R_raw_F_train_only_shift"
-            )
-
-            anchor_info = (
-                get_walkforward_f_anchor(
-                    df_train=df_train,
-                    validation_season=(
-                        validation_season
-                    ),
-                )
-            )
-
-            fold_f_anchor = float(
-                anchor_info[
-                    "anchor"
-                ]
-            )
-
-            reference_season = int(
-                max(train_seasons)
-            )
-
-            reference_mask = (
-                (
-                    df_train["season"]
-                    == reference_season
-                )
-                & (
-                    df_train["game_type"]
-                    .astype(str)
-                    == CORRECTED_TOTAL_F_GAME_TYPE
-                )
-            )
-
-            X_reference_f = (
-                X_train.loc[
-                    reference_mask
-                ]
-            )
-
-            if len(X_reference_f) == 0:
-                raise ValueError(
-                    "마지막 학습 시즌 F reference가 없습니다."
-                )
-
-            n_early_stopping_eval = (
-                len(y_val)
-            )
-
-        else:
-            early_stopping_policy = (
-                "full_validation"
-            )
-            anchor_info = None
-            fold_f_anchor = None
-            reference_season = None
-            X_reference_f = None
-            n_early_stopping_eval = (
-                len(y_val)
-            )
-
-        print()
-        print("=" * 72)
-        print(
-            f"Fold {fold}: "
-            f"{train_seasons[0]}"
-            f"~{train_seasons[-1]} "
-            f"-> {validation_season}"
-        )
-        print("=" * 72)
-        print(
-            "학습 데이터:",
-            X_train.shape,
-        )
-        print(
-            "검증 데이터:",
-            X_val.shape,
-        )
-        print(
-            "Training objective    : RMSE"
-        )
-        print(
-            "Evaluation prediction : raw + clipped"
-        )
-        print(
-            "Early stopping policy : "
-            f"{early_stopping_policy}"
-        )
-        print(
-            "Early stopping rows   : "
-            f"{n_early_stopping_eval:,} "
-            f"/ {len(y_val):,}"
-        )
-
-        if (
-            validation_season
-            in CORRECTED_TOTAL_ES_SEASONS
-        ):
-            print(
-                "F anchor policy      : "
-                f"{anchor_info['policy']}"
-            )
-            print(
-                "F anchor             : "
-                f"{fold_f_anchor:.6f}"
-            )
-            print(
-                "Anchor source seasons: "
-                f"{anchor_info['source_seasons']}"
-            )
-            print(
-                "Reference season     : "
-                f"{reference_season}"
-            )
-
-        estimator = (
-            CatBoostRegressor(
-                **MODEL_PARAMS
-            )
-        )
-
-        start_time = time.time()
-
-        correction_metadata = {
-            "enabled": False,
-        }
-        trajectory_df = None
-
-        if (
-            validation_season
-            in CORRECTED_TOTAL_ES_SEASONS
-        ):
-            # -------------------------------------------------
-            # Experiment C:
-            # 2023/2024 corrected folds에서는 내부 raw-overall early stopping을 끈다.
-            # -------------------------------------------------
-            estimator.fit(
-                X_train,
-                y_train,
-                cat_features=cat_cols,
-                verbose=(
-                    MODEL_PARAMS[
-                        "verbose"
-                    ]
-                ),
-            )
-
-            (
-                best_stage,
-                trajectory_df,
-            ) = select_corrected_total_stage(
-                estimator=estimator,
-                X_val=X_val,
-                y_val=y_val,
-                val_game_type=(
-                    val_game_type
-                ),
-                X_reference_f=(
-                    X_reference_f
-                ),
-                anchor=(
-                    fold_f_anchor
-                ),
-                patience=(
-                    CORRECTED_TOTAL_PATIENCE
-                ),
-            )
-
-            best_iteration = int(
-                best_stage[
-                    "best_iteration"
-                ]
-            )
-
-            final_iterations = (
-                best_iteration + 1
-            )
-
-            estimator.shrink(
-                ntree_end=(
-                    final_iterations
-                )
-            )
-
-            val_pred_model_raw = (
-                estimator.predict(
-                    X_val
-                )
-            )
-
-            val_pred_model_clip = (
-                np.clip(
-                    val_pred_model_raw,
-                    0.0,
-                    1.0,
-                )
-            )
-
-            selected_delta = float(
-                best_stage[
-                    "delta_f"
-                ]
-            )
-
-            # Experiment C의 최종 fold prediction은
-            # R raw + F corrected prediction이다.
-            val_pred_raw = (
-                apply_f_logit_correction(
-                    pred=(
-                        val_pred_model_raw
-                    ),
-                    game_type=(
-                        val_game_type
-                    ),
-                    delta=(
-                        selected_delta
-                    ),
-                )
-            )
-
-            val_pred_clip = (
-                np.clip(
-                    val_pred_raw,
-                    0.0,
-                    1.0,
-                )
-            )
-
-            correction_metadata = {
-                "enabled": True,
-                "method": (
-                    CORRECTED_TOTAL_CORRECTION_METHOD
-                ),
-                "domain": (
-                    CORRECTED_TOTAL_F_GAME_TYPE
-                ),
-                "anchor": float(
-                    fold_f_anchor
-                ),
-                "anchor_policy": (
-                    anchor_info[
-                        "policy"
-                    ]
-                ),
-                "anchor_source_seasons": (
-                    anchor_info[
-                        "source_seasons"
-                    ]
-                ),
-                "anchor_season_rates": (
-                    anchor_info[
-                        "season_rates"
-                    ]
-                ),
-                "reference_season": int(
-                    reference_season
-                ),
-                "reference_scope": (
-                    "same_model_last_training_season_F"
-                ),
-                "delta": float(
-                    selected_delta
-                ),
-                "reference_raw_mean": float(
-                    best_stage[
-                        "reference_raw_mean"
-                    ]
-                ),
-                "reference_corrected_mean": float(
-                    best_stage[
-                        "reference_corrected_mean"
-                    ]
-                ),
-                "selected_stage_number": int(
-                    best_stage[
-                        "stage_number"
-                    ]
-                ),
-                "selected_corrected_total_brier": float(
-                    best_stage[
-                        "corrected_total_brier"
-                    ]
-                ),
-                "selected_raw_total_brier": float(
-                    best_stage[
-                        "raw_total_brier"
-                    ]
-                ),
-                "selected_r_brier": float(
-                    best_stage[
-                        "r_brier"
-                    ]
-                ),
-                "selected_f_raw_brier": float(
-                    best_stage[
-                        "f_raw_brier"
-                    ]
-                ),
-                "selected_f_corrected_brier": float(
-                    best_stage[
-                        "f_corrected_brier"
-                    ]
-                ),
-                "validation_f_raw_mean": float(
-                    best_stage[
-                        "validation_f_raw_mean"
-                    ]
-                ),
-                "validation_f_corrected_mean": float(
-                    best_stage[
-                        "validation_f_corrected_mean"
-                    ]
-                ),
-                "uses_validation_prediction_mean_for_delta": False,
-                "uses_validation_target_for_delta": False,
-                "uses_test_distribution": False,
-                "row_independent_application": True,
-            }
-
-        else:
-            # -------------------------------------------------
-            # cb_reg_v003 original behavior
-            # -------------------------------------------------
-            estimator.fit(
-                X_train,
-                y_train,
-                cat_features=cat_cols,
-                eval_set=(
-                    X_val,
-                    y_val,
-                ),
-                early_stopping_rounds=(
-                    EARLY_STOPPING_ROUNDS
-                ),
-                use_best_model=True,
-            )
-
-            best_iteration = (
-                estimator
-                .get_best_iteration()
-            )
-
-            if (
-                best_iteration
-                is not None
-                and best_iteration >= 0
-            ):
-                final_iterations = (
-                    best_iteration + 1
-                )
-            else:
-                final_iterations = (
-                    MODEL_PARAMS[
-                        "iterations"
-                    ]
-                )
-
-            val_pred_model_raw = (
-                estimator.predict(
-                    X_val
-                )
-            )
-
-            val_pred_model_clip = (
-                np.clip(
-                    val_pred_model_raw,
-                    0.0,
-                    1.0,
-                )
-            )
-
-            val_pred_raw = (
-                val_pred_model_raw.copy()
-            )
-
-            val_pred_clip = (
-                val_pred_model_clip.copy()
-            )
-
-        elapsed = (
-            time.time()
-            - start_time
-        )
-
-        raw_metrics = (
-            calculate_metrics(
-                y_val,
-                val_pred_raw,
-            )
-        )
-
-        clipped_metrics = (
-            calculate_metrics(
-                y_val,
-                val_pred_clip,
-            )
-        )
-
-        model_raw_metrics = (
-            calculate_metrics(
-                y_val,
-                val_pred_model_clip,
-            )
-        )
-
-        if trajectory_df is not None:
-            fold_dir = (
-                VALIDATION_DIR
-                / f"fold_{validation_season}"
-            )
-
-            # save_fold_validation이 exist_ok=False로 디렉터리를 만들므로
-            # trajectory는 임시 위치에 저장했다가 fold 저장 후 기록한다.
-            trajectory_path = (
-                VALIDATION_DIR
-                / (
-                    f"_trajectory_"
-                    f"{validation_season}.csv"
-                )
-            )
-
-            trajectory_df.to_csv(
-                trajectory_path,
-                index=False,
-            )
-        else:
-            trajectory_path = None
-
-        pred_df, metadata = (
-            save_fold_validation(
-                fold=fold,
-                train_seasons=(
-                    train_seasons
-                ),
-                validation_season=(
-                    validation_season
-                ),
-                estimator=estimator,
-                row_ids=val_row_id,
-                game_type=(
-                    val_game_type
-                ),
-                y_true=y_val,
-                y_pred_raw=(
-                    val_pred_raw
-                ),
-                y_pred_clip=(
-                    val_pred_clip
-                ),
-                raw_metrics=(
-                    raw_metrics
-                ),
-                clipped_metrics=(
-                    clipped_metrics
-                ),
-                elapsed_seconds=(
-                    elapsed
-                ),
-                best_iteration=(
-                    best_iteration
-                ),
-                final_iterations=(
-                    final_iterations
-                ),
-                n_train=len(y_train),
-                early_stopping_policy=(
-                    early_stopping_policy
-                ),
-                n_early_stopping_eval=(
-                    n_early_stopping_eval
-                ),
-                y_pred_model_raw=(
-                    val_pred_model_raw
-                ),
-                y_pred_model_clip=(
-                    val_pred_model_clip
-                ),
-                correction_metadata=(
-                    correction_metadata
-                ),
-            )
-        )
-
-        if trajectory_path is not None:
-            target_trajectory_path = (
-                VALIDATION_DIR
-                / f"fold_{validation_season}"
-                / "corrected_total_trajectory.csv"
-            )
-
-            trajectory_path.replace(
-                target_trajectory_path
-            )
-
-        fold_results.append(
-            metadata
-        )
-
-        oof_frames.append(
-            pred_df
-        )
-
-        range_diag = (
-            calculate_range_diagnostics(
-                val_pred_raw
-            )
-        )
-
-        print()
-        print("[Raw prediction]")
-        print(
-            f"Brier Score      : "
-            f"{raw_metrics['brier']:.8f}"
-        )
-        print(
-            f"BSS              : "
-            f"{raw_metrics['bss']:.2f}"
-        )
-
-        print()
-        print("[Clipped prediction]")
-        print(
-            f"Brier Score      : "
-            f"{clipped_metrics['brier']:.8f}"
-        )
-        print(
-            f"BSS              : "
-            f"{clipped_metrics['bss']:.2f}"
-        )
-
-        domain_metrics = (
-            metadata[
-                "domain_metrics"
-            ]
-        )
-
-        print()
-        print("[Model raw vs evaluated]")
-        print(
-            "Model raw Brier   : "
-            f"{model_raw_metrics['brier']:.8f}"
-        )
-        print(
-            "Evaluated Brier   : "
-            f"{clipped_metrics['brier']:.8f}"
-        )
-        print(
-            "Correction enabled: "
-            f"{correction_metadata.get('enabled', False)}"
-        )
-
-        if correction_metadata.get(
-            "enabled",
-            False,
-        ):
-            print(
-                "F delta          : "
-                f"{correction_metadata['delta']:+.8f}"
-            )
-            print(
-                "F anchor         : "
-                f"{correction_metadata['anchor']:.6f}"
-            )
-            print(
-                "Reference season : "
-                f"{correction_metadata['reference_season']}"
-            )
-
-        print()
-        print("[Domain diagnostics]")
-        for domain in (
-            "R",
-            "F",
-        ):
-            d = domain_metrics[
-                domain
-            ]
-
-            if d[
-                "metrics"
-            ] is None:
-                print(
-                    f"{domain}: no rows"
-                )
-                continue
-
-            print(
-                f"{domain} | "
-                f"n={d['n']:,} | "
-                f"share={d['share']:.2%} | "
-                f"Brier={d['metrics']['brier']:.8f} | "
-                f"BSS_raw={d['metrics']['bss_raw']:.2f} | "
-                f"pred_mean={d['prediction_mean']:.6f} | "
-                f"actual={d['metrics']['positive_rate']:.6f}"
-            )
-
-        print()
-        print("[Range diagnostics]")
-        print(
-            f"Below 0          : "
-            f"{range_diag['n_prediction_below_0']} "
-            f"("
-            f"{range_diag['ratio_prediction_below_0']:.6%}"
-            f")"
-        )
-        print(
-            f"Above 1          : "
-            f"{range_diag['n_prediction_above_1']} "
-            f"("
-            f"{range_diag['ratio_prediction_above_1']:.6%}"
-            f")"
-        )
-        print(
-            f"Outside [0,1]    : "
-            f"{range_diag['n_prediction_outside_0_1']} "
-            f"("
-            f"{range_diag['ratio_prediction_outside_0_1']:.6%}"
-            f")"
-        )
-
-        print()
-        print(
-            f"Best iteration   : "
-            f"{best_iteration}"
-        )
-        print(
-            f"Final iterations : "
-            f"{final_iterations}"
-        )
-        print(
-            f"Elapsed          : "
-            f"{elapsed:.1f}s"
-        )
-
-    oof = pd.concat(
-        oof_frames,
-        ignore_index=True,
-    )
-
-    return (
-        fold_results,
-        oof,
-        final_features,
-    )
-
-
-# =========================================================
-# Final iteration 선택
-# =========================================================
-
-def select_final_iterations(
-    fold_results,
-):
-    if (
-        FINAL_ITERATION_STRATEGY
-        == "latest_fold"
-    ):
-        latest_fold = max(
-            fold_results,
-            key=lambda x: x[
-                "validation_season"
-            ],
-        )
-
-        return int(
-            latest_fold[
-                "final_iterations"
-            ]
-        )
-
-    raise ValueError(
-        "Unsupported "
-        "FINAL_ITERATION_STRATEGY: "
-        f"{FINAL_ITERATION_STRATEGY}"
-    )
-
-
-# =========================================================
-# Main
-# =========================================================
-
-def main():
-
-    # -----------------------------------------------------
-    # 덮어쓰기 방지
-    # -----------------------------------------------------
-
-    if VALIDATION_DIR.exists():
-        raise FileExistsError(
-            f"{VALIDATION_DIR} exists. "
-            "Change EXPERIMENT_NAME."
-        )
-
-    if MODEL_DIR.exists():
-        raise FileExistsError(
-            f"{MODEL_DIR} exists. "
-            "Change EXPERIMENT_NAME."
-        )
-
-    # -----------------------------------------------------
-    # Feature schema
-    # -----------------------------------------------------
-
-    # test.csv의 다른 행이나 분포는 사용하지 않는다.
-    # header만 읽어 train/test 공통 input schema를 확정한다.
-    test_cols = pd.read_csv(
-        TEST_PATH,
-        encoding="utf-8-sig",
-        nrows=0,
-    ).columns
-
-    base_features = [
-        c
-        for c in test_cols
-        if c != ID
-    ]
-
-    cat_cols = [
-        c
-        for c in CAT_COLS
-        if c in base_features
-    ]
-
-    train = pd.read_csv(
-        DATA_DIR / "train.csv",
-        encoding="utf-8-sig",
-        usecols=(
-            [ID]
-            + base_features
-            + [TARGET]
-        ),
-    )
-
-    print("=" * 72)
-    print(
-        f"Experiment           : "
-        f"{EXPERIMENT_NAME}"
-    )
-    print(
-        "Model                : "
-        "CatBoostRegressor"
-    )
-    print(
-        "Objective            : RMSE"
-    )
-    print(
-        "Validation           : "
-        "Expanding Window"
-    )
-    print(
-        "Feature Engineering  : "
-        "HB-EB"
-    )
-    print(
-        f"Train shape          : "
-        f"{train.shape}"
-    )
-    print(
-        f"Base Feature 수      : "
-        f"{len(base_features)}"
-    )
-    print(
-        f"Categorical Feature  : "
-        f"{len(cat_cols)}"
-    )
-    print(
-        "시즌                 : "
-        f"{train['season'].min()} "
-        "~ "
-        f"{train['season'].max()}"
-    )
-    print(
-        f"Target mean          : "
-        f"{train[TARGET].mean():.6f}"
-    )
-    print("=" * 72)
-
-    VALIDATION_DIR.mkdir(
-        parents=True,
-        exist_ok=False,
-    )
-
-    MODEL_DIR.mkdir(
-        parents=True,
-        exist_ok=False,
-    )
-
-    # -----------------------------------------------------
-    # Expanding Window Validation
-    # -----------------------------------------------------
-
-    (
-        fold_results,
-        oof,
-        final_features,
-    ) = run_expanding_validation(
-        train=train,
-        base_features=base_features,
-        cat_cols=cat_cols,
-    )
-
-    summary = (
-        save_validation_summary(
-            fold_results=fold_results,
-            oof=oof,
-        )
+    pooled_rows = []
+
+    for name, col in [
+        ("L0_ANCHOR", "pred_anchor"),
+        ("L1_GENERAL", "pred_general"),
+        ("L2_CONDITIONAL", "pred_final"),
+    ]:
+        pooled_rows.append({
+            "layer": name,
+            "brier": brier_score(oof["target"], oof[col]),
+            "bss": bss_raw(oof["target"], oof[col]),
+        })
+
+    pooled_df = pd.DataFrame(pooled_rows)
+    pooled_df.to_csv(
+        VALIDATION_DIR / "pooled_layer_comparison.csv",
+        index=False,
     )
 
     print()
-    print("=" * 72)
-    print(
-        "Expanding Window Summary"
-    )
-    print("=" * 72)
+    print("=" * 96)
+    print("V18-lite Layer Summary")
+    print("=" * 96)
 
-    for fold in fold_results:
-        print(
-            f"Valid "
-            f"{fold['validation_season']} | "
-            f"Brier="
-            f"{fold['brier']:.8f} | "
-            f"BSS="
-            f"{fold['bss']:.2f} | "
-            f"iter="
-            f"{fold['final_iterations']} | "
-            f"outside="
-            f"{fold['ratio_prediction_outside_0_1']:.6%}"
-        )
-
-    print()
-    print(
-        f"Pooled OOF Brier     : "
-        f"{summary['pooled_oof_brier']:.8f}"
-    )
-    print(
-        f"Pooled OOF BSS       : "
-        f"{summary['pooled_oof_bss']:.2f}"
-    )
-    print(
-        f"Recent 23~24 Brier   : "
-        f"{summary['recent_2023_2024_mean_brier']:.8f}"
-    )
-    print(
-        f"OOF outside [0,1]    : "
-        f"{summary['ratio_prediction_outside_0_1']:.6%}"
-    )
-    print(
-        f"Validation 저장      : "
-        f"{VALIDATION_DIR}"
-    )
-    print("=" * 72)
-
-    final_iterations = (
-        select_final_iterations(
-            fold_results
-        )
-    )
-
-    print()
-    print(
-        "Final iteration strategy : "
-        f"{FINAL_ITERATION_STRATEGY}"
-    )
-    print(
-        "Final iterations         : "
-        f"{final_iterations}"
-    )
-
-    # -----------------------------------------------------
-    # 전체 train으로 최종 HB-EB prior 생성
-    # -----------------------------------------------------
-
-    print()
-    print("=" * 72)
-    print(
-        "최종 HB-EB prior 및 "
-        "CatBoostRegressor 학습"
-    )
-    print("=" * 72)
-
-    df_full = (
-        train.copy()
-    )
-
-    final_priors_dict = {}
-    final_features_check = (
-        list(base_features)
-    )
-
-    for config in (
-        HBEB_CONFIGS
-    ):
-        (
-            prior_df,
-            global_prior,
-        ) = compute_hbeb_priors(
-            df_train=df_full,
-            group_cols=config[
-                "group_cols"
-            ],
-            rate_col=config[
-                "rate_col"
-            ],
-        )
-
-        df_full[
-            config["new_col"]
-        ] = apply_hbeb(
-            df=df_full,
-            group_cols=config[
-                "group_cols"
-            ],
-            n_col=config[
-                "n_col"
-            ],
-            rate_col=config[
-                "rate_col"
-            ],
-            prior_df=prior_df,
-            global_prior=(
-                global_prior
-            ),
-        )
-
-        if (
-            config["rate_col"]
-            in final_features_check
-        ):
-            final_features_check.remove(
-                config["rate_col"]
-            )
-
-        if (
-            config["new_col"]
-            not in final_features_check
-        ):
-            final_features_check.append(
-                config["new_col"]
-            )
-
-        final_priors_dict[
-            config["new_col"]
-        ] = {
-            "prior_df": prior_df,
-            "global_prior": (
-                global_prior
-            ),
-            "group_cols": list(
-                config["group_cols"]
-            ),
-            "n_col": config[
-                "n_col"
-            ],
-            "rate_col": config[
-                "rate_col"
-            ],
+    for season in sorted(comparison_df["season"].unique()):
+        part = comparison_df[
+            comparison_df["season"] == season
+        ]
+        vals = {
+            row.layer: row
+            for row in part.itertuples(index=False)
         }
 
-    if (
-        final_features_check
-        != final_features
-    ):
-        raise ValueError(
-            "Validation과 Final Training의 "
-            "Feature 구성이 일치하지 않습니다."
+        print(
+            f"Valid {season} | "
+            f"L0={vals['L0_ANCHOR'].bss:.2f} | "
+            f"L1={vals['L1_GENERAL'].bss:.2f} "
+            f"(Δ={vals['L1_GENERAL'].delta_bss_vs_previous:+.2f}) | "
+            f"L2={vals['L2_CONDITIONAL'].bss:.2f} "
+            f"(Δ={vals['L2_CONDITIONAL'].delta_bss_vs_previous:+.2f})"
         )
 
-    X_full = prepare_features(
-        df_full[
-            final_features
-        ],
-        cat_cols,
-    )
-
-    y_full = (
-        df_full[TARGET]
-        .astype(np.float64)
-    )
-
-    final_params = {
-        **MODEL_PARAMS,
-        "iterations": int(
-            final_iterations
-        ),
-    }
-
-    final_model = (
-        CatBoostRegressor(
-            **final_params
+    print()
+    print("[Pooled]")
+    for row in pooled_df.itertuples(index=False):
+        print(
+            f"{row.layer:<16} "
+            f"Brier={row.brier:.8f} BSS={row.bss:.2f}"
         )
-    )
 
-    start_time = time.time()
-
-    final_model.fit(
-        X_full,
-        y_full,
-        cat_features=cat_cols,
-    )
-
-    final_elapsed = (
-        time.time()
-        - start_time
-    )
-
-    # -----------------------------------------------------
-    # 단일 Artifact 저장
-    # -----------------------------------------------------
-
-    # -----------------------------------------------------
-    # 2025 deployment 후보용 frozen F correction
-    # -----------------------------------------------------
+    # -----------------------------------------------------------------
+    # 최종 학습
+    # -----------------------------------------------------------------
     #
-    # 주의:
-    # - 공식 train(2019~2024)만 사용한다.
-    # - test prediction 평균/분포를 사용하지 않는다.
-    # - anchor는 post-break F seasons의 season-equal mean.
-    # - delta reference는 final model이 마지막 학습 시즌(2024)의
-    #   F training rows에 대해 낸 prediction이다.
+    # General layer:
+    #   latest fold iteration을 사용
+    #
+    # Conditional layer:
+    #   latest fold iteration을 사용
+    #
+    # Layer2 target은 전체 train 내부 General OOF로 생성.
+    # -----------------------------------------------------------------
+    final_general_iterations = int(
+        fold_results[-1]["layer1"]["final_iterations"]
+    )
+    final_cond_iterations = int(
+        fold_results[-1]["layer2"]["final_iterations"]
+    )
 
-    final_anchor_info = (
-        get_final_f_anchor(
-            train
+    print()
+    print("=" * 96)
+    print("Final V18-lite Training")
+    print("=" * 96)
+    print(f"General iterations     : {final_general_iterations}")
+    print(f"Conditional iterations : {final_cond_iterations}")
+
+    # HBEB
+    df_hbeb, hbeb_features, final_hbeb_priors = apply_hbeb_configs(
+        df,
+        df,
+        BASE_FEATURES,
+        priors=None,
+    )
+
+    # Anchor
+    final_anchor, final_anchor_diag = (
+        build_strictly_past_dynamic_anchor(df)
+    )
+    df_hbeb["dynamic_anchor"] = final_anchor
+
+    y = df[TARGET].to_numpy(np.float64)
+    anchor_arr = final_anchor.to_numpy(np.float64)
+
+    # General target
+    general_target = y - anchor_arr
+
+    # General final model
+    final_general_params = dict(MODEL_PARAMS)
+    final_general_params["iterations"] = final_general_iterations
+
+    df_hbeb_s = sanitize_categoricals(
+        df_hbeb,
+        CAT_COLS,
+    )
+
+    final_general_model = CatBoostRegressor(
+        **final_general_params
+    )
+    final_general_model.fit(
+        df_hbeb_s[hbeb_features],
+        general_target,
+        cat_features=CAT_COLS,
+        verbose=100,
+    )
+
+    # General OOF for full-data Layer2 target
+    print()
+    print("[Final Layer1 OOF generation]")
+    final_general_oof, final_inner_oof_meta = (
+        build_general_oof_for_training(
+            df,
+            hbeb_features,
+            final_hbeb_priors,
         )
     )
 
-    final_reference_season = int(
-        max(
-            train[
-                "season"
-            ].unique()
-        )
+    # Conditional feature
+    df_cf, final_cf_diag = (
+        build_strictly_past_platoon_features(df_hbeb)
     )
 
-    final_reference_mask = (
-        (
-            train[
-                "season"
-            ]
-            == final_reference_season
-        )
-        & (
-            train[
-                "game_type"
-            ].astype(str)
-            == CORRECTED_TOTAL_F_GAME_TYPE
-        )
+    conditional_target = (
+        y
+        - anchor_arr
+        - GAMMA_GENERAL
+        * final_general_oof.to_numpy(np.float64)
     )
 
-    final_reference_df = (
-        train.loc[
-            final_reference_mask
-        ].copy()
+    if LAYER2_USE_BASE_FEATURES:
+        layer2_features = list(hbeb_features) + [CF_COL]
+        layer2_cat_cols = list(CAT_COLS)
+    else:
+        layer2_features = [CF_COL]
+        layer2_cat_cols = []
+
+    df_cf_s = sanitize_categoricals(
+        df_cf,
+        CAT_COLS,
     )
 
-    if final_reference_df.empty:
-        raise ValueError(
-            "Final F correction reference rows가 없습니다."
-        )
+    final_cond_params = dict(MODEL_PARAMS)
+    final_cond_params["iterations"] = final_cond_iterations
 
-    (
-        final_reference_transformed,
-        final_reference_features,
-    ) = apply_saved_hbeb_priors(
-        df_apply=(
-            final_reference_df
-        ),
-        base_features=(
-            base_features
-        ),
-        priors=(
-            final_priors_dict
-        ),
+    final_conditional_model = CatBoostRegressor(
+        **final_cond_params
+    )
+    final_conditional_model.fit(
+        df_cf_s[layer2_features],
+        conditional_target,
+        cat_features=layer2_cat_cols,
+        verbose=100,
     )
 
-    if (
-        final_reference_features
-        != final_features
-    ):
-        raise ValueError(
-            "Final F correction reference Feature 순서가 "
-            "최종 Feature와 일치하지 않습니다."
-        )
+    # 2025 frozen banks
+    final_anchor_bank = build_pitcher_history_bank(df)
+    final_conditional_bank = build_platoon_bank(df)
 
-    X_final_reference_f = (
-        prepare_features(
-            final_reference_transformed[
-                final_features
-            ],
-            cat_cols,
-        )
-    )
-
-    final_reference_pred = (
-        final_model.predict(
-            X_final_reference_f
-        )
-    )
-
-    final_delta_info = (
-        solve_logit_delta_to_target_mean(
-            reference_pred=(
-                final_reference_pred
-            ),
-            target_mean=float(
-                final_anchor_info[
-                    "anchor"
-                ]
-            ),
-        )
-    )
-
-    final_f_correction = {
-        "enabled": True,
-        "method": (
-            CORRECTED_TOTAL_CORRECTION_METHOD
-        ),
-        "domain": (
-            CORRECTED_TOTAL_F_GAME_TYPE
-        ),
-        "anchor": float(
-            final_anchor_info[
-                "anchor"
-            ]
-        ),
-        "anchor_policy": (
-            final_anchor_info[
-                "policy"
-            ]
-        ),
-        "anchor_source_seasons": (
-            final_anchor_info[
-                "source_seasons"
-            ]
-        ),
-        "anchor_season_rates": (
-            final_anchor_info[
-                "season_rates"
-            ]
-        ),
-        "reference_season": int(
-            final_reference_season
-        ),
-        "reference_scope": (
-            "same_final_model_latest_training_season_F"
-        ),
-        "delta": float(
-            final_delta_info[
-                "delta"
-            ]
-        ),
-        "reference_raw_mean": float(
-            final_delta_info[
-                "reference_raw_mean"
-            ]
-        ),
-        "reference_corrected_mean": float(
-            final_delta_info[
-                "reference_corrected_mean"
-            ]
-        ),
-        "uses_test_distribution": False,
-        "row_independent_application": True,
-    }
-
-    final_artifact = {
-        "model": final_model,
-        "hbeb_priors": (
-            final_priors_dict
-        ),
-        "features": (
-            final_features
-        ),
-        "cat_cols": cat_cols,
-        "experiment_name": (
-            EXPERIMENT_NAME
-        ),
-        "model_type": (
-            "CatBoostRegressor"
-        ),
-        "objective": "RMSE",
-        "final_f_correction": (
-            final_f_correction
-        ),
-        "early_stopping_policy": {
-            "default": "full_validation",
-            "special_validation_seasons": sorted(
-                [
-                    int(x)
-                    for x in CORRECTED_TOTAL_ES_SEASONS
-                ]
-            ),
-            "special_policy": "walkforward_corrected_total_R_raw_F_train_only_shift",
-            "corrected_game_type": (
-                CORRECTED_TOTAL_F_GAME_TYPE
-            ),
+    artifact = {
+        "experiment_name": EXPERIMENT_NAME,
+        "architecture": "v18_lite_dynamic_anchor_general_conditional",
+        "gamma_general": GAMMA_GENERAL,
+        "gamma_conditional": GAMMA_CONDITIONAL,
+        "base_features": BASE_FEATURES,
+        "cat_cols": CAT_COLS,
+        "hbeb_features": hbeb_features,
+        "hbeb_priors": final_hbeb_priors,
+        "layer0": {
+            "type": "dynamic_anchor",
+            "strength": ANCHOR_STRENGTH,
+            "final_bank": final_anchor_bank,
         },
-        "final_iterations": int(
-            final_iterations
+        "layer1": {
+            "type": "general_residual_catboost",
+            "model": final_general_model,
+            "features": hbeb_features,
+            "iterations": final_general_iterations,
+        },
+        "layer2": {
+            "type": "conditional_residual_catboost",
+            "model": final_conditional_model,
+            "features": layer2_features,
+            "conditional_feature": CF_COL,
+            "strength": PLATOON_STRENGTH,
+            "final_bank": final_conditional_bank,
+            "iterations": final_cond_iterations,
+        },
+        "prediction_formula": (
+            "clip(anchor + gamma_general*general_residual "
+            "+ gamma_conditional*conditional_residual, 0, 1)"
         ),
-        "prediction_policy": (
-            "np.clip(raw_prediction, 0.0, 1.0)"
+        "training_seasons": sorted(
+            int(x) for x in pd.unique(df[SEASON_COL])
         ),
     }
 
     joblib.dump(
-        final_artifact,
+        artifact,
         MODEL_PATH,
         compress=3,
     )
 
     final_metadata = {
-        "experiment_name": (
-            EXPERIMENT_NAME
-        ),
-        "model_type": (
-            "CatBoostRegressor"
-        ),
-        "objective": "RMSE",
-        "final_f_correction": (
-            final_f_correction
-        ),
-        "early_stopping_policy": {
-            "default": "full_validation",
-            "special_validation_seasons": sorted(
-                [
-                    int(x)
-                    for x in CORRECTED_TOTAL_ES_SEASONS
-                ]
-            ),
-            "special_policy": "walkforward_corrected_total_R_raw_F_train_only_shift",
-            "corrected_game_type": (
-                CORRECTED_TOTAL_F_GAME_TYPE
-            ),
-            "training_rows": "R_and_F_all",
-            "fold_evaluation_rows": "R_and_F_all",
-        },
-        "validation_method": (
-            "expanding_window"
-        ),
-        "final_iteration_strategy": (
-            FINAL_ITERATION_STRATEGY
-        ),
-        "final_iterations": int(
-            final_iterations
-        ),
-        "training_seasons": sorted(
-            [
-                int(x)
-                for x in train[
-                    "season"
-                ].unique()
-            ]
-        ),
-        "n_train": int(
-            len(train)
-        ),
-        "base_features": (
-            base_features
-        ),
-        "features": (
-            final_features
-        ),
-        "categorical_features": (
-            cat_cols
-        ),
-        "hbeb_configs": (
-            HBEB_CONFIGS
-        ),
-        "model_params": (
-            final_params
-        ),
+        "experiment_name": EXPERIMENT_NAME,
+        "architecture": artifact["architecture"],
+        "gamma_general": GAMMA_GENERAL,
+        "gamma_conditional": GAMMA_CONDITIONAL,
+        "anchor_strength": ANCHOR_STRENGTH,
+        "platoon_strength": PLATOON_STRENGTH,
+        "layer2_use_base_features": LAYER2_USE_BASE_FEATURES,
+        "folds": fold_results,
+        "pooled": pooled_rows,
+        "final_general_iterations": final_general_iterations,
+        "final_conditional_iterations": final_cond_iterations,
+        "final_anchor_diagnostics": final_anchor_diag,
+        "final_conditional_diagnostics": final_cf_diag,
+        "final_inner_oof": final_inner_oof_meta,
         "elapsed_seconds": float(
-            final_elapsed
-        ),
-        "model_path": str(
-            MODEL_PATH
-        ),
-        "prediction_policy": (
-            "clip_to_0_1"
+            time.time() - global_start
         ),
     }
 
-    with open(
-        MODEL_DIR
-        / "final_metadata.json",
-        "w",
-        encoding="utf-8",
-    ) as f:
-        json.dump(
-            final_metadata,
-            f,
-            indent=2,
-            ensure_ascii=False,
+    write_json(
+        METADATA_PATH,
+        final_metadata,
+    )
+
+    try:
+        shutil.copy2(
+            Path(__file__).resolve(),
+            MODEL_DIR / "train.py",
         )
-
-    source_path = (
-        Path(__file__)
-        .resolve()
-    )
-
-    shutil.copy2(
-        source_path,
-        MODEL_DIR
-        / "train.py",
-    )
+    except Exception:
+        pass
 
     print()
-    print("=" * 72)
-    print(
-        "최종 Artifact 저장 완료"
-    )
-    print(
-        f"- Model   : "
-        f"{MODEL_PATH}"
-    )
-    print(
-        f"- Metadata: "
-        f"{MODEL_DIR / 'final_metadata.json'}"
-    )
-    print(
-        f"- Train.py: "
-        f"{MODEL_DIR / 'train.py'}"
-    )
-    print(
-        f"- elapsed : "
-        f"{final_elapsed:.1f}s"
-    )
-    print("=" * 72)
-
-    print()
-    print("[추론 시 필수]")
-    print(
-        "CatBoostRegressor는 predict()를 사용하고, "
-        "최종 제출 확률은 "
-        "np.clip(pred_raw, 0.0, 1.0)을 적용합니다."
-    )
+    print("=" * 96)
+    print("완료")
+    print(f"Model      : {MODEL_PATH}")
+    print(f"Validation : {VALIDATION_DIR}")
+    print("=" * 96)
+    print("[핵심 판정]")
+    print("1) Layer2 ΔBSS = L2_CONDITIONAL - L1_GENERAL 이 핵심.")
+    print("2) 2021/2022/2024에서 Layer2 ΔBSS > 0인지 본다.")
+    print("3) 2023에서 Layer2가 L1을 더 악화시키는지 확인한다.")
+    print("4) Layer1 train/valid residual mean gap으로 zero-point drift를 함께 본다.")
+    print("5) Layer2가 반복 양수면 다음 단계에서 Real vs Placebo를 Layer2 단독으로 수행한다.")
 
 
 if __name__ == "__main__":

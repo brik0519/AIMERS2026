@@ -1,0 +1,76 @@
+{
+  "experiment_name": "cb_reg_v012",
+  "fold": 4,
+  "train_seasons": [
+    2019,
+    2020,
+    2021,
+    2022,
+    2023
+  ],
+  "validation_season": 2024,
+  "n_train": 1221585,
+  "n_validation": 253507,
+  "control": {
+    "best_iteration": 171,
+    "brier": 0.2480912722504766,
+    "bss_raw": 686.7922073200991
+  },
+  "dynamic": {
+    "best_iteration": 228,
+    "brier": 0.24799534905210552,
+    "bss_raw": 725.1911418958749,
+    "delta_brier": 9.592319837109509e-05,
+    "delta_bss": 38.3989345757758,
+    "outside_0_1_raw": 0.0,
+    "anchor_diagnostics": {
+      "global_prior": 0.5315815109059132,
+      "mean_anchor": 0.4995813404216529,
+      "std_anchor": 0.049015710056576865,
+      "mean_current_n": 687.95106643998,
+      "median_current_n": 506.0,
+      "share_current_n_zero": 0.0006429802727340862,
+      "share_invalid_reconstruction": 0.0003234624684919943,
+      "n_bank_pitchers": 711
+    },
+    "row_independence": {
+      "passed": true,
+      "max_abs_diff": 0.0,
+      "n_checked": 20
+    },
+    "domain_metrics": [
+      {
+        "domain": "F",
+        "n": 30010,
+        "share": 0.11837937413957011,
+        "positive_rate": 0.45928023992002664,
+        "control_brier": 0.24786228707505548,
+        "dynamic_brier": 0.24781089629070988,
+        "delta_brier": 5.139078434560074e-05,
+        "anchor_mean": 0.4947915410743537,
+        "anchor_std": 0.05583660188243493,
+        "residual_pred_mean": -0.020113239508900288,
+        "residual_pred_std": 0.04334757305277765
+      },
+      {
+        "domain": "R",
+        "n": 223497,
+        "share": 0.8816206258604299,
+        "positive_rate": 0.4897067969592433,
+        "control_brier": 0.2481220191737659,
+        "dynamic_brier": 0.2480201163973919,
+        "delta_brier": 0.00010190277637397993,
+        "anchor_mean": 0.5002244894501072,
+        "anchor_std": 0.04798973005173372,
+        "residual_pred_mean": -0.0014331103694950503,
+        "residual_pred_std": 0.025241495973127567
+      }
+    ]
+  },
+  "dynamic_anchor_policy": {
+    "type": "row_local_current_season_pitcher_state",
+    "k": 80.0,
+    "history_rule": "strictly_past_seasons_only",
+    "validation_online_label_update": false
+  }
+}

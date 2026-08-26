@@ -1,0 +1,89 @@
+{
+  "experiment_name": "cb_reg_v013",
+  "fold": 3,
+  "train_seasons": [
+    2019,
+    2020,
+    2021,
+    2022
+  ],
+  "validation_season": 2023,
+  "n_train": 976060,
+  "n_validation": 245525,
+  "control": {
+    "best_iteration": 2,
+    "brier": 0.2514010454095717,
+    "bss_raw": -560.4188994837369
+  },
+  "anchor_only": {
+    "brier": 0.24887219876501573,
+    "bss_raw": 451.1197657386138,
+    "delta_brier_vs_control": 0.0025288466445559654,
+    "delta_bss_vs_control": 1011.5386652223508
+  },
+  "anchor_plus_residual": {
+    "best_iteration": 0,
+    "brier": 0.24902335129394537,
+    "bss_raw": 390.65875372445294,
+    "delta_brier_vs_control": 0.0023776941156263276,
+    "delta_bss_vs_control": 951.0776532081899,
+    "residual_gain_brier": -0.00015115252892963782,
+    "residual_gain_bss": -60.46101201416087,
+    "outside_0_1_raw": 0.0,
+    "anchor_diagnostics": {
+      "global_prior": 0.5395365039034485,
+      "mean_anchor": 0.5079673404864913,
+      "std_anchor": 0.05269906331555959,
+      "mean_current_n": 703.4764321352204,
+      "median_current_n": 527.0,
+      "share_current_n_zero": 0.000541696364932288,
+      "share_invalid_reconstruction": 0.0002851033499643621,
+      "n_bank_pitchers": 648
+    },
+    "row_independence": {
+      "passed": true,
+      "max_abs_diff": 0.0,
+      "n_checked": 20
+    },
+    "domain_metrics": [
+      {
+        "domain": "F",
+        "n": 25686,
+        "share": 0.10461663781692292,
+        "positive_rate": 0.47290352721326795,
+        "control_brier": 0.2586452693138102,
+        "anchor_only_brier": 0.2529624045953028,
+        "final_brier": 0.2541760181864882,
+        "delta_brier_control_minus_anchor": 0.00568286471850743,
+        "delta_brier_anchor_minus_final": -0.0012136135911854362,
+        "delta_brier_control_minus_final": 0.004469251127321994,
+        "anchor_mean": 0.517214798785304,
+        "anchor_std": 0.06439064471804039,
+        "residual_pred_mean": 0.014179472203189911,
+        "residual_pred_std": 0.003329339365172692
+      },
+      {
+        "domain": "R",
+        "n": 219839,
+        "share": 0.8953833621830771,
+        "positive_rate": 0.5031181910398064,
+        "control_brier": 0.2505546299182155,
+        "anchor_only_brier": 0.24839429890667963,
+        "final_brier": 0.24842131343077342,
+        "delta_brier_control_minus_anchor": 0.002160331011535843,
+        "delta_brier_anchor_minus_final": -2.7014524093788017e-05,
+        "delta_brier_control_minus_final": 0.002133316487442055,
+        "anchor_mean": 0.5068868669860508,
+        "anchor_std": 0.05104980324302961,
+        "residual_pred_mean": 0.002393478077370541,
+        "residual_pred_std": 0.0009122075572935179
+      }
+    ]
+  },
+  "dynamic_anchor_policy": {
+    "type": "row_local_current_season_pitcher_state",
+    "k": 80.0,
+    "history_rule": "strictly_past_seasons_only",
+    "validation_online_label_update": false
+  }
+}

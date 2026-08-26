@@ -1,0 +1,9 @@
+path,score,n_rows,season_col,target_col,anchor_col,r1_final_col,rp_final_col,r2_final_col,r1_residual_col,rp_residual_col,r2_residual_col
+validation/cb_reg_v015/oof_pred.csv,13,993592,season,target,anchor,pred_r1,pred_rp,pred_r2,pred_residual_r1,pred_residual_rp,pred_residual_r2
+validation/cb_reg_v015/fold_2024/pred.csv,13,253507,season,target,anchor,pred_r1,pred_rp,pred_r2,pred_residual_r1,pred_residual_rp,pred_residual_r2
+validation/cb_reg_v015/fold_2022/pred.csv,13,247472,season,target,anchor,pred_r1,pred_rp,pred_r2,pred_residual_r1,pred_residual_rp,pred_residual_r2
+validation/cb_reg_v015/fold_2021/pred.csv,13,247088,season,target,anchor,pred_r1,pred_rp,pred_r2,pred_residual_r1,pred_residual_rp,pred_residual_r2
+validation/cb_reg_v015/fold_2023/pred.csv,13,245525,season,target,anchor,pred_r1,pred_rp,pred_r2,pred_residual_r1,pred_residual_rp,pred_residual_r2
+validation/cb_reg_v015/causal_seen_unseen.csv,1,8,validation_season,,,,,,,,
+validation/cb_reg_v015/summary.csv,1,4,validation_season,,,,,,,,
+validation/cb_reg_v015/conditional_leakage_audit.csv,1,4,season,,,,,,,,

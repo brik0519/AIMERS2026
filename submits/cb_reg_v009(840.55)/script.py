@@ -9,7 +9,7 @@
 # ----------------
 # 1. Artifact에 저장된 HB-EB prior를 각 행에 lookup하여 Feature 변환
 # 2. CatBoostRegressor.predict()로 raw prediction 생성
-# 3. game_type == "F"인 행에만 Artifact의 frozen logit delta 적용
+# 3. frozen F delta는 deployment inference에서 적용하지 않음
 # 4. np.clip(prediction, 0.0, 1.0)
 #
 # 평가 데이터 독립 추론 규칙
@@ -17,8 +17,7 @@
 # - test.csv의 다른 행이나 전체 분포를 Feature/Prediction 생성에 사용하지 않는다.
 # - test 기반 groupby / rolling / lag / rank / 평균 / 빈도 / 통계를 사용하지 않는다.
 # - HB-EB prior는 train.py에서 공식 train.csv만으로 계산되어 Artifact에 저장된 값만 사용한다.
-# - F correction anchor와 delta도 train.py에서 공식 train.csv만으로 확정된 값을 사용한다.
-# - 추론 시 test prediction 평균으로 delta를 다시 계산하지 않는다.
+# - train.py의 F correction 정보가 Artifact에 존재하더라도 inference에서는 사용하지 않는다.
 # - 한 행만 입력했을 때와 전체 test.csv에 포함했을 때 해당 행의 예측값이 동일하다.
 
 import json
@@ -58,7 +57,6 @@ OUTPUT_PATH = OUTPUT_DIR / "submission.csv"
 ID = "row_id"
 TARGET = "control_success"
 
-CORRECTION_EPS = 1e-6
 
 
 # =========================================================
@@ -98,7 +96,6 @@ def load_artifact():
         "experiment_name",
         "model_type",
         "objective",
-        "final_f_correction",
         "prediction_policy",
     ]
 
@@ -217,10 +214,6 @@ def validate_input_schema(
         artifact["cat_cols"]
     )
 
-    # final F correction에 game_type이 필요하다.
-    required_raw_cols.add(
-        "game_type"
-    )
 
     missing_cols = sorted(
         col
@@ -443,173 +436,6 @@ def prepare_features(
 
 
 # =========================================================
-# Frozen F correction
-# =========================================================
-
-def _safe_logit(
-    p,
-    eps=CORRECTION_EPS,
-):
-    p = np.clip(
-        np.asarray(
-            p,
-            dtype=np.float64,
-        ),
-        eps,
-        1.0 - eps,
-    )
-
-    return np.log(
-        p / (1.0 - p)
-    )
-
-
-def _sigmoid(z):
-    z = np.asarray(
-        z,
-        dtype=np.float64,
-    )
-
-    out = np.empty_like(
-        z,
-        dtype=np.float64,
-    )
-
-    positive = z >= 0.0
-
-    out[positive] = (
-        1.0
-        / (
-            1.0
-            + np.exp(
-                -z[positive]
-            )
-        )
-    )
-
-    exp_z = np.exp(
-        z[~positive]
-    )
-
-    out[~positive] = (
-        exp_z
-        / (
-            1.0
-            + exp_z
-        )
-    )
-
-    return out
-
-
-def apply_frozen_f_correction(
-    pred_raw,
-    game_type,
-    correction,
-):
-    """
-    train.py가 공식 train.csv만으로 확정한 frozen delta를
-    F 행에만 row-wise 적용한다.
-
-    금지:
-    - pred_raw.mean()으로 delta 재계산
-    - test F 평균/비율 계산
-    - test 전체 통계를 이용한 calibration
-    """
-
-    pred_raw = np.asarray(
-        pred_raw,
-        dtype=np.float64,
-    )
-
-    game_type = (
-        pd.Series(
-            game_type
-        )
-        .fillna(
-            "__MISSING__"
-        )
-        .astype(str)
-        .to_numpy()
-    )
-
-    if (
-        len(pred_raw)
-        != len(game_type)
-    ):
-        raise ValueError(
-            "prediction과 game_type 길이가 "
-            "일치하지 않습니다."
-        )
-
-    if not correction.get(
-        "enabled",
-        False,
-    ):
-        return pred_raw.copy()
-
-    method = correction.get(
-        "method"
-    )
-
-    if method != "logit_shift":
-        raise ValueError(
-            "지원하지 않는 F correction method: "
-            f"{method}"
-        )
-
-    if correction.get(
-        "uses_test_distribution",
-        False,
-    ):
-        raise ValueError(
-            "Artifact가 test distribution 사용으로 "
-            "표시되어 있어 추론을 중단합니다."
-        )
-
-    if not correction.get(
-        "row_independent_application",
-        False,
-    ):
-        raise ValueError(
-            "Artifact의 F correction이 row-independent로 "
-            "표시되어 있지 않습니다."
-        )
-
-    domain = str(
-        correction.get(
-            "domain",
-            "F",
-        )
-    )
-
-    delta = float(
-        correction["delta"]
-    )
-
-    corrected = (
-        pred_raw.copy()
-    )
-
-    mask = (
-        game_type
-        == domain
-    )
-
-    if np.any(mask):
-        corrected[mask] = (
-            _sigmoid(
-                _safe_logit(
-                    pred_raw[mask]
-                )
-                + delta
-            )
-        )
-
-    return corrected
-
-
-# =========================================================
 # 행 독립 추론 파이프라인
 # =========================================================
 
@@ -662,21 +488,11 @@ def predict_rows(
         model.predict(X)
     )
 
-    pred_corrected = (
-        apply_frozen_f_correction(
-            pred_raw=pred_model_raw,
-            game_type=df[
-                "game_type"
-            ],
-            correction=artifact[
-                "final_f_correction"
-            ],
-        )
-    )
-
+    # Deployment inference에서는 frozen F delta를 적용하지 않는다.
+    # CatBoost raw prediction을 그대로 사용하고 [0, 1] 범위만 보장한다.
     pred_prob = np.clip(
         np.asarray(
-            pred_corrected,
+            pred_model_raw,
             dtype=np.float64,
         ),
         0.0,
@@ -808,10 +624,6 @@ def main():
         load_artifact()
     )
 
-    correction = artifact[
-        "final_f_correction"
-    ]
-
     print(
         "Model type        : "
         f"{artifact['model_type']}"
@@ -833,34 +645,11 @@ def main():
         f"{len(artifact['hbeb_priors'])}"
     )
     print(
-        "F correction      : "
-        f"{correction.get('enabled', False)}"
+        "Deployment correction: disabled"
     )
-
-    if correction.get(
-        "enabled",
-        False,
-    ):
-        print(
-            "F anchor          : "
-            f"{correction['anchor']:.6f}"
-        )
-        print(
-            "F anchor policy   : "
-            f"{correction['anchor_policy']}"
-        )
-        print(
-            "Anchor seasons    : "
-            f"{correction['anchor_source_seasons']}"
-        )
-        print(
-            "Reference season  : "
-            f"{correction['reference_season']}"
-        )
-        print(
-            "Frozen delta      : "
-            f"{correction['delta']:+.8f}"
-        )
+    print(
+        "Prediction policy     : raw CatBoost + clip"
+    )
 
     print()
     print("[2/5] Test / Sample Submission 로드")
