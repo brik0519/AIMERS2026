@@ -1,0 +1,293 @@
+{
+  "notebook": "kaggle_kbo_v18_RECOVERED_FROM_V20_exact.ipynb",
+  "patches": [
+    "cell 1: P1b removed: from IPython.display import display",
+    "cell 3: P2 roots -> /home/brik0519/AIMERS2026/data"
+  ],
+  "stage": "anchor",
+  "train_rows": 1475092,
+  "seasons": [
+    2019,
+    2020,
+    2021,
+    2022,
+    2023,
+    2024
+  ],
+  "n_columns_loaded": 50,
+  "columns_loaded": [
+    "row_id",
+    "season",
+    "game_month",
+    "game_dayofweek",
+    "inning",
+    "top_bottom",
+    "game_type",
+    "balls_before",
+    "strikes_before",
+    "outs_before",
+    "run_top_before",
+    "run_bot_before",
+    "run_total_before",
+    "score_diff_home",
+    "score_diff_pitcher_team",
+    "runner_on_1b",
+    "runner_on_2b",
+    "runner_on_3b",
+    "num_runners_on",
+    "base_state",
+    "home_win_expectancy",
+    "away_win_expectancy",
+    "li",
+    "pitcher_id",
+    "batter_id",
+    "pitcher_hand",
+    "batter_hand",
+    "pitcher_team_id",
+    "batter_team_id",
+    "asof_pitcher_n",
+    "asof_pitcher_success_rate",
+    "asof_pitcher_reverse_rate",
+    "asof_pitcher_middle_rate",
+    "asof_pitcher_ball_rate",
+    "asof_pitcher_strike_rate",
+    "asof_pitcher_prev1_game_success_rate",
+    "asof_pitcher_prev3_game_success_rate",
+    "asof_pitcher_prev5_game_success_rate",
+    "asof_pitcher_prev1_game_middle_rate",
+    "asof_pitcher_prev3_game_middle_rate",
+    "asof_pitcher_prev5_game_middle_rate",
+    "asof_batter_n",
+    "asof_batter_success_rate",
+    "asof_batter_middle_rate",
+    "asof_pitcher_pitchmix_n",
+    "asof_pitcher_fastball_rate",
+    "asof_pitcher_breaking_rate",
+    "asof_pitcher_offspeed_rate",
+    "control_success",
+    "domain3"
+  ],
+  "anchor_team_id": 13,
+  "rawnum": [
+    "game_month",
+    "inning",
+    "balls_before",
+    "strikes_before",
+    "outs_before",
+    "score_diff_pitcher_team",
+    "num_runners_on",
+    "home_win_expectancy",
+    "li",
+    "asof_pitcher_n",
+    "asof_pitcher_success_rate",
+    "asof_pitcher_reverse_rate",
+    "asof_pitcher_middle_rate",
+    "asof_pitcher_ball_rate",
+    "asof_pitcher_strike_rate",
+    "asof_pitcher_prev1_game_success_rate",
+    "asof_pitcher_prev3_game_success_rate",
+    "asof_pitcher_prev5_game_success_rate",
+    "asof_pitcher_prev1_game_middle_rate",
+    "asof_pitcher_prev3_game_middle_rate",
+    "asof_pitcher_prev5_game_middle_rate",
+    "asof_batter_n",
+    "asof_batter_success_rate",
+    "asof_batter_middle_rate",
+    "asof_pitcher_fastball_rate",
+    "asof_pitcher_breaking_rate",
+    "asof_pitcher_offspeed_rate"
+  ],
+  "cat_small": [
+    "game_dayofweek",
+    "top_bottom",
+    "game_type",
+    "domain3",
+    "base_state",
+    "pitcher_hand",
+    "batter_hand",
+    "pitcher_team_id",
+    "batter_team_id"
+  ],
+  "adapter_rawnum": [
+    "game_month",
+    "inning",
+    "balls_before",
+    "strikes_before",
+    "outs_before",
+    "score_diff_pitcher_team",
+    "num_runners_on",
+    "home_win_expectancy",
+    "li",
+    "asof_pitcher_n",
+    "asof_pitcher_success_rate",
+    "asof_pitcher_reverse_rate",
+    "asof_pitcher_middle_rate",
+    "asof_pitcher_ball_rate",
+    "asof_pitcher_strike_rate",
+    "asof_pitcher_prev1_game_success_rate",
+    "asof_pitcher_prev3_game_success_rate",
+    "asof_pitcher_prev5_game_success_rate",
+    "asof_pitcher_prev1_game_middle_rate",
+    "asof_pitcher_prev3_game_middle_rate",
+    "asof_pitcher_prev5_game_middle_rate",
+    "asof_batter_n",
+    "asof_batter_success_rate",
+    "asof_batter_middle_rate",
+    "asof_pitcher_fastball_rate",
+    "asof_pitcher_breaking_rate",
+    "asof_pitcher_offspeed_rate",
+    "pitcher_team_id",
+    "batter_team_id"
+  ],
+  "eng_cols": [
+    "eng_recent35",
+    "eng_recent_delta",
+    "eng_sb",
+    "eng_same",
+    "eng_close",
+    "eng_late"
+  ],
+  "bank_cols": [
+    "season",
+    "pitcher_id",
+    "batter_id",
+    "control_success",
+    "asof_pitcher_n",
+    "asof_batter_n",
+    "asof_pitcher_reverse_rate",
+    "asof_pitcher_middle_rate",
+    "asof_pitcher_ball_rate",
+    "asof_pitcher_strike_rate",
+    "asof_pitcher_fastball_rate",
+    "asof_pitcher_breaking_rate",
+    "asof_pitcher_offspeed_rate",
+    "asof_batter_middle_rate"
+  ],
+  "cf_seeds": [
+    42,
+    2026,
+    314
+  ],
+  "years": {
+    "2023": {
+      "year": 2023,
+      "source_year": 2022,
+      "n_rows": 245525,
+      "domain3_counts": {
+        "R_CORE": 175785,
+        "R_ANCHOR": 44054,
+        "F": 25686
+      },
+      "target_mean": 0.49995723449750534,
+      "self_state_shape": [
+        245525,
+        34
+      ],
+      "gseason_shape": [
+        245525,
+        28
+      ],
+      "exact_asof_state_shape": [
+        245525,
+        62
+      ],
+      "pitcher_conditional_shape": [
+        245525,
+        21
+      ],
+      "cross_domain_profile_shape": [
+        245525,
+        20
+      ],
+      "batter_conditional_shape": [
+        245525,
+        9
+      ],
+      "role_deployment_shape": [
+        245525,
+        10
+      ],
+      "v18_stable_shape": [
+        245525,
+        25
+      ],
+      "adapter_matrix_shape": [
+        245525,
+        128
+      ],
+      "adapter_base_shape": [
+        245525,
+        45
+      ],
+      "adapter_prep_cols": [
+        "game_month",
+        "inning",
+        "balls_before",
+        "strikes_before",
+        "outs_before",
+        "score_diff_pitcher_team",
+        "num_runners_on",
+        "home_win_expectancy",
+        "li",
+        "asof_pitcher_n",
+        "asof_pitcher_success_rate",
+        "asof_pitcher_reverse_rate",
+        "asof_pitcher_middle_rate",
+        "asof_pitcher_ball_rate",
+        "asof_pitcher_strike_rate",
+        "asof_pitcher_prev1_game_success_rate",
+        "asof_pitcher_prev3_game_success_rate",
+        "asof_pitcher_prev5_game_success_rate",
+        "asof_pitcher_prev1_game_middle_rate",
+        "asof_pitcher_prev3_game_middle_rate",
+        "asof_pitcher_prev5_game_middle_rate",
+        "asof_batter_n",
+        "asof_batter_success_rate",
+        "asof_batter_middle_rate",
+        "asof_pitcher_fastball_rate",
+        "asof_pitcher_breaking_rate",
+        "asof_pitcher_offspeed_rate",
+        "pitcher_team_id",
+        "batter_team_id",
+        "eng_recent35",
+        "eng_recent_delta",
+        "eng_sb",
+        "eng_same",
+        "eng_close",
+        "eng_late"
+      ],
+      "adapter_prep_cat_levels": {
+        "game_dayofweek": 7,
+        "top_bottom": 2,
+        "game_type": 2,
+        "domain3": 3,
+        "base_state": 8,
+        "pitcher_hand": 2,
+        "batter_hand": 2,
+        "pitcher_team_id": 11,
+        "batter_team_id": 11
+      },
+      "trend_slope": -0.019619466617304012,
+      "trend_prior": {
+        "R_CORE": 0.49209574076654844,
+        "R_ANCHOR": 0.45141263168667206,
+        "F": 0.6891298765251027
+      },
+      "domain_means_source_year": {
+        "R_CORE": 0.5117152073838525,
+        "R_ANCHOR": 0.4710320983039761,
+        "F": 0.7087493431424067
+      },
+      "base_bss": -375.9413537594458,
+      "p_base_mean": 0.5052005259687086,
+      "anchor_meta": {
+        "trend_slope": -0.019619466617304012,
+        "trend_prior": {
+          "R_CORE": 0.49209574076654844,
+          "R_ANCHOR": 0.45141263168667206,
+          "F": 0.6891298765251027
+        }
+      }
+    }
+  }
+}

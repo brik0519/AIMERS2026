@@ -1,0 +1,6 @@
+year,block,ref_shape,cand_shape,n_cols,column_order_match,dtype_match,nan_mask_match,n_nan_ref,n_nan_cand,max_abs_diff,mean_abs_diff,status
+2020,pitcher_conditional,,,,,,,,,,,SKIP
+2021,pitcher_conditional,,,,,,,,,,,SKIP
+2022,pitcher_conditional,,,,,,,,,,,SKIP
+2023,pitcher_conditional,,,,,,,,,,,SKIP
+2024,pitcher_conditional,,,,,,,,,,,SKIP

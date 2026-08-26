@@ -1,0 +1,346 @@
+{
+  "reference_dir": "validation/v18_repro_v001/reference",
+  "candidate_dir": "validation/v18_repro_v001/matrices",
+  "thresholds": {
+    "r2_max_abs_diff": 1e-07,
+    "r2_mean_abs_diff": 1e-09,
+    "r3_pred_max_abs_diff": 1e-06,
+    "r3_scalar_abs_diff": 1e-12
+  },
+  "years": {
+    "2020": {
+      "R1 Data": {
+        "status": "SKIP",
+        "note": "data npz missing"
+      },
+      "R2 Self State": {
+        "status": "SKIP",
+        "note": "candidate missing: self_state_2020.npz"
+      },
+      "R2 Global Season": {
+        "status": "SKIP",
+        "note": "candidate missing: gseason_2020.npz"
+      },
+      "R2 Pitcher Conditional": {
+        "status": "SKIP",
+        "note": "candidate missing: pitcher_conditional_2020.npz"
+      },
+      "R2 Exact ASOF": {
+        "status": "SKIP",
+        "note": "candidate missing: exact_asof_state_2020.npz"
+      },
+      "R2 Adapter Matrix": {
+        "status": "SKIP",
+        "note": "candidate missing: adapter_matrix_surrogate_2020.npz"
+      },
+      "R2 Stable": {
+        "status": "SKIP",
+        "note": "candidate missing: v18_stable_2020.npz"
+      },
+      "R2 [unused] Cross Domain": {
+        "status": "SKIP",
+        "note": "candidate missing: cross_domain_profile_2020.npz"
+      },
+      "R2 [unused] Batter Conditional": {
+        "status": "SKIP",
+        "note": "candidate missing: batter_conditional_2020.npz"
+      },
+      "R2 [unused] Role Deployment": {
+        "status": "SKIP",
+        "note": "candidate missing: role_deployment_2020.npz"
+      },
+      "R3 Trend Scalars": {
+        "status": "SKIP",
+        "note": "manifest/summary missing"
+      },
+      "R3 Exact LGB": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      },
+      "R3 Ridge": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      },
+      "R3 Trend LGB": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      },
+      "R3 Anchor": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      },
+      "R3 Residual": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      }
+    },
+    "2021": {
+      "R1 Data": {
+        "status": "SKIP",
+        "note": "data npz missing"
+      },
+      "R2 Self State": {
+        "status": "SKIP",
+        "note": "candidate missing: self_state_2021.npz"
+      },
+      "R2 Global Season": {
+        "status": "SKIP",
+        "note": "candidate missing: gseason_2021.npz"
+      },
+      "R2 Pitcher Conditional": {
+        "status": "SKIP",
+        "note": "candidate missing: pitcher_conditional_2021.npz"
+      },
+      "R2 Exact ASOF": {
+        "status": "SKIP",
+        "note": "candidate missing: exact_asof_state_2021.npz"
+      },
+      "R2 Adapter Matrix": {
+        "status": "SKIP",
+        "note": "candidate missing: adapter_matrix_surrogate_2021.npz"
+      },
+      "R2 Stable": {
+        "status": "SKIP",
+        "note": "candidate missing: v18_stable_2021.npz"
+      },
+      "R2 [unused] Cross Domain": {
+        "status": "SKIP",
+        "note": "candidate missing: cross_domain_profile_2021.npz"
+      },
+      "R2 [unused] Batter Conditional": {
+        "status": "SKIP",
+        "note": "candidate missing: batter_conditional_2021.npz"
+      },
+      "R2 [unused] Role Deployment": {
+        "status": "SKIP",
+        "note": "candidate missing: role_deployment_2021.npz"
+      },
+      "R3 Trend Scalars": {
+        "status": "SKIP",
+        "note": "manifest/summary missing"
+      },
+      "R3 Exact LGB": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      },
+      "R3 Ridge": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      },
+      "R3 Trend LGB": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      },
+      "R3 Anchor": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      },
+      "R3 Residual": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      }
+    },
+    "2022": {
+      "R1 Data": {
+        "status": "SKIP",
+        "note": "data npz missing"
+      },
+      "R2 Self State": {
+        "status": "SKIP",
+        "note": "candidate missing: self_state_2022.npz"
+      },
+      "R2 Global Season": {
+        "status": "SKIP",
+        "note": "candidate missing: gseason_2022.npz"
+      },
+      "R2 Pitcher Conditional": {
+        "status": "SKIP",
+        "note": "candidate missing: pitcher_conditional_2022.npz"
+      },
+      "R2 Exact ASOF": {
+        "status": "SKIP",
+        "note": "candidate missing: exact_asof_state_2022.npz"
+      },
+      "R2 Adapter Matrix": {
+        "status": "SKIP",
+        "note": "candidate missing: adapter_matrix_surrogate_2022.npz"
+      },
+      "R2 Stable": {
+        "status": "SKIP",
+        "note": "candidate missing: v18_stable_2022.npz"
+      },
+      "R2 [unused] Cross Domain": {
+        "status": "SKIP",
+        "note": "candidate missing: cross_domain_profile_2022.npz"
+      },
+      "R2 [unused] Batter Conditional": {
+        "status": "SKIP",
+        "note": "candidate missing: batter_conditional_2022.npz"
+      },
+      "R2 [unused] Role Deployment": {
+        "status": "SKIP",
+        "note": "candidate missing: role_deployment_2022.npz"
+      },
+      "R3 Trend Scalars": {
+        "status": "SKIP",
+        "note": "manifest/summary missing"
+      },
+      "R3 Exact LGB": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      },
+      "R3 Ridge": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      },
+      "R3 Trend LGB": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      },
+      "R3 Anchor": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      },
+      "R3 Residual": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      }
+    },
+    "2023": {
+      "R1 Data": {
+        "status": "SKIP",
+        "note": "data npz missing"
+      },
+      "R2 Self State": {
+        "status": "SKIP",
+        "note": "candidate missing: self_state_2023.npz"
+      },
+      "R2 Global Season": {
+        "status": "SKIP",
+        "note": "candidate missing: gseason_2023.npz"
+      },
+      "R2 Pitcher Conditional": {
+        "status": "SKIP",
+        "note": "candidate missing: pitcher_conditional_2023.npz"
+      },
+      "R2 Exact ASOF": {
+        "status": "SKIP",
+        "note": "candidate missing: exact_asof_state_2023.npz"
+      },
+      "R2 Adapter Matrix": {
+        "status": "SKIP",
+        "note": "candidate missing: adapter_matrix_surrogate_2023.npz"
+      },
+      "R2 Stable": {
+        "status": "SKIP",
+        "note": "candidate missing: v18_stable_2023.npz"
+      },
+      "R2 [unused] Cross Domain": {
+        "status": "SKIP",
+        "note": "candidate missing: cross_domain_profile_2023.npz"
+      },
+      "R2 [unused] Batter Conditional": {
+        "status": "SKIP",
+        "note": "candidate missing: batter_conditional_2023.npz"
+      },
+      "R2 [unused] Role Deployment": {
+        "status": "SKIP",
+        "note": "candidate missing: role_deployment_2023.npz"
+      },
+      "R3 Trend Scalars": {
+        "status": "SKIP",
+        "note": "manifest/summary missing"
+      },
+      "R3 Exact LGB": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      },
+      "R3 Ridge": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      },
+      "R3 Trend LGB": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      },
+      "R3 Anchor": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      },
+      "R3 Residual": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      }
+    },
+    "2024": {
+      "R1 Data": {
+        "status": "SKIP",
+        "note": "data npz missing"
+      },
+      "R2 Self State": {
+        "status": "SKIP",
+        "note": "candidate missing: self_state_2024.npz"
+      },
+      "R2 Global Season": {
+        "status": "SKIP",
+        "note": "candidate missing: gseason_2024.npz"
+      },
+      "R2 Pitcher Conditional": {
+        "status": "SKIP",
+        "note": "candidate missing: pitcher_conditional_2024.npz"
+      },
+      "R2 Exact ASOF": {
+        "status": "SKIP",
+        "note": "candidate missing: exact_asof_state_2024.npz"
+      },
+      "R2 Adapter Matrix": {
+        "status": "SKIP",
+        "note": "candidate missing: adapter_matrix_surrogate_2024.npz"
+      },
+      "R2 Stable": {
+        "status": "SKIP",
+        "note": "candidate missing: v18_stable_2024.npz"
+      },
+      "R2 [unused] Cross Domain": {
+        "status": "SKIP",
+        "note": "candidate missing: cross_domain_profile_2024.npz"
+      },
+      "R2 [unused] Batter Conditional": {
+        "status": "SKIP",
+        "note": "candidate missing: batter_conditional_2024.npz"
+      },
+      "R2 [unused] Role Deployment": {
+        "status": "SKIP",
+        "note": "candidate missing: role_deployment_2024.npz"
+      },
+      "R3 Trend Scalars": {
+        "status": "SKIP",
+        "note": "manifest/summary missing"
+      },
+      "R3 Exact LGB": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      },
+      "R3 Ridge": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      },
+      "R3 Trend LGB": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      },
+      "R3 Anchor": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      },
+      "R3 Residual": {
+        "status": "SKIP",
+        "note": "candidate base_{year}.csv missing"
+      }
+    }
+  },
+  "overall": "SKIP",
+  "counts": {
+    "SKIP": 80
+  }
+}
