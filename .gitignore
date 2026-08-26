@@ -24,3 +24,4 @@ data/mlp_2024Validation/validation/ensemble_v*/oof_pred.csv
 data/trackman/
 validation/ensemble_v*/oof_pred.csv
 validation/*/oof_pred.csv
+validation/*/*.csv
