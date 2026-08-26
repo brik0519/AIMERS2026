@@ -1,6 +1,6 @@
 year,block,ref_shape,cand_shape,n_cols,column_order_match,dtype_match,nan_mask_match,n_nan_ref,n_nan_cand,max_abs_diff,mean_abs_diff,status
-2020,v18_stable,,,,,,,,,,,SKIP
-2021,v18_stable,,,,,,,,,,,SKIP
-2022,v18_stable,,,,,,,,,,,SKIP
-2023,v18_stable,,,,,,,,,,,SKIP
-2024,v18_stable,,,,,,,,,,,SKIP
+2020,v18_stable,"[244087, 25]","[244087, 25]",25,True,True,True,0,0,0.0,0.0,PASS
+2021,v18_stable,"[247088, 25]","[247088, 25]",25,True,True,True,0,0,0.0,0.0,PASS
+2022,v18_stable,"[247472, 25]","[247472, 25]",25,True,True,True,0,0,0.0,0.0,PASS
+2023,v18_stable,"[245525, 25]","[245525, 25]",25,True,True,True,0,0,0.0,0.0,PASS
+2024,v18_stable,"[253507, 25]","[253507, 25]",25,True,True,True,0,0,0.0,0.0,PASS

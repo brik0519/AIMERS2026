@@ -10,337 +10,1172 @@
   "years": {
     "2020": {
       "R1 Data": {
-        "status": "SKIP",
-        "note": "data npz missing"
+        "n_rows": [
+          244087,
+          244087
+        ],
+        "row_id_order": true,
+        "target": 0.0,
+        "season": true,
+        "domain3": true,
+        "pitcher_half": {
+          "pitcher_half_42": true,
+          "pitcher_half_2026": true,
+          "pitcher_half_314": true
+        },
+        "status": "PASS"
       },
       "R2 Self State": {
-        "status": "SKIP",
-        "note": "candidate missing: self_state_2020.npz"
+        "ref_shape": [
+          244087,
+          34
+        ],
+        "cand_shape": [
+          244087,
+          34
+        ],
+        "n_cols_ref": 34,
+        "n_cols_cand": 34,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Global Season": {
-        "status": "SKIP",
-        "note": "candidate missing: gseason_2020.npz"
+        "ref_shape": [
+          244087,
+          28
+        ],
+        "cand_shape": [
+          244087,
+          28
+        ],
+        "n_cols_ref": 28,
+        "n_cols_cand": 28,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Pitcher Conditional": {
-        "status": "SKIP",
-        "note": "candidate missing: pitcher_conditional_2020.npz"
+        "ref_shape": [
+          244087,
+          21
+        ],
+        "cand_shape": [
+          244087,
+          21
+        ],
+        "n_cols_ref": 21,
+        "n_cols_cand": 21,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Exact ASOF": {
-        "status": "SKIP",
-        "note": "candidate missing: exact_asof_state_2020.npz"
+        "ref_shape": [
+          244087,
+          62
+        ],
+        "cand_shape": [
+          244087,
+          62
+        ],
+        "n_cols_ref": 62,
+        "n_cols_cand": 62,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Adapter Matrix": {
-        "status": "SKIP",
-        "note": "candidate missing: adapter_matrix_surrogate_2020.npz"
+        "ref_shape": [
+          244087,
+          128
+        ],
+        "cand_shape": [
+          244087,
+          128
+        ],
+        "n_cols_ref": 128,
+        "n_cols_cand": 128,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Stable": {
-        "status": "SKIP",
-        "note": "candidate missing: v18_stable_2020.npz"
+        "ref_shape": [
+          244087,
+          25
+        ],
+        "cand_shape": [
+          244087,
+          25
+        ],
+        "n_cols_ref": 25,
+        "n_cols_cand": 25,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 [unused] Cross Domain": {
-        "status": "SKIP",
-        "note": "candidate missing: cross_domain_profile_2020.npz"
+        "ref_shape": [
+          244087,
+          20
+        ],
+        "cand_shape": [
+          244087,
+          20
+        ],
+        "n_cols_ref": 20,
+        "n_cols_cand": 20,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 [unused] Batter Conditional": {
-        "status": "SKIP",
-        "note": "candidate missing: batter_conditional_2020.npz"
+        "ref_shape": [
+          244087,
+          9
+        ],
+        "cand_shape": [
+          244087,
+          9
+        ],
+        "n_cols_ref": 9,
+        "n_cols_cand": 9,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 [unused] Role Deployment": {
-        "status": "SKIP",
-        "note": "candidate missing: role_deployment_2020.npz"
+        "ref_shape": [
+          244087,
+          10
+        ],
+        "cand_shape": [
+          244087,
+          10
+        ],
+        "n_cols_ref": 10,
+        "n_cols_cand": 10,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R3 Trend Scalars": {
-        "status": "SKIP",
-        "note": "manifest/summary missing"
+        "trend_slope_diff": 0.0,
+        "trend_prior_max_diff": 0.0,
+        "status": "PASS"
       },
       "R3 Exact LGB": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 3.926696371207388e-18,
+        "corr": 0.9999999999999999,
+        "status": "PASS"
       },
       "R3 Ridge": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 3.8500546083730955e-18,
+        "corr": 1.0,
+        "status": "PASS"
       },
       "R3 Trend LGB": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 4.372219259612071e-18,
+        "corr": 1.0,
+        "status": "PASS"
       },
       "R3 Anchor": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 3.7543092607373774e-18,
+        "corr": 1.0,
+        "status": "PASS"
       },
       "R3 Residual": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 1.3475759688377306e-17,
+        "corr": 0.9999999999999999,
+        "status": "PASS"
       }
     },
     "2021": {
       "R1 Data": {
-        "status": "SKIP",
-        "note": "data npz missing"
+        "n_rows": [
+          247088,
+          247088
+        ],
+        "row_id_order": true,
+        "target": 0.0,
+        "season": true,
+        "domain3": true,
+        "pitcher_half": {
+          "pitcher_half_42": true,
+          "pitcher_half_2026": true,
+          "pitcher_half_314": true
+        },
+        "status": "PASS"
       },
       "R2 Self State": {
-        "status": "SKIP",
-        "note": "candidate missing: self_state_2021.npz"
+        "ref_shape": [
+          247088,
+          34
+        ],
+        "cand_shape": [
+          247088,
+          34
+        ],
+        "n_cols_ref": 34,
+        "n_cols_cand": 34,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Global Season": {
-        "status": "SKIP",
-        "note": "candidate missing: gseason_2021.npz"
+        "ref_shape": [
+          247088,
+          28
+        ],
+        "cand_shape": [
+          247088,
+          28
+        ],
+        "n_cols_ref": 28,
+        "n_cols_cand": 28,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Pitcher Conditional": {
-        "status": "SKIP",
-        "note": "candidate missing: pitcher_conditional_2021.npz"
+        "ref_shape": [
+          247088,
+          21
+        ],
+        "cand_shape": [
+          247088,
+          21
+        ],
+        "n_cols_ref": 21,
+        "n_cols_cand": 21,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Exact ASOF": {
-        "status": "SKIP",
-        "note": "candidate missing: exact_asof_state_2021.npz"
+        "ref_shape": [
+          247088,
+          62
+        ],
+        "cand_shape": [
+          247088,
+          62
+        ],
+        "n_cols_ref": 62,
+        "n_cols_cand": 62,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Adapter Matrix": {
-        "status": "SKIP",
-        "note": "candidate missing: adapter_matrix_surrogate_2021.npz"
+        "ref_shape": [
+          247088,
+          128
+        ],
+        "cand_shape": [
+          247088,
+          128
+        ],
+        "n_cols_ref": 128,
+        "n_cols_cand": 128,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Stable": {
-        "status": "SKIP",
-        "note": "candidate missing: v18_stable_2021.npz"
+        "ref_shape": [
+          247088,
+          25
+        ],
+        "cand_shape": [
+          247088,
+          25
+        ],
+        "n_cols_ref": 25,
+        "n_cols_cand": 25,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 [unused] Cross Domain": {
-        "status": "SKIP",
-        "note": "candidate missing: cross_domain_profile_2021.npz"
+        "ref_shape": [
+          247088,
+          20
+        ],
+        "cand_shape": [
+          247088,
+          20
+        ],
+        "n_cols_ref": 20,
+        "n_cols_cand": 20,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 [unused] Batter Conditional": {
-        "status": "SKIP",
-        "note": "candidate missing: batter_conditional_2021.npz"
+        "ref_shape": [
+          247088,
+          9
+        ],
+        "cand_shape": [
+          247088,
+          9
+        ],
+        "n_cols_ref": 9,
+        "n_cols_cand": 9,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 [unused] Role Deployment": {
-        "status": "SKIP",
-        "note": "candidate missing: role_deployment_2021.npz"
+        "ref_shape": [
+          247088,
+          10
+        ],
+        "cand_shape": [
+          247088,
+          10
+        ],
+        "n_cols_ref": 10,
+        "n_cols_cand": 10,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R3 Trend Scalars": {
-        "status": "SKIP",
-        "note": "manifest/summary missing"
+        "trend_slope_diff": 0.0,
+        "trend_prior_max_diff": 0.0,
+        "status": "PASS"
       },
       "R3 Exact LGB": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 7.218372762175072e-18,
+        "corr": 1.0,
+        "status": "PASS"
       },
       "R3 Ridge": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 1.0345884969527675e-17,
+        "corr": 0.9999999999999999,
+        "status": "PASS"
       },
       "R3 Trend LGB": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 1.2880066256715189e-17,
+        "corr": 0.9999999999999999,
+        "status": "PASS"
       },
       "R3 Anchor": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 1.0438894814642536e-17,
+        "corr": 1.0,
+        "status": "PASS"
       },
       "R3 Residual": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 1.3551130042604294e-17,
+        "corr": 1.0,
+        "status": "PASS"
       }
     },
     "2022": {
       "R1 Data": {
-        "status": "SKIP",
-        "note": "data npz missing"
+        "n_rows": [
+          247472,
+          247472
+        ],
+        "row_id_order": true,
+        "target": 0.0,
+        "season": true,
+        "domain3": true,
+        "pitcher_half": {
+          "pitcher_half_42": true,
+          "pitcher_half_2026": true,
+          "pitcher_half_314": true
+        },
+        "status": "PASS"
       },
       "R2 Self State": {
-        "status": "SKIP",
-        "note": "candidate missing: self_state_2022.npz"
+        "ref_shape": [
+          247472,
+          34
+        ],
+        "cand_shape": [
+          247472,
+          34
+        ],
+        "n_cols_ref": 34,
+        "n_cols_cand": 34,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Global Season": {
-        "status": "SKIP",
-        "note": "candidate missing: gseason_2022.npz"
+        "ref_shape": [
+          247472,
+          28
+        ],
+        "cand_shape": [
+          247472,
+          28
+        ],
+        "n_cols_ref": 28,
+        "n_cols_cand": 28,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Pitcher Conditional": {
-        "status": "SKIP",
-        "note": "candidate missing: pitcher_conditional_2022.npz"
+        "ref_shape": [
+          247472,
+          21
+        ],
+        "cand_shape": [
+          247472,
+          21
+        ],
+        "n_cols_ref": 21,
+        "n_cols_cand": 21,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Exact ASOF": {
-        "status": "SKIP",
-        "note": "candidate missing: exact_asof_state_2022.npz"
+        "ref_shape": [
+          247472,
+          62
+        ],
+        "cand_shape": [
+          247472,
+          62
+        ],
+        "n_cols_ref": 62,
+        "n_cols_cand": 62,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Adapter Matrix": {
-        "status": "SKIP",
-        "note": "candidate missing: adapter_matrix_surrogate_2022.npz"
+        "ref_shape": [
+          247472,
+          128
+        ],
+        "cand_shape": [
+          247472,
+          128
+        ],
+        "n_cols_ref": 128,
+        "n_cols_cand": 128,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Stable": {
-        "status": "SKIP",
-        "note": "candidate missing: v18_stable_2022.npz"
+        "ref_shape": [
+          247472,
+          25
+        ],
+        "cand_shape": [
+          247472,
+          25
+        ],
+        "n_cols_ref": 25,
+        "n_cols_cand": 25,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 [unused] Cross Domain": {
-        "status": "SKIP",
-        "note": "candidate missing: cross_domain_profile_2022.npz"
+        "ref_shape": [
+          247472,
+          20
+        ],
+        "cand_shape": [
+          247472,
+          20
+        ],
+        "n_cols_ref": 20,
+        "n_cols_cand": 20,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 [unused] Batter Conditional": {
-        "status": "SKIP",
-        "note": "candidate missing: batter_conditional_2022.npz"
+        "ref_shape": [
+          247472,
+          9
+        ],
+        "cand_shape": [
+          247472,
+          9
+        ],
+        "n_cols_ref": 9,
+        "n_cols_cand": 9,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 [unused] Role Deployment": {
-        "status": "SKIP",
-        "note": "candidate missing: role_deployment_2022.npz"
+        "ref_shape": [
+          247472,
+          10
+        ],
+        "cand_shape": [
+          247472,
+          10
+        ],
+        "n_cols_ref": 10,
+        "n_cols_cand": 10,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R3 Trend Scalars": {
-        "status": "SKIP",
-        "note": "manifest/summary missing"
+        "trend_slope_diff": 0.0,
+        "trend_prior_max_diff": 0.0,
+        "status": "PASS"
       },
       "R3 Exact LGB": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 8.924959935626198e-18,
+        "corr": 0.9999999999999998,
+        "status": "PASS"
       },
       "R3 Ridge": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 1.1102230246251565e-16,
+        "mean_abs_diff": 1.0928522370154528e-17,
+        "corr": 1.0,
+        "status": "PASS"
       },
       "R3 Trend LGB": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 1.419317168409601e-17,
+        "corr": 1.0,
+        "status": "PASS"
       },
       "R3 Anchor": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 1.1495585271463038e-17,
+        "corr": 1.0,
+        "status": "PASS"
       },
       "R3 Residual": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 8.326672684688674e-17,
+        "mean_abs_diff": 1.3752396921014038e-17,
+        "corr": 1.0,
+        "status": "PASS"
       }
     },
     "2023": {
       "R1 Data": {
-        "status": "SKIP",
-        "note": "data npz missing"
+        "n_rows": [
+          245525,
+          245525
+        ],
+        "row_id_order": true,
+        "target": 0.0,
+        "season": true,
+        "domain3": true,
+        "pitcher_half": {
+          "pitcher_half_42": true,
+          "pitcher_half_2026": true,
+          "pitcher_half_314": true
+        },
+        "status": "PASS"
       },
       "R2 Self State": {
-        "status": "SKIP",
-        "note": "candidate missing: self_state_2023.npz"
+        "ref_shape": [
+          245525,
+          34
+        ],
+        "cand_shape": [
+          245525,
+          34
+        ],
+        "n_cols_ref": 34,
+        "n_cols_cand": 34,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Global Season": {
-        "status": "SKIP",
-        "note": "candidate missing: gseason_2023.npz"
+        "ref_shape": [
+          245525,
+          28
+        ],
+        "cand_shape": [
+          245525,
+          28
+        ],
+        "n_cols_ref": 28,
+        "n_cols_cand": 28,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Pitcher Conditional": {
-        "status": "SKIP",
-        "note": "candidate missing: pitcher_conditional_2023.npz"
+        "ref_shape": [
+          245525,
+          21
+        ],
+        "cand_shape": [
+          245525,
+          21
+        ],
+        "n_cols_ref": 21,
+        "n_cols_cand": 21,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Exact ASOF": {
-        "status": "SKIP",
-        "note": "candidate missing: exact_asof_state_2023.npz"
+        "ref_shape": [
+          245525,
+          62
+        ],
+        "cand_shape": [
+          245525,
+          62
+        ],
+        "n_cols_ref": 62,
+        "n_cols_cand": 62,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Adapter Matrix": {
-        "status": "SKIP",
-        "note": "candidate missing: adapter_matrix_surrogate_2023.npz"
+        "ref_shape": [
+          245525,
+          128
+        ],
+        "cand_shape": [
+          245525,
+          128
+        ],
+        "n_cols_ref": 128,
+        "n_cols_cand": 128,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Stable": {
-        "status": "SKIP",
-        "note": "candidate missing: v18_stable_2023.npz"
+        "ref_shape": [
+          245525,
+          25
+        ],
+        "cand_shape": [
+          245525,
+          25
+        ],
+        "n_cols_ref": 25,
+        "n_cols_cand": 25,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 [unused] Cross Domain": {
-        "status": "SKIP",
-        "note": "candidate missing: cross_domain_profile_2023.npz"
+        "ref_shape": [
+          245525,
+          20
+        ],
+        "cand_shape": [
+          245525,
+          20
+        ],
+        "n_cols_ref": 20,
+        "n_cols_cand": 20,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 [unused] Batter Conditional": {
-        "status": "SKIP",
-        "note": "candidate missing: batter_conditional_2023.npz"
+        "ref_shape": [
+          245525,
+          9
+        ],
+        "cand_shape": [
+          245525,
+          9
+        ],
+        "n_cols_ref": 9,
+        "n_cols_cand": 9,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 [unused] Role Deployment": {
-        "status": "SKIP",
-        "note": "candidate missing: role_deployment_2023.npz"
+        "ref_shape": [
+          245525,
+          10
+        ],
+        "cand_shape": [
+          245525,
+          10
+        ],
+        "n_cols_ref": 10,
+        "n_cols_cand": 10,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R3 Trend Scalars": {
-        "status": "SKIP",
-        "note": "manifest/summary missing"
+        "trend_slope_diff": 0.0,
+        "trend_prior_max_diff": 0.0,
+        "status": "PASS"
       },
       "R3 Exact LGB": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 1.1591718658493387e-17,
+        "corr": 1.0,
+        "status": "PASS"
       },
       "R3 Ridge": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 1.3711101742260054e-17,
+        "corr": 1.0,
+        "status": "PASS"
       },
       "R3 Trend LGB": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 1.4835229403075914e-17,
+        "corr": 0.9999999999999998,
+        "status": "PASS"
       },
       "R3 Anchor": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 1.3078045135203657e-17,
+        "corr": 0.9999999999999998,
+        "status": "PASS"
       },
       "R3 Residual": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 1.2921815808247953e-17,
+        "corr": 1.0,
+        "status": "PASS"
       }
     },
     "2024": {
       "R1 Data": {
-        "status": "SKIP",
-        "note": "data npz missing"
+        "n_rows": [
+          253507,
+          253507
+        ],
+        "row_id_order": true,
+        "target": 0.0,
+        "season": true,
+        "domain3": true,
+        "pitcher_half": {
+          "pitcher_half_42": true,
+          "pitcher_half_2026": true,
+          "pitcher_half_314": true
+        },
+        "status": "PASS"
       },
       "R2 Self State": {
-        "status": "SKIP",
-        "note": "candidate missing: self_state_2024.npz"
+        "ref_shape": [
+          253507,
+          34
+        ],
+        "cand_shape": [
+          253507,
+          34
+        ],
+        "n_cols_ref": 34,
+        "n_cols_cand": 34,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Global Season": {
-        "status": "SKIP",
-        "note": "candidate missing: gseason_2024.npz"
+        "ref_shape": [
+          253507,
+          28
+        ],
+        "cand_shape": [
+          253507,
+          28
+        ],
+        "n_cols_ref": 28,
+        "n_cols_cand": 28,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Pitcher Conditional": {
-        "status": "SKIP",
-        "note": "candidate missing: pitcher_conditional_2024.npz"
+        "ref_shape": [
+          253507,
+          21
+        ],
+        "cand_shape": [
+          253507,
+          21
+        ],
+        "n_cols_ref": 21,
+        "n_cols_cand": 21,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Exact ASOF": {
-        "status": "SKIP",
-        "note": "candidate missing: exact_asof_state_2024.npz"
+        "ref_shape": [
+          253507,
+          62
+        ],
+        "cand_shape": [
+          253507,
+          62
+        ],
+        "n_cols_ref": 62,
+        "n_cols_cand": 62,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Adapter Matrix": {
-        "status": "SKIP",
-        "note": "candidate missing: adapter_matrix_surrogate_2024.npz"
+        "ref_shape": [
+          253507,
+          128
+        ],
+        "cand_shape": [
+          253507,
+          128
+        ],
+        "n_cols_ref": 128,
+        "n_cols_cand": 128,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 Stable": {
-        "status": "SKIP",
-        "note": "candidate missing: v18_stable_2024.npz"
+        "ref_shape": [
+          253507,
+          25
+        ],
+        "cand_shape": [
+          253507,
+          25
+        ],
+        "n_cols_ref": 25,
+        "n_cols_cand": 25,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 [unused] Cross Domain": {
-        "status": "SKIP",
-        "note": "candidate missing: cross_domain_profile_2024.npz"
+        "ref_shape": [
+          253507,
+          20
+        ],
+        "cand_shape": [
+          253507,
+          20
+        ],
+        "n_cols_ref": 20,
+        "n_cols_cand": 20,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 [unused] Batter Conditional": {
-        "status": "SKIP",
-        "note": "candidate missing: batter_conditional_2024.npz"
+        "ref_shape": [
+          253507,
+          9
+        ],
+        "cand_shape": [
+          253507,
+          9
+        ],
+        "n_cols_ref": 9,
+        "n_cols_cand": 9,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R2 [unused] Role Deployment": {
-        "status": "SKIP",
-        "note": "candidate missing: role_deployment_2024.npz"
+        "ref_shape": [
+          253507,
+          10
+        ],
+        "cand_shape": [
+          253507,
+          10
+        ],
+        "n_cols_ref": 10,
+        "n_cols_cand": 10,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
       },
       "R3 Trend Scalars": {
-        "status": "SKIP",
-        "note": "manifest/summary missing"
+        "trend_slope_diff": 0.0,
+        "trend_prior_max_diff": 0.0,
+        "status": "PASS"
       },
       "R3 Exact LGB": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 1.5481599731767407e-17,
+        "corr": 1.0,
+        "status": "PASS"
       },
       "R3 Ridge": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 1.4684100598472306e-17,
+        "corr": 1.0,
+        "status": "PASS"
       },
       "R3 Trend LGB": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 1.7764829677640006e-17,
+        "corr": 0.9999999999999999,
+        "status": "PASS"
       },
       "R3 Anchor": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 1.6152094609897442e-17,
+        "corr": 1.0,
+        "status": "PASS"
       },
       "R3 Residual": {
-        "status": "SKIP",
-        "note": "candidate base_{year}.csv missing"
+        "max_abs_diff": 5.551115123125783e-17,
+        "mean_abs_diff": 1.3327563769597196e-17,
+        "corr": 0.9999999999999999,
+        "status": "PASS"
       }
     }
   },
-  "overall": "SKIP",
+  "overall": "PASS",
   "counts": {
-    "SKIP": 80
+    "PASS": 80
   }
 }
