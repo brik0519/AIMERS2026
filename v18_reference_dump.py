@@ -15,6 +15,8 @@ R1 / R2 / R3 gate 의 ground truth 다.
   P2) cell 3 discover_csv 의 `roots=[...]` 를 실제 data 디렉터리로 바꾼다.
       파일 탐색 경로만 바뀌고 읽는 파일과 dtype 처리는 동일하다.
   P3) IPython `display` 를 no-op 스텁으로 대체한다.
+  P4) --stage v15_oof 에서 cell 13 의 top-level 실행 루프를 제거하고
+      함수 정의 블록만 **원본 텍스트 그대로** 잘라 exec 한다 (연도별 실행을 위해).
 
 사용법:
     python3 v18_reference_dump.py --notebook <path.ipynb> --data-dir ./data \
@@ -41,6 +43,13 @@ import pandas as pd
 
 V18_CODE_CELLS = [1, 2, 3, 4, 5, 6, 7, 8]
 
+# --stage v15_oof 는 Layer 1 crossfit 함수가 더 필요하다.
+#   cell 12 : one_adapter_crossfit_cfg  (전부 def + print → 통째로 exec)
+#   cell 13 : build_v15_matrix_for_year / v15_oof_year
+#             (하단에 5개 연도 전체 루프가 있으므로 def 노드만 골라 exec = 패치 P4)
+V15_OOF_EXTRA_CELLS = [12, 13]
+DEFS_ONLY_CELLS = {13}
+
 _LIB_IMPORT_LINES = (
     "import lightgbm as lgb",
     "from sklearn.linear_model import Ridge",
@@ -55,14 +64,32 @@ def surrogate_base_pred(n: int) -> np.ndarray:
     return (((np.arange(n) % 997) / 997.0) * 0.98 + 0.01).astype(np.float64)
 
 
-def load_cells(nb_path: Path) -> dict[int, str]:
+def load_cells(nb_path: Path, wanted: list[int]) -> dict[int, str]:
     nb = json.loads(nb_path.read_text(encoding="utf-8"))
     cells = nb["cells"]
     out = {}
-    for i in V18_CODE_CELLS:
+    for i in wanted:
         assert cells[i]["cell_type"] == "code", (i, cells[i]["cell_type"])
         out[i] = "".join(cells[i]["source"])
     return out
+
+
+def defs_only(src: str) -> str:
+    """top-level 함수 정의 블록만 **원본 텍스트 그대로** 잘라 남긴다 (패치 P4).
+
+    ast.unparse 를 쓰지 않는다. lineno / end_lineno 로 원본 줄을 그대로 슬라이스하므로
+    남는 코드는 notebook 과 문자 단위로 동일하다. 제거되는 것은 5개 연도 전체를 도는
+    top-level 실행 루프뿐이다.
+    """
+    import ast
+
+    lines = src.splitlines(keepends=True)
+    tree = ast.parse(src)
+    out = []
+    for n in tree.body:
+        if isinstance(n, ast.FunctionDef):
+            out.append("".join(lines[n.lineno - 1: n.end_lineno]))
+    return "\n".join(out)
 
 
 def patch_cell(idx: int, src: str, data_dir: Path, stage: str) -> tuple[str, list[str]]:
@@ -86,12 +113,18 @@ def patch_cell(idx: int, src: str, data_dir: Path, stage: str) -> tuple[str, lis
 
 
 def build_namespace(nb_path: Path, data_dir: Path, stage: str) -> tuple[dict, list[str]]:
-    cells = load_cells(nb_path)
+    wanted = list(V18_CODE_CELLS)
+    if stage == "v15_oof":
+        wanted += V15_OOF_EXTRA_CELLS
+    cells = load_cells(nb_path, wanted)
     ns: dict = {"__name__": "__v18_reference__"}
     ns["display"] = lambda *a, **k: None  # P3
     all_patches = []
-    for i in V18_CODE_CELLS:
+    for i in wanted:
         src, patches = patch_cell(i, cells[i], data_dir, stage)
+        if i in DEFS_ONLY_CELLS:
+            src = defs_only(src)
+            patches.append("P4 top-level 실행 루프 제거, 함수 정의만 원본 텍스트로 exec")
         all_patches += [f"cell {i}: {p}" for p in patches]
         t0 = time.time()
         exec(compile(src, f"<v18_cell_{i}>", "exec"), ns)
@@ -199,7 +232,7 @@ def dump_year(ns: dict, year: int, out_dir: Path, stage: str) -> dict:
     }
 
     # ---- Phase 3 anchor ----
-    if stage == "anchor":
+    if stage in ("anchor", "v15_oof"):
         p, parts, meta = ns["fit_recent_base"](source_year, rows, year, verbose=False)
         np.savez_compressed(
             out_dir / f"anchor_{year}.npz",
@@ -215,7 +248,59 @@ def dump_year(ns: dict, year: int, out_dir: Path, stage: str) -> dict:
             "trend_slope": float(meta["trend_slope"]),
             "trend_prior": {k: float(v) for k, v in meta["trend_prior"].items()},
         }
-        del p, parts
+        del parts
+        gc.collect()
+
+    # ---- Phase 4 : Layer 1 V15 OOF ----
+    if stage == "v15_oof":
+        y = rows[TARGET].to_numpy(np.float64)
+        base = np.asarray(p, np.float64)
+        # notebook cell 13 build_v15_matrix_for_year 는 전역 ROWS / BASE_BY_YEAR 를 읽는다.
+        ns["ROWS"] = {int(year): rows}
+        ns["BASE_BY_YEAR"] = {int(year): base}
+        ns["Y"] = {int(year): y}
+        X = ns["build_v15_matrix_for_year"](int(year))
+        info["v15_matrix_shape"] = list(X.shape)
+        info["v15_matrix_columns"] = list(X.columns)
+
+        # cell 13 v15_oof_year 본문과 동일하다. 다만 seed 별 예측을 보존하기 위해
+        # one_adapter_crossfit_cfg 를 직접 호출한다 (같은 함수, 같은 인자).
+        preds, seed_rows, fold_rows = [], [], []
+        for seed in ns["CF_SEEDS"]:
+            t0 = time.time()
+            pp, frows = ns["one_adapter_crossfit_cfg"](
+                seed, X, y, base, rows, ns["V15_CF_CFG"]
+            )
+            preds.append(np.asarray(pp, np.float64))
+            fold_rows.extend(frows)
+            seed_rows.append(
+                {
+                    "year": int(year), "seed": int(seed),
+                    "bss": float(ns["raw_bss"](y, pp)),
+                    "gain_vs_base": float(ns["raw_bss"](y, pp) - ns["raw_bss"](y, base)),
+                    "sec": round(time.time() - t0, 1),
+                }
+            )
+            print(f"  [ref] {seed_rows[-1]}", flush=True)
+            gc.collect()
+        consensus = np.mean(np.column_stack(preds), axis=1)
+        np.savez_compressed(
+            out_dir / f"v15_oof_{year}.npz",
+            v15_oof=consensus,
+            p_base=base,
+            target=y,
+            **{f"p_seed{int(s)}": p_ for s, p_ in zip(ns["CF_SEEDS"], preds)},
+        )
+        info["v15_oof_bss"] = float(ns["raw_bss"](y, consensus))
+        info["v15_oof_mean"] = float(consensus.mean())
+        info["v15_seed_rows"] = seed_rows
+        info["v15_fold_rows"] = fold_rows
+        print(f"  [ref] V15 OOF CONSENSUS {year} {info['v15_oof_bss']:.2f}", flush=True)
+        del X, preds, consensus
+        gc.collect()
+
+    if stage in ("anchor", "v15_oof"):
+        del p
         gc.collect()
 
     del rows, self_state, gx
@@ -229,7 +314,8 @@ def main():
     ap.add_argument("--data-dir", default="./data")
     ap.add_argument("--out", default="validation/v18_repro_v001/reference")
     ap.add_argument("--year", type=int, action="append", required=True)
-    ap.add_argument("--stage", choices=["features", "anchor"], default="features")
+    ap.add_argument("--stage", choices=["features", "anchor", "v15_oof"],
+                    default="features")
     args = ap.parse_args()
 
     nb_path = Path(args.notebook)

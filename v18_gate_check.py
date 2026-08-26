@@ -58,6 +58,14 @@ ANCHOR_KEYS = [
     ("p_base", "R3 Anchor"),
     ("residual_l1", "R3 Residual"),
 ]
+# Phase 4 — Layer 1 V15 residual adapter
+V15_KEYS = [
+    ("p_seed42", "R4 Seed 42"),
+    ("p_seed2026", "R4 Seed 2026"),
+    ("p_seed314", "R4 Seed 314"),
+    ("v15_oof", "R4 V15 OOF"),
+]
+R4_BSS_ABS = 0.5
 
 
 def load_matrix(path: Path):
@@ -184,29 +192,105 @@ def compare_r3_scalars(ref_manifest: dict, cand_summary: dict, year: int,
     return out
 
 
-def compare_anchor(ref_dir: Path, cand_csv: Path, year: int) -> dict:
+def compare_anchor(ref_dir: Path, cand_csv: Path, year: int,
+                   cand_npz: Path | None = None) -> dict:
     rp = ref_dir / f"anchor_{year}.npz"
     if not rp.exists():
         return {k: {"status": "SKIP", "note": "reference anchor missing (stage=features)"}
                 for k, _ in ANCHOR_KEYS}
-    if not cand_csv.exists():
-        return {k: {"status": "SKIP", "note": "candidate base_{year}.csv missing"}
+
+    # 무손실 npz 를 우선한다. pandas to_csv 는 float64 round-trip 을 보장하지 않아
+    # CSV 경로에서는 최대 1 ulp(약 5.55e-17) 의 직렬화 오차가 섞인다.
+    source = None
+    if cand_npz is not None and cand_npz.exists():
+        z = np.load(cand_npz)
+        cand = {k: z[k].astype(np.float64) for k in z.files}
+        source = "npz"
+    elif cand_csv.exists():
+        df = pd.read_csv(cand_csv)
+        cand = {c: df[c].to_numpy(np.float64) for c in df.columns if c in
+                {k for k, _ in ANCHOR_KEYS}}
+        source = "csv(lossy)"
+    else:
+        return {k: {"status": "SKIP", "note": "candidate anchor npz / base csv 둘 다 없음"}
                 for k, _ in ANCHOR_KEYS}
+
     a = np.load(rp)
-    df = pd.read_csv(cand_csv)
     out = {}
     for key, _label in ANCHOR_KEYS:
-        if key not in a.files or key not in df.columns:
+        if key not in a.files or key not in cand:
             out[key] = {"status": "SKIP", "note": "column missing"}
             continue
-        d = np.abs(a[key].astype(np.float64) - df[key].to_numpy(np.float64))
+        d = np.abs(a[key].astype(np.float64) - cand[key])
         mx, mn = float(d.max()), float(d.mean())
-        corr = float(np.corrcoef(a[key], df[key].to_numpy(np.float64))[0, 1])
+        corr = float(np.corrcoef(a[key], cand[key])[0, 1])
         out[key] = {
             "max_abs_diff": mx,
             "mean_abs_diff": mn,
             "corr": corr,
+            "candidate_source": source,
+            "bit_identical": bool(mx == 0.0),
             "status": "PASS" if mx < R3_PRED_MAX_ABS else "FAIL",
+        }
+    return out
+
+
+def raw_bss(y, p):
+    y = np.asarray(y, np.float64)
+    p = np.clip(np.asarray(p, np.float64), 0, 1)
+    ref = max(float(y.mean() * (1 - y.mean())), 1e-12)
+    return float(100000.0 * (1.0 - np.mean((p - y) ** 2) / ref))
+
+
+def compare_v15_oof(ref_dir: Path, cand_dir: Path, year: int) -> dict:
+    """R4 — Layer 1 V15 OOF parity. 양쪽 모두 무손실 npz(float64) 를 쓴다."""
+    rp = ref_dir / f"v15_oof_{year}.npz"
+    cp = cand_dir / f"v15_oof_{year}.npz"
+    if not rp.exists():
+        return {k: {"status": "SKIP", "note": "reference v15_oof 없음 (stage != v15_oof)"}
+                for k, _ in V15_KEYS}
+    if not cp.exists():
+        return {k: {"status": "SKIP", "note": "candidate v15_oof npz 없음 (PHASE<4)"}
+                for k, _ in V15_KEYS}
+    a = np.load(rp)
+    b = np.load(cp)
+    out = {}
+
+    # base / target 이 같은 것이 전제다. 어긋나면 R4 는 의미가 없다.
+    guard = {}
+    for k in ("p_base", "target"):
+        if k in a.files and k in b.files:
+            guard[k] = float(np.abs(a[k].astype(np.float64) - b[k].astype(np.float64)).max())
+
+    for key, _label in V15_KEYS:
+        if key not in a.files or key not in b.files:
+            out[key] = {"status": "SKIP", "note": f"{key} 없음"}
+            continue
+        ra = a[key].astype(np.float64)
+        cb_ = b[key].astype(np.float64)
+        if ra.shape != cb_.shape:
+            out[key] = {"status": "FAIL", "note": "shape mismatch",
+                        "ref_shape": list(ra.shape), "cand_shape": list(cb_.shape)}
+            continue
+        d = np.abs(ra - cb_)
+        mx, mn = float(d.max()), float(d.mean())
+        corr = float(np.corrcoef(ra, cb_)[0, 1])
+        tgt = a["target"].astype(np.float64) if "target" in a.files else None
+        bss_diff = (abs(raw_bss(tgt, ra) - raw_bss(tgt, cb_))
+                    if tgt is not None else None)
+        ok = mx < R3_PRED_MAX_ABS and corr > 0.99999
+        if bss_diff is not None:
+            ok = ok and bss_diff < R4_BSS_ABS
+        out[key] = {
+            "max_abs_diff": mx,
+            "mean_abs_diff": mn,
+            "corr": corr,
+            "bss_ref": raw_bss(tgt, ra) if tgt is not None else None,
+            "bss_cand": raw_bss(tgt, cb_) if tgt is not None else None,
+            "bss_abs_diff": bss_diff,
+            "bit_identical": bool(mx == 0.0),
+            "base_target_guard": guard,
+            "status": "PASS" if ok else "FAIL",
         }
     return out
 
@@ -263,9 +347,13 @@ def main():
                                       cand_dir / f"{name}_{year}.npz")
         y["R3 Trend Scalars"] = compare_r3_scalars(ref_manifest, cand_summary, year,
                                                    cand_summary2)
-        anchor = compare_anchor(ref_dir, vdir / f"base_{year}.csv", year)
+        anchor = compare_anchor(ref_dir, vdir / f"base_{year}.csv", year,
+                                cand_dir / f"anchor_{year}.npz")
         for key, label in ANCHOR_KEYS:
             y[label] = anchor.get(key, {"status": "SKIP"})
+        v15 = compare_v15_oof(ref_dir, cand_dir, year)
+        for key, label in V15_KEYS:
+            y[label] = v15.get(key, {"status": "SKIP"})
         report["years"][str(year)] = y
 
         for label, res in y.items():
@@ -342,6 +430,12 @@ def main():
         elif r["gate"] == "R3 Trend Scalars":
             detail = (f"slope={fmt(res.get('trend_slope_diff'))} prior={fmt(res.get('trend_prior_max_diff'))}"
                       if res.get("status") != "SKIP" else res.get("note", ""))
+        elif r["gate"].startswith("R4"):
+            detail = (
+                f"corr={res.get('corr'):.8f} dBSS={res.get('bss_abs_diff'):.3f}"
+                if res.get("status") != "SKIP" and res.get("bss_abs_diff") is not None
+                else res.get("note", "")
+            )
         else:
             detail = (f"corr={res.get('corr'):.8f}" if res.get("corr") is not None
                       else res.get("note", ""))

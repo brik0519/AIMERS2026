@@ -39,6 +39,9 @@ lgb = None
 Ridge = None
 
 
+ExtraTreesRegressor = None
+
+
 def _import_phase3_libs():
     global lgb, Ridge
     if lgb is not None and Ridge is not None:
@@ -48,6 +51,15 @@ def _import_phase3_libs():
 
     lgb = _lgb
     Ridge = _Ridge
+
+
+def _import_phase4_libs():
+    global ExtraTreesRegressor
+    if ExtraTreesRegressor is not None:
+        return
+    from sklearn.ensemble import ExtraTreesRegressor as _ET
+
+    ExtraTreesRegressor = _ET
 
 
 # =========================================================
@@ -80,8 +92,13 @@ FEATURE_PARITY_DIR = VALIDATION_DIR / "feature_parity"
 # 실행 제어
 # =========================================================
 
-# 2 = Feature 까지, 3 = Anchor / Residual 까지 (lightgbm + sklearn 필요)
+# 2 = Feature 까지, 3 = +Anchor/Residual, 4 = +Layer 1 V15 OOF crossfit
+# (3 이상은 lightgbm + scikit-learn 필요)
 PHASE = int(os.environ.get("V18_REPRO_PHASE", "3"))
+
+# Phase 4 는 ExtraTrees 90회 적합(5년 × 3seed × 2fold × 3domain)이라 매우 비싸다.
+# 이미 v15_oof_{year}.npz 가 있으면 그 연도를 건너뛴다.
+RESUME = os.environ.get("V18_REPRO_RESUME", "0") == "1"
 
 # 미투입 3블록(CROSS_DOMAIN_PROFILE / BATTER_CONDITIONAL / ROLE_DEPLOYMENT)을
 # 계산은 하되 모델 입력에는 포함하지 않는다. Phase 2~8 동안 True 를 유지하고,
@@ -1391,6 +1408,91 @@ def surrogate_base_pred(n: int) -> np.ndarray:
 
 
 # =========================================================
+# Phase 4 — Layer 1 : V15 residual adapter (notebook cell 12 / 13)
+# =========================================================
+
+
+def one_adapter_crossfit_cfg(seed, X, y, base, frame, cfg):
+    """notebook cell 12 원본.
+
+    · 같은 seed 안에서 6개 모델(2 fold × 3 domain)이 동일한 random_state 를 공유한다.
+    · corr 은 (fold × domain) 조합으로 모든 행이 정확히 1회 채워진다.
+    · 반환값은 seed 단위로 clip 된 예측이다. 평균은 호출부에서 한다.
+    """
+    _import_phase4_libs()
+    fold = pitcher_half(frame, seed)
+    corr = np.zeros(len(frame), dtype=np.float64)
+    filled = np.zeros(len(frame), dtype=np.int8)  # 재현 무관 감사용
+    fold_rows = []
+    for target_fold in [0, 1]:
+        src = fold != target_fold
+        tgt = fold == target_fold
+        for d in ["R_CORE", "R_ANCHOR", "F"]:
+            tr = src & frame.domain3.eq(d).to_numpy()
+            te = tgt & frame.domain3.eq(d).to_numpy()
+            min_tr = 1000 if not SMOKE_MODE else 80
+            min_te = 500 if not SMOKE_MODE else 40
+            assert tr.sum() > min_tr and te.sum() > min_te, (d, tr.sum(), te.sum())
+            m = ExtraTreesRegressor(
+                n_jobs=N_JOBS, random_state=16200 + int(seed), **cfg
+            )
+            m.fit(X.loc[tr], (y - base)[tr])
+            corr[te] = m.predict(X.loc[te])
+            filled[te] += 1
+            del m
+            gc.collect()
+        pp = np.clip(base[tgt] + ADAPTER_SHRINK * corr[tgt], 0, 1)
+        fold_rows.append(
+            {
+                "seed": int(seed),
+                "target_fold": int(target_fold),
+                "n": int(tgt.sum()),
+                "base_bss": raw_bss(y[tgt], base[tgt]),
+                "adapted_bss": raw_bss(y[tgt], pp),
+                "gain": raw_bss(y[tgt], pp) - raw_bss(y[tgt], base[tgt]),
+            }
+        )
+    # 모든 행이 정확히 한 번씩 예측되었는가 (fold × domain 이 완전 분할인가)
+    assert filled.min() == 1 and filled.max() == 1, (
+        "corr coverage broken",
+        int(filled.min()), int(filled.max()),
+    )
+    return np.clip(base + ADAPTER_SHRINK * corr, 0, 1), fold_rows, corr
+
+
+def run_v15_oof(year, X, y, base, frame, verbose=True):
+    """notebook cell 13 v15_oof_year 원본.
+
+    seed 별로 clip 한 뒤 평균한다. 평균 후 clip 이 아니다.
+    """
+    preds = []
+    corrs = {}
+    seed_rows = []
+    all_fold_rows = []
+    for seed in CF_SEEDS:
+        t0 = time.time()
+        p, fold_rows, corr = one_adapter_crossfit_cfg(seed, X, y, base, frame, V15_CF_CFG)
+        preds.append(p)
+        corrs[int(seed)] = corr
+        all_fold_rows.extend(fold_rows)
+        row = {
+            "year": int(year),
+            "seed": int(seed),
+            "bss": raw_bss(y, p),
+            "gain_vs_base": raw_bss(y, p) - raw_bss(y, base),
+            "sec": round(time.time() - t0, 1),
+        }
+        seed_rows.append(row)
+        if verbose:
+            print(f"    {row}")
+        gc.collect()
+    consensus = np.mean(np.column_stack(preds), axis=1)
+    if verbose:
+        print(f"    V15 OOF CONSENSUS {year} {raw_bss(y, consensus):.2f}")
+    return consensus, preds, corrs, seed_rows, all_fold_rows
+
+
+# =========================================================
 # 실행
 # =========================================================
 
@@ -1521,6 +1623,14 @@ def main():
         "library_versions": library_versions(),
         "years": {},
     }
+    phase4_summary = {
+        "experiment_name": EXPERIMENT_NAME,
+        "layer": "layer1_v15_residual_adapter",
+        "regime": "within_year_pitcher_half_crossfit (NOT strict next-year)",
+        "library_versions": library_versions(),
+        "smoke_mode": SMOKE_MODE,
+        "years": {},
+    }
 
     for year in TARGET_YEARS:
         print("-" * 78)
@@ -1619,7 +1729,22 @@ def main():
                     "residual_l1": residual_l1,
                 }
             )
-            base_df.to_csv(VALIDATION_DIR / f"base_{year}.csv", index=False)
+            # base_{year}.csv 는 사람이 보는 산출물이다.
+            # pandas 기본 to_csv 는 float64 round-trip 을 보장하지 않아
+            # 읽어들일 때 최대 1 ulp(약 5.55e-17) 오차가 생긴다. gate 가 그 오차를
+            # 재현 오차로 오인하지 않도록 %.17g 로 저장한다. 계산에는 영향이 없다.
+            base_df.to_csv(
+                VALIDATION_DIR / f"base_{year}.csv", index=False, float_format="%.17g"
+            )
+            # gate 용 무손실 산출물 (float64 원본 비트 그대로)
+            np.savez_compressed(
+                FEATURE_DUMP_DIR / f"anchor_{year}.npz",
+                p_base=np.asarray(p_base, np.float64),
+                p_exact_lgb=np.asarray(parts["exact_lgb"], np.float64),
+                p_exact_ridge=np.asarray(parts["exact_ridge"], np.float64),
+                p_trend_lgb=np.asarray(parts["trend_center_lgb"], np.float64),
+                residual_l1=np.asarray(residual_l1, np.float64),
+            )
             save_matrix(FEATURE_DUMP_DIR / f"adapter_matrix_{year}.npz", X_adapter)
 
             bss = raw_bss(y, p_base)
@@ -1654,6 +1779,80 @@ def main():
                 "official_score": official_score(y, p_base),
             }
             ysum["adapter_matrix"] = summarize_block("adapter_matrix", X_adapter)
+
+            # ---------------- Phase 4 : Layer 1 V15 OOF ----------------
+            if PHASE >= 4:
+                oof_npz = FEATURE_DUMP_DIR / f"v15_oof_{year}.npz"
+                if RESUME and oof_npz.exists():
+                    print(f"[Phase 4] year {year}  RESUME — {oof_npz.name} 존재, 건너뜀")
+                else:
+                    print(f"[Phase 4] year {year}  V15 residual adapter crossfit "
+                          f"(seeds={list(CF_SEEDS)}, cfg n_estimators="
+                          f"{V15_CF_CFG['n_estimators']})")
+                    t4 = time.time()
+                    consensus, preds, corrs, seed_rows, fold_rows = run_v15_oof(
+                        year, X_adapter, y, p_base, rows
+                    )
+                    np.savez_compressed(
+                        oof_npz,
+                        v15_oof=np.asarray(consensus, np.float64),
+                        p_base=np.asarray(p_base, np.float64),
+                        target=np.asarray(y, np.float64),
+                        **{f"p_seed{int(s)}": np.asarray(p, np.float64)
+                           for s, p in zip(CF_SEEDS, preds)},
+                        **{f"corr_seed{int(s)}": np.asarray(c, np.float64)
+                           for s, c in corrs.items()},
+                    )
+                    pd.DataFrame(
+                        {
+                            ID: st["row_id"],
+                            "season": int(year),
+                            "domain3": st["domain3"],
+                            "target": y,
+                            "p_base": np.asarray(p_base, np.float64),
+                            "v15_oof": np.asarray(consensus, np.float64),
+                            "residual_l2_source": y - np.asarray(consensus, np.float64),
+                        }
+                    ).to_csv(
+                        VALIDATION_DIR / f"v15_oof_{year}.csv",
+                        index=False, float_format="%.17g",
+                    )
+                    pd.DataFrame(seed_rows).to_csv(
+                        VALIDATION_DIR / f"v15_seed_scores_{year}.csv", index=False
+                    )
+                    pd.DataFrame(fold_rows).to_csv(
+                        VALIDATION_DIR / f"v15_fold_scores_{year}.csv", index=False
+                    )
+                    oof_bss = raw_bss(y, consensus)
+                    print(f"    v15_oof_bss={oof_bss:.2f}  "
+                          f"gain_vs_base={oof_bss - bss:+.2f}  "
+                          f"sec={time.time() - t4:.1f}")
+                    phase4_summary["years"][str(year)] = {
+                        "source_year": st["source_year"],
+                        "n_rows": st["n_rows"],
+                        "adapter_matrix_shape": list(X_adapter.shape),
+                        "cf_seeds": list(CF_SEEDS),
+                        "v15_cf_cfg": V15_CF_CFG,
+                        "adapter_shrink": ADAPTER_SHRINK,
+                        "base_bss": bss,
+                        "v15_oof_bss": oof_bss,
+                        "gain_vs_base": oof_bss - bss,
+                        "official_score_base": official_score(y, p_base),
+                        "official_score_v15_oof": official_score(y, consensus),
+                        "seed_rows": seed_rows,
+                        "fold_rows": fold_rows,
+                        "v15_oof": {"mean": float(consensus.mean()),
+                                    "min": float(consensus.min()),
+                                    "max": float(consensus.max())},
+                        "domain_bss": {
+                            d: raw_bss(y[st["domain3"] == d], consensus[st["domain3"] == d])
+                            for d in ["R_CORE", "R_ANCHOR", "F"]
+                        },
+                        "sec": round(time.time() - t4, 1),
+                    }
+                    del consensus, preds, corrs
+                    gc.collect()
+
             del p_base, parts, adapter_base, X_adapter, base_df
             gc.collect()
 
@@ -1676,6 +1875,9 @@ def main():
     write_json(VALIDATION_DIR / "phase2_summary.json", phase2_summary)
     if PHASE >= 3:
         write_json(VALIDATION_DIR / "phase3_summary.json", phase3_summary)
+    if PHASE >= 4 and phase4_summary["years"]:
+        phase4_summary["elapsed_sec"] = round(time.time() - global_start, 1)
+        write_json(VALIDATION_DIR / "phase4_summary.json", phase4_summary)
 
     metadata = {
         "experiment_name": EXPERIMENT_NAME,
@@ -1688,8 +1890,12 @@ def main():
         "architecture": {
             "layers": 3,
             "layer0": "recent 1-season anchor: LGBMClassifier + Ridge(a=1e4) + trend-centered LGBMRegressor, equal 1/3",
-            "layer1": "three-domain ExtraTrees residual adapter, shrink 0.50  [NOT IMPLEMENTED IN PHASE 2/3]",
-            "layer2": "temporal-stable conditional Ridge(a=1e3) on prev-year OOF residual, gamma 0.75, R_CORE only  [NOT IMPLEMENTED IN PHASE 2/3]",
+            "layer1": (
+                "three-domain ExtraTrees residual adapter, shrink 0.50, "
+                "pitcher-half crossfit x3 seeds"
+                + ("" if PHASE >= 4 else "  [NOT IMPLEMENTED AT THIS PHASE]")
+            ),
+            "layer2": "temporal-stable conditional Ridge(a=1e3) on prev-year OOF residual, gamma 0.75, R_CORE only  [NOT IMPLEMENTED AT THIS PHASE]",
             "router": "domain3 = F / R_ANCHOR / R_CORE, anchor from F & season<=2022",
         },
         "features": {
@@ -1753,6 +1959,12 @@ def main():
     if PHASE >= 3:
         print(f"  -> {VALIDATION_DIR}/phase3_summary.json")
         print(f"  -> {VALIDATION_DIR}/base_{{year}}.csv")
+    if PHASE >= 4 and phase4_summary["years"]:
+        print(f"  -> {VALIDATION_DIR}/phase4_summary.json")
+        print(f"  -> {VALIDATION_DIR}/v15_oof_{{year}}.csv")
+        print(f"  -> {VALIDATION_DIR}/v15_seed_scores_{{year}}.csv")
+        print(f"  -> {VALIDATION_DIR}/v15_fold_scores_{{year}}.csv")
+        print(f"  -> {FEATURE_DUMP_DIR}/v15_oof_{{year}}.npz")
     print(f"  -> {MODEL_DIR}/metadata.json")
     print("=" * 78)
 
