@@ -359,6 +359,51 @@ def compare_p18(ref_dir: Path, cand_dir: Path, year: int) -> dict:
     return out
 
 
+def check_artifact_chain(cand_dir: Path, year: int) -> dict:
+    """R0 — candidate 자체 산출물 체인 정합성 (reference 불필요).
+
+    각 Phase 를 따로 재실행하면 앞 단계만 갱신되고 뒤 단계는 이전 산출물이 남는다.
+    그 상태로도 reference 대비 gate 는 통과하므로 **stale artifact 가 조용히 지나간다.**
+    Layer 0 이 bit-결정적인 동안에는 무해하지만, Phase 6/7 처럼 산출물이 늘어나면
+    실질 위험이 된다. 다음 연결이 실제로 같은 값인지 확인한다.
+
+        anchor_{y}.p_base   ==  v15_oof_{y}.p_base     (Layer 1 이 그 anchor 를 썼는가)
+        v15_oof_{y}.v15_oof ==  p18_{y}.v15_oof        (Layer 2 가 그 OOF 를 썼는가)
+        target 은 세 산출물 전부 동일
+    """
+    links = []
+    a = cand_dir / f"anchor_{year}.npz"
+    v = cand_dir / f"v15_oof_{year}.npz"
+    p = cand_dir / f"p18_{year}.npz"
+    if not (a.exists() and v.exists()):
+        return {"status": "SKIP", "note": "anchor / v15_oof npz 부족"}
+    za, zv = np.load(a), np.load(v)
+    links.append(("anchor.p_base -> v15_oof.p_base",
+                  float(np.abs(za["p_base"].astype(np.float64)
+                               - zv["p_base"].astype(np.float64)).max())))
+    if "residual_l1" in za.files and "target" in zv.files:
+        # anchor 는 target 을 직접 저장하지 않으므로 residual 로 역산해 대조한다
+        tgt_from_anchor = za["residual_l1"].astype(np.float64) + za["p_base"].astype(np.float64)
+        links.append(("anchor.target(역산) -> v15_oof.target",
+                      float(np.abs(tgt_from_anchor - zv["target"].astype(np.float64)).max())))
+    if p.exists():
+        zp = np.load(p)
+        links.append(("v15_oof.v15_oof -> p18.v15_oof",
+                      float(np.abs(zv["v15_oof"].astype(np.float64)
+                                   - zp["v15_oof"].astype(np.float64)).max())))
+        links.append(("v15_oof.target -> p18.target",
+                      float(np.abs(zv["target"].astype(np.float64)
+                                   - zp["target"].astype(np.float64)).max())))
+    worst = max(d for _, d in links)
+    return {
+        "links": {k: d for k, d in links},
+        "max_abs_diff": worst,
+        # 같은 실행이라면 저장된 배열이 비트 단위로 같아야 한다.
+        "status": "PASS" if worst == 0.0 else "FAIL",
+        "note": "" if worst == 0.0 else "stale artifact 의심 — 해당 Phase 를 다시 실행할 것",
+    }
+
+
 def compare_promotion_gate(ref_dir: Path, vdir: Path) -> dict:
     """R5 — 승격 gate 일치. V18_SUBMIT_RECOMMENDED 불리언과 전이 gain 을 비교한다."""
     rm = ref_dir / "manifest_p18.json"
@@ -496,6 +541,7 @@ def main():
     rows = []
     for year in years:
         y: dict = {}
+        y["R0 Artifact Chain"] = check_artifact_chain(cand_dir, year)
         y["R1 Data"] = compare_r1(ref_dir, cand_dir, year)
         for name, label in BLOCKS + UNUSED_BLOCKS:
             y[label] = compare_matrix(ref_dir / f"{name}_{year}.npz",
@@ -591,7 +637,10 @@ def main():
                   f"{fmt(r['max_abs_diff']):<13}{r['status']}")
             continue
         res = report["years"][str(r["year"])][r["gate"]]
-        if r["gate"] == "R1 Data":
+        if r["gate"] == "R0 Artifact Chain":
+            detail = (f"links={len(res.get('links', {}))}"
+                      if res.get("status") != "SKIP" else res.get("note", ""))
+        elif r["gate"] == "R1 Data":
             detail = f"rows={res.get('n_rows')}" if res.get("status") != "SKIP" else res.get("note", "")
         elif r["gate"].startswith("R2"):
             detail = (

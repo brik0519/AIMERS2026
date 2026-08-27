@@ -9,6 +9,15 @@
   },
   "years": {
     "2020": {
+      "R0 Artifact Chain": {
+        "links": {
+          "anchor.p_base -> v15_oof.p_base": 0.0,
+          "anchor.target(역산) -> v15_oof.target": 0.0
+        },
+        "max_abs_diff": 0.0,
+        "status": "PASS",
+        "note": ""
+      },
       "R1 Data": {
         "n_rows": [
           244087,
@@ -316,6 +325,17 @@
       }
     },
     "2021": {
+      "R0 Artifact Chain": {
+        "links": {
+          "anchor.p_base -> v15_oof.p_base": 0.0,
+          "anchor.target(역산) -> v15_oof.target": 0.0,
+          "v15_oof.v15_oof -> p18.v15_oof": 0.0,
+          "v15_oof.target -> p18.target": 0.0
+        },
+        "max_abs_diff": 0.0,
+        "status": "PASS",
+        "note": ""
+      },
       "R1 Data": {
         "n_rows": [
           247088,
@@ -645,6 +665,17 @@
       }
     },
     "2022": {
+      "R0 Artifact Chain": {
+        "links": {
+          "anchor.p_base -> v15_oof.p_base": 0.0,
+          "anchor.target(역산) -> v15_oof.target": 0.0,
+          "v15_oof.v15_oof -> p18.v15_oof": 0.0,
+          "v15_oof.target -> p18.target": 0.0
+        },
+        "max_abs_diff": 0.0,
+        "status": "PASS",
+        "note": ""
+      },
       "R1 Data": {
         "n_rows": [
           247472,
@@ -974,6 +1005,17 @@
       }
     },
     "2023": {
+      "R0 Artifact Chain": {
+        "links": {
+          "anchor.p_base -> v15_oof.p_base": 0.0,
+          "anchor.target(역산) -> v15_oof.target": 0.0,
+          "v15_oof.v15_oof -> p18.v15_oof": 0.0,
+          "v15_oof.target -> p18.target": 0.0
+        },
+        "max_abs_diff": 0.0,
+        "status": "PASS",
+        "note": ""
+      },
       "R1 Data": {
         "n_rows": [
           245525,
@@ -1303,6 +1345,17 @@
       }
     },
     "2024": {
+      "R0 Artifact Chain": {
+        "links": {
+          "anchor.p_base -> v15_oof.p_base": 0.0,
+          "anchor.target(역산) -> v15_oof.target": 0.0,
+          "v15_oof.v15_oof -> p18.v15_oof": 0.0,
+          "v15_oof.target -> p18.target": 0.0
+        },
+        "max_abs_diff": 0.0,
+        "status": "PASS",
+        "note": ""
+      },
       "R1 Data": {
         "n_rows": [
           253507,
@@ -1650,7 +1703,7 @@
   },
   "overall": "PASS",
   "counts": {
-    "PASS": 109,
+    "PASS": 114,
     "SKIP": 2
   }
 }
