@@ -72,7 +72,7 @@
         "status": "PASS"
       },
       "status": "PASS",
-      "sec": 3.1
+      "sec": 2.7
     },
     "proxy_from_train2024": {
       "label": "proxy",
@@ -104,13 +104,6 @@
             "abs_diff": 1.1102230246251565e-16
           },
           {
-            "row": 18196,
-            "domain3": "F",
-            "full": 0.5006597985343852,
-            "single": 0.5006597985343854,
-            "abs_diff": 1.1102230246251565e-16
-          },
-          {
             "row": 337,
             "domain3": "F",
             "full": 0.4550920593988247,
@@ -130,6 +123,13 @@
             "full": 0.5023248898572682,
             "single": 0.5023248898572682,
             "abs_diff": 0.0
+          },
+          {
+            "row": 1380,
+            "domain3": "F",
+            "full": 0.41384380072636173,
+            "single": 0.41384380072636173,
+            "abs_diff": 0.0
           }
         ],
         "status": "PASS"
@@ -144,7 +144,7 @@
         "status": "PASS"
       },
       "status": "PASS",
-      "sec": 20.2
+      "sec": 19.9
     }
   },
   "overall": "PASS"

@@ -261,7 +261,7 @@
       },
       "R4 Seed 42": {
         "max_abs_diff": 1.1102230246251565e-16,
-        "mean_abs_diff": 1.4557386465943756e-18,
+        "mean_abs_diff": 1.3668160078163095e-18,
         "corr": 1.0,
         "bss_ref": 897.1333619590349,
         "bss_cand": 897.1333619590682,
@@ -275,8 +275,8 @@
       },
       "R4 Seed 2026": {
         "max_abs_diff": 1.1102230246251565e-16,
-        "mean_abs_diff": 1.490307038139813e-18,
-        "corr": 0.9999999999999999,
+        "mean_abs_diff": 1.5039524558551172e-18,
+        "corr": 0.9999999999999998,
         "bss_ref": 888.8509700584857,
         "bss_cand": 888.8509700584857,
         "bss_abs_diff": 0.0,
@@ -289,7 +289,7 @@
       },
       "R4 Seed 314": {
         "max_abs_diff": 1.1102230246251565e-16,
-        "mean_abs_diff": 1.4555112229657872e-18,
+        "mean_abs_diff": 1.4084345318479875e-18,
         "corr": 1.0,
         "bss_ref": 908.8226558430334,
         "bss_cand": 908.8226558430334,
@@ -303,7 +303,7 @@
       },
       "R4 V15 OOF": {
         "max_abs_diff": 2.220446049250313e-16,
-        "mean_abs_diff": 1.4159395115914047e-18,
+        "mean_abs_diff": 1.371591904016666e-18,
         "corr": 1.0,
         "bss_ref": 914.1349961444889,
         "bss_cand": 914.1349961444778,
@@ -579,7 +579,7 @@
       },
       "R4 Seed 42": {
         "max_abs_diff": 1.1102230246251565e-16,
-        "mean_abs_diff": 1.4558062713630395e-18,
+        "mean_abs_diff": 1.436485385662851e-18,
         "corr": 0.9999999999999999,
         "bss_ref": 1858.5620106274291,
         "bss_cand": 1858.5620106274291,
@@ -593,8 +593,8 @@
       },
       "R4 Seed 2026": {
         "max_abs_diff": 1.1102230246251565e-16,
-        "mean_abs_diff": 1.3322424674664853e-18,
-        "corr": 1.0,
+        "mean_abs_diff": 1.3621224418632885e-18,
+        "corr": 0.9999999999999998,
         "bss_ref": 1850.4087537492442,
         "bss_cand": 1850.4087537492442,
         "bss_abs_diff": 0.0,
@@ -607,7 +607,7 @@
       },
       "R4 Seed 314": {
         "max_abs_diff": 1.1102230246251565e-16,
-        "mean_abs_diff": 1.50208653245884e-18,
+        "mean_abs_diff": 1.4892808291459243e-18,
         "corr": 1.0,
         "bss_ref": 1856.8649934727732,
         "bss_cand": 1856.8649934727732,
@@ -621,7 +621,7 @@
       },
       "R4 V15 OOF": {
         "max_abs_diff": 2.220446049250313e-16,
-        "mean_abs_diff": 1.4115479634219102e-18,
+        "mean_abs_diff": 1.3868352026425992e-18,
         "corr": 1.0,
         "bss_ref": 1866.5786463076706,
         "bss_cand": 1866.5786463076706,
@@ -634,34 +634,12 @@
         "status": "PASS"
       },
       "R5 L2 Correction": {
-        "max_abs_diff": 0.0,
-        "mean_abs_diff": 0.0,
-        "corr": 1.0,
-        "bss_ref": null,
-        "bss_cand": null,
-        "bss_abs_diff": null,
-        "bit_identical": true,
-        "v15_oof_target_guard": {
-          "v15_oof": 2.220446049250313e-16,
-          "target": 0.0,
-          "core": true
-        },
-        "status": "PASS"
+        "status": "SKIP",
+        "note": "reference p18 없음 (stage != p18)"
       },
       "R5 P18 Final": {
-        "max_abs_diff": 2.220446049250313e-16,
-        "mean_abs_diff": 1.4126712707300607e-18,
-        "corr": 1.0,
-        "bss_ref": 1836.9740268449618,
-        "bss_cand": 1836.9740268449618,
-        "bss_abs_diff": 0.0,
-        "bit_identical": false,
-        "v15_oof_target_guard": {
-          "v15_oof": 2.220446049250313e-16,
-          "target": 0.0,
-          "core": true
-        },
-        "status": "PASS"
+        "status": "SKIP",
+        "note": "reference p18 없음 (stage != p18)"
       }
     },
     "2022": {
@@ -919,7 +897,7 @@
       },
       "R4 Seed 42": {
         "max_abs_diff": 1.1102230246251565e-16,
-        "mean_abs_diff": 1.119096841229494e-18,
+        "mean_abs_diff": 1.1451171325870047e-18,
         "corr": 1.0,
         "bss_ref": 2479.3612746689673,
         "bss_cand": 2479.3612746689673,
@@ -933,7 +911,7 @@
       },
       "R4 Seed 2026": {
         "max_abs_diff": 1.1102230246251565e-16,
-        "mean_abs_diff": 1.1635107868224865e-18,
+        "mean_abs_diff": 1.2027655367152828e-18,
         "corr": 1.0,
         "bss_ref": 2462.5195092434105,
         "bss_cand": 2462.5195092434105,
@@ -947,7 +925,7 @@
       },
       "R4 Seed 314": {
         "max_abs_diff": 1.1102230246251565e-16,
-        "mean_abs_diff": 1.1101243269682833e-18,
+        "mean_abs_diff": 1.1240317240731596e-18,
         "corr": 0.9999999999999998,
         "bss_ref": 2462.315556916994,
         "bss_cand": 2462.315556916994,
@@ -961,7 +939,7 @@
       },
       "R4 V15 OOF": {
         "max_abs_diff": 2.220446049250313e-16,
-        "mean_abs_diff": 1.1233587855035689e-18,
+        "mean_abs_diff": 1.1347987411866125e-18,
         "corr": 1.0,
         "bss_ref": 2479.607212772417,
         "bss_cand": 2479.607212772417,
@@ -974,34 +952,12 @@
         "status": "PASS"
       },
       "R5 L2 Correction": {
-        "max_abs_diff": 0.0,
-        "mean_abs_diff": 0.0,
-        "corr": 1.0,
-        "bss_ref": null,
-        "bss_cand": null,
-        "bss_abs_diff": null,
-        "bit_identical": true,
-        "v15_oof_target_guard": {
-          "v15_oof": 2.220446049250313e-16,
-          "target": 0.0,
-          "core": true
-        },
-        "status": "PASS"
+        "status": "SKIP",
+        "note": "reference p18 없음 (stage != p18)"
       },
       "R5 P18 Final": {
-        "max_abs_diff": 2.220446049250313e-16,
-        "mean_abs_diff": 1.1287422940602953e-18,
-        "corr": 1.0,
-        "bss_ref": 2500.652188384445,
-        "bss_cand": 2500.652188384445,
-        "bss_abs_diff": 0.0,
-        "bit_identical": false,
-        "v15_oof_target_guard": {
-          "v15_oof": 2.220446049250313e-16,
-          "target": 0.0,
-          "core": true
-        },
-        "status": "PASS"
+        "status": "SKIP",
+        "note": "reference p18 없음 (stage != p18)"
       }
     },
     "2023": {
@@ -1259,7 +1215,7 @@
       },
       "R4 Seed 42": {
         "max_abs_diff": 1.1102230246251565e-16,
-        "mean_abs_diff": 1.6258250219080544e-18,
+        "mean_abs_diff": 1.608868148504758e-18,
         "corr": 0.9999999999999999,
         "bss_ref": 696.4288718022349,
         "bss_cand": 696.4288718022349,
@@ -1273,7 +1229,7 @@
       },
       "R4 Seed 2026": {
         "max_abs_diff": 1.1102230246251565e-16,
-        "mean_abs_diff": 1.6500168279634237e-18,
+        "mean_abs_diff": 1.6475298198642735e-18,
         "corr": 0.9999999999999999,
         "bss_ref": 694.0929252275852,
         "bss_cand": 694.0929252275852,
@@ -1287,7 +1243,7 @@
       },
       "R4 Seed 314": {
         "max_abs_diff": 1.1102230246251565e-16,
-        "mean_abs_diff": 1.6497907363180465e-18,
+        "mean_abs_diff": 1.5876155338392931e-18,
         "corr": 1.0,
         "bss_ref": 694.7128670971026,
         "bss_cand": 694.7128670971026,
@@ -1301,8 +1257,8 @@
       },
       "R4 V15 OOF": {
         "max_abs_diff": 2.220446049250313e-16,
-        "mean_abs_diff": 1.5634237277839238e-18,
-        "corr": 1.0,
+        "mean_abs_diff": 1.5871633505485385e-18,
+        "corr": 0.9999999999999999,
         "bss_ref": 708.501067974987,
         "bss_cand": 708.501067974987,
         "bss_abs_diff": 0.0,
@@ -1314,34 +1270,12 @@
         "status": "PASS"
       },
       "R5 L2 Correction": {
-        "max_abs_diff": 0.0,
-        "mean_abs_diff": 0.0,
-        "corr": 0.9999999999999998,
-        "bss_ref": null,
-        "bss_cand": null,
-        "bss_abs_diff": null,
-        "bit_identical": true,
-        "v15_oof_target_guard": {
-          "v15_oof": 2.220446049250313e-16,
-          "target": 0.0,
-          "core": true
-        },
-        "status": "PASS"
+        "status": "SKIP",
+        "note": "reference p18 없음 (stage != p18)"
       },
       "R5 P18 Final": {
-        "max_abs_diff": 2.220446049250313e-16,
-        "mean_abs_diff": 1.5616149946209054e-18,
-        "corr": 0.9999999999999999,
-        "bss_ref": 729.6820288603678,
-        "bss_cand": 729.6820288603678,
-        "bss_abs_diff": 0.0,
-        "bit_identical": false,
-        "v15_oof_target_guard": {
-          "v15_oof": 2.220446049250313e-16,
-          "target": 0.0,
-          "core": true
-        },
-        "status": "PASS"
+        "status": "SKIP",
+        "note": "reference p18 없음 (stage != p18)"
       }
     },
     "2024": {
@@ -1599,7 +1533,7 @@
       },
       "R4 Seed 42": {
         "max_abs_diff": 1.1102230246251565e-16,
-        "mean_abs_diff": 8.98226646012219e-19,
+        "mean_abs_diff": 8.960369174748904e-19,
         "corr": 1.0,
         "bss_ref": 912.7799902995392,
         "bss_cand": 912.7799902995392,
@@ -1613,7 +1547,7 @@
       },
       "R4 Seed 2026": {
         "max_abs_diff": 1.1102230246251565e-16,
-        "mean_abs_diff": 9.57349316520093e-19,
+        "mean_abs_diff": 9.137737186272526e-19,
         "corr": 1.0,
         "bss_ref": 894.4873834009437,
         "bss_cand": 894.4873834009437,
@@ -1627,7 +1561,7 @@
       },
       "R4 Seed 314": {
         "max_abs_diff": 1.1102230246251565e-16,
-        "mean_abs_diff": 8.730447678329394e-19,
+        "mean_abs_diff": 9.389555968065321e-19,
         "corr": 1.0,
         "bss_ref": 920.8605764891909,
         "bss_cand": 920.8605764891909,
@@ -1641,7 +1575,7 @@
       },
       "R4 V15 OOF": {
         "max_abs_diff": 2.220446049250313e-16,
-        "mean_abs_diff": 8.988835645734176e-19,
+        "mean_abs_diff": 9.181531757019098e-19,
         "corr": 1.0,
         "bss_ref": 920.5762725757461,
         "bss_cand": 920.5762725757461,
@@ -1654,52 +1588,18 @@
         "status": "PASS"
       },
       "R5 L2 Correction": {
-        "max_abs_diff": 0.0,
-        "mean_abs_diff": 0.0,
-        "corr": 0.9999999999999999,
-        "bss_ref": null,
-        "bss_cand": null,
-        "bss_abs_diff": null,
-        "bit_identical": true,
-        "v15_oof_target_guard": {
-          "v15_oof": 2.220446049250313e-16,
-          "target": 0.0,
-          "core": true
-        },
-        "status": "PASS"
+        "status": "SKIP",
+        "note": "reference p18 없음 (stage != p18)"
       },
       "R5 P18 Final": {
-        "max_abs_diff": 2.220446049250313e-16,
-        "mean_abs_diff": 8.977887003047532e-19,
-        "corr": 1.0,
-        "bss_ref": 945.2816728532598,
-        "bss_cand": 945.2816728532598,
-        "bss_abs_diff": 0.0,
-        "bit_identical": false,
-        "v15_oof_target_guard": {
-          "v15_oof": 2.220446049250313e-16,
-          "target": 0.0,
-          "core": true
-        },
-        "status": "PASS"
+        "status": "SKIP",
+        "note": "reference p18 없음 (stage != p18)"
       }
     }
   },
   "promotion_gate": {
-    "ref_submit_recommended": true,
-    "cand_submit_recommended": true,
-    "submit_recommended_match": true,
-    "metric_abs_diffs": {
-      "temporal_2022_to_2023_gain": 0.0,
-      "temporal_2023_to_2024_gain": 0.0,
-      "core_2024_gain": 0.0,
-      "early_gain": 0.0,
-      "late_gain": 0.0,
-      "boot_p05": 0.0,
-      "boot_prob_positive": 0.0
-    },
-    "max_metric_abs_diff": 0.0,
-    "status": "PASS"
+    "status": "SKIP",
+    "note": "reference manifest_p18.json 없음"
   },
   "deploy": {
     "p1": {
@@ -1751,11 +1651,11 @@
       "status": "PASS"
     },
     "correction": {
-      "max_abs_diff": 0.0,
-      "mean_abs_diff": 0.0,
-      "corr": 1.0,
+      "max_abs_diff": 8.673617379884035e-19,
+      "mean_abs_diff": 1.7347234759768072e-19,
+      "corr": 0.9999999999999999,
       "n": 5,
-      "bit_identical": true,
+      "bit_identical": false,
       "row_domain_guard": {
         "row_id": true,
         "domain3": true
@@ -1849,11 +1749,11 @@
       "status": "PASS"
     },
     "R6 Deploy L1 corr": {
-      "max_abs_diff": 0.0,
-      "mean_abs_diff": 0.0,
-      "corr": 1.0,
+      "max_abs_diff": 8.673617379884035e-19,
+      "mean_abs_diff": 1.7347234759768072e-19,
+      "corr": 0.9999999999999999,
       "n": 5,
-      "bit_identical": true,
+      "bit_identical": false,
       "row_domain_guard": {
         "row_id": true,
         "domain3": true
@@ -1951,7 +1851,7 @@
   },
   "overall": "PASS",
   "counts": {
-    "PASS": 124,
-    "SKIP": 2
+    "PASS": 115,
+    "SKIP": 11
   }
 }
