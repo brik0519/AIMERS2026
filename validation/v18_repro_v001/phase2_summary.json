@@ -174,7 +174,7 @@
       "source_year": 2023,
       "bank_prior": 0.49995723449750534,
       "bank_source_max_season": 2023,
-      "sec_features": 11.63,
+      "sec_features": 10.97,
       "blocks": {
         "self_state": {
           "block": "self_state",
@@ -846,7 +846,7 @@
       "source_year": 2019,
       "bank_prior": 0.5646700054335694,
       "bank_source_max_season": 2019,
-      "sec_features": 8.9,
+      "sec_features": 8.93,
       "blocks": {
         "self_state": {
           "block": "self_state",
@@ -1518,7 +1518,7 @@
       "source_year": 2020,
       "bank_prior": 0.5327116970588356,
       "bank_source_max_season": 2020,
-      "sec_features": 9.83,
+      "sec_features": 9.82,
       "blocks": {
         "self_state": {
           "block": "self_state",
@@ -2190,7 +2190,7 @@
       "source_year": 2021,
       "bank_prior": 0.5327616072006734,
       "bank_source_max_season": 2021,
-      "sec_features": 10.82,
+      "sec_features": 10.21,
       "blocks": {
         "self_state": {
           "block": "self_state",
@@ -2862,7 +2862,7 @@
       "source_year": 2022,
       "bank_prior": 0.5289204435249241,
       "bank_source_max_season": 2022,
-      "sec_features": 11.22,
+      "sec_features": 10.89,
       "blocks": {
         "self_state": {
           "block": "self_state",
@@ -3530,5 +3530,5 @@
       }
     }
   },
-  "elapsed_sec": 82.7
+  "elapsed_sec": 212.0
 }

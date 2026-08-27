@@ -934,10 +934,10 @@
     }
   },
   "domain_means_audit": {
-    "n_access": 245542,
+    "n_access": 1221658,
     "future_access_count": 0,
     "max_accessed_season": 2023,
     "policy": "V18 원본 전 시즌 groupby 유지. 읽기는 season <= source_year 만 assert."
   },
-  "elapsed_sec": 82.7
+  "elapsed_sec": 212.0
 }
