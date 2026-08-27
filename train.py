@@ -370,6 +370,24 @@ def write_json(path: Path, obj) -> None:
     )
 
 
+def merge_years_json(path: Path, obj: dict) -> None:
+    """연도별 subprocess 실행(`V18_REPRO_YEARS`)을 지원하기 위해 years 를 병합 저장한다.
+
+    통짜로 덮어쓰면 마지막 연도만 남아 gate 가 나머지 연도를 SKIP 한다.
+    top-level 키는 최신 실행 값으로 갱신하고 `years` 만 누적한다.
+    """
+    merged = dict(obj)
+    if path.exists():
+        try:
+            old = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            old = {}
+        years = dict(old.get("years", {}))
+        years.update(obj.get("years", {}))
+        merged["years"] = years
+    write_json(path, merged)
+
+
 def library_versions() -> dict:
     out = {
         "python": platform.python_version(),
@@ -1784,7 +1802,43 @@ def main():
             if PHASE >= 4:
                 oof_npz = FEATURE_DUMP_DIR / f"v15_oof_{year}.npz"
                 if RESUME and oof_npz.exists():
-                    print(f"[Phase 4] year {year}  RESUME — {oof_npz.name} 존재, 건너뜀")
+                    # 적합만 건너뛰고 보고는 한다. 통짜 덮어쓰기로 요약이 사라지는 것을 막는다.
+                    z = np.load(oof_npz)
+                    consensus = z["v15_oof"].astype(np.float64)
+                    oof_bss = raw_bss(y, consensus)
+                    seed_rows, fold_rows = [], []
+                    for name, box in [("v15_seed_scores", seed_rows),
+                                      ("v15_fold_scores", fold_rows)]:
+                        p_ = VALIDATION_DIR / f"{name}_{year}.csv"
+                        if p_.exists():
+                            box.extend(pd.read_csv(p_).to_dict("records"))
+                    phase4_summary["years"][str(year)] = {
+                        "source_year": st["source_year"],
+                        "n_rows": st["n_rows"],
+                        "adapter_matrix_shape": list(X_adapter.shape),
+                        "cf_seeds": list(CF_SEEDS),
+                        "v15_cf_cfg": V15_CF_CFG,
+                        "adapter_shrink": ADAPTER_SHRINK,
+                        "base_bss": bss,
+                        "v15_oof_bss": oof_bss,
+                        "gain_vs_base": oof_bss - bss,
+                        "official_score_base": official_score(y, p_base),
+                        "official_score_v15_oof": official_score(y, consensus),
+                        "seed_rows": seed_rows,
+                        "fold_rows": fold_rows,
+                        "v15_oof": {"mean": float(consensus.mean()),
+                                    "min": float(consensus.min()),
+                                    "max": float(consensus.max())},
+                        "domain_bss": {
+                            d: raw_bss(y[st["domain3"] == d], consensus[st["domain3"] == d])
+                            for d in ["R_CORE", "R_ANCHOR", "F"]
+                        },
+                        "resumed_from_npz": True,
+                    }
+                    print(f"[Phase 4] year {year}  RESUME — {oof_npz.name} 재사용, "
+                          f"v15_oof_bss={oof_bss:.2f} gain_vs_base={oof_bss - bss:+.2f}")
+                    del z, consensus
+                    gc.collect()
                 else:
                     print(f"[Phase 4] year {year}  V15 residual adapter crossfit "
                           f"(seeds={list(CF_SEEDS)}, cfg n_estimators="
@@ -1872,12 +1926,12 @@ def main():
     phase2_summary["elapsed_sec"] = round(time.time() - global_start, 1)
     phase3_summary["elapsed_sec"] = round(time.time() - global_start, 1)
 
-    write_json(VALIDATION_DIR / "phase2_summary.json", phase2_summary)
+    merge_years_json(VALIDATION_DIR / "phase2_summary.json", phase2_summary)
     if PHASE >= 3:
-        write_json(VALIDATION_DIR / "phase3_summary.json", phase3_summary)
+        merge_years_json(VALIDATION_DIR / "phase3_summary.json", phase3_summary)
     if PHASE >= 4 and phase4_summary["years"]:
         phase4_summary["elapsed_sec"] = round(time.time() - global_start, 1)
-        write_json(VALIDATION_DIR / "phase4_summary.json", phase4_summary)
+        merge_years_json(VALIDATION_DIR / "phase4_summary.json", phase4_summary)
 
     metadata = {
         "experiment_name": EXPERIMENT_NAME,

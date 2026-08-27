@@ -206,8 +206,9 @@
         "status": "PASS"
       },
       "R3 Trend Scalars": {
-        "status": "SKIP",
-        "note": "manifest/summary missing"
+        "trend_slope_diff": 0.0,
+        "trend_prior_max_diff": 0.0,
+        "status": "PASS"
       },
       "R3 Exact LGB": {
         "max_abs_diff": 0.0,
@@ -504,8 +505,9 @@
         "status": "PASS"
       },
       "R3 Trend Scalars": {
-        "status": "SKIP",
-        "note": "manifest/summary missing"
+        "trend_slope_diff": 0.0,
+        "trend_prior_max_diff": 0.0,
+        "status": "PASS"
       },
       "R3 Exact LGB": {
         "max_abs_diff": 0.0,
@@ -802,8 +804,9 @@
         "status": "PASS"
       },
       "R3 Trend Scalars": {
-        "status": "SKIP",
-        "note": "manifest/summary missing"
+        "trend_slope_diff": 0.0,
+        "trend_prior_max_diff": 0.0,
+        "status": "PASS"
       },
       "R3 Exact LGB": {
         "max_abs_diff": 0.0,
@@ -1100,8 +1103,9 @@
         "status": "PASS"
       },
       "R3 Trend Scalars": {
-        "status": "SKIP",
-        "note": "manifest/summary missing"
+        "trend_slope_diff": 0.0,
+        "trend_prior_max_diff": 0.0,
+        "status": "PASS"
       },
       "R3 Exact LGB": {
         "max_abs_diff": 0.0,
@@ -1502,7 +1506,6 @@
   },
   "overall": "PASS",
   "counts": {
-    "PASS": 96,
-    "SKIP": 4
+    "PASS": 100
   }
 }

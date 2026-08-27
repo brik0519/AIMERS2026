@@ -295,15 +295,71 @@ def compare_v15_oof(ref_dir: Path, cand_dir: Path, year: int) -> dict:
     return out
 
 
+def run_selfcheck(dir_a: Path, dir_b: Path, years: list[int]) -> dict:
+    """R3-0 — 자기 결정성.
+
+    같은 코드/같은 환경에서 reference 를 두 번 돌린 산출물을 비교한다.
+    여기서 나온 차이는 **재현 오차가 아니라 환경 잡음의 하한**이다.
+    R3 / R4 의 잔여 차이를 해석하는 기준선이 된다.
+    """
+    report = {"dir_a": str(dir_a), "dir_b": str(dir_b), "years": {}}
+    print("=" * 84)
+    print(f"{'Year':<6}{'Artifact':<18}{'Key':<16}{'max_abs_diff':>16}{'bit_identical':>16}")
+    print("=" * 84)
+    for year in years:
+        y = {}
+        for art in ("anchor", "v15_oof"):
+            pa = dir_a / f"{art}_{year}.npz"
+            pb = dir_b / f"{art}_{year}.npz"
+            if not (pa.exists() and pb.exists()):
+                y[art] = {"status": "SKIP", "note": f"{art}_{year}.npz 없음"}
+                print(f"{year:<6}{art:<18}{'-':<16}{'SKIP':>16}{'':>16}")
+                continue
+            a, b = np.load(pa), np.load(pb)
+            keys = [k for k in a.files if k in b.files]
+            per = {}
+            for k in keys:
+                d = float(np.abs(a[k].astype(np.float64) - b[k].astype(np.float64)).max())
+                per[k] = {"max_abs_diff": d, "bit_identical": bool(d == 0.0)}
+                print(f"{year:<6}{art:<18}{k:<16}{d:>16.3e}{str(d == 0.0):>16}")
+            y[art] = per
+        report["years"][str(year)] = y
+    print("=" * 84)
+    allv = [v["max_abs_diff"]
+            for yv in report["years"].values()
+            for art in yv.values() if isinstance(art, dict)
+            for v in art.values() if isinstance(v, dict) and "max_abs_diff" in v]
+    report["environment_noise_floor"] = max(allv) if allv else None
+    print(f"환경 잡음 하한 (같은 코드 2회 실행 최대 차이): "
+          f"{report['environment_noise_floor']}")
+    return report
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--reference", required=True)
-    ap.add_argument("--candidate", required=True,
+    ap.add_argument("--reference", required=False, default=None)
+    ap.add_argument("--candidate", required=False, default=None,
                     help="train.py 의 FEATURE_DUMP_DIR (기본 validation/<exp>/matrices)")
-    ap.add_argument("--validation-dir", required=True)
+    ap.add_argument("--validation-dir", required=True)  # selfcheck 에서도 출력 위치로 쓴다
     ap.add_argument("--year", type=int, action="append", default=None)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--selfcheck", nargs=2, metavar=("REF_A", "REF_B"), default=None,
+                    help="R3-0 자기 결정성: reference 2회 실행분을 서로 비교한다")
     args = ap.parse_args()
+
+    if args.selfcheck:
+        a, b = Path(args.selfcheck[0]), Path(args.selfcheck[1])
+        years = args.year or sorted(
+            {int(p.stem.rsplit("_", 1)[1]) for p in a.glob("v15_oof_*.npz")}
+            | {int(p.stem.rsplit("_", 1)[1]) for p in a.glob("anchor_*.npz")}
+        )
+        rep = run_selfcheck(a, b, years)
+        out = Path(args.out) if args.out else Path(args.validation_dir) / "gate_r3_0_selfcheck.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(rep, indent=2, ensure_ascii=False, default=str),
+                       encoding="utf-8")
+        print("  ->", out)
+        return
 
     ref_dir = Path(args.reference)
     cand_dir = Path(args.candidate)
