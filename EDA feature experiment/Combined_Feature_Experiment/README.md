@@ -1,7 +1,7 @@
 # Combined Feature Experiment — fe_v002 계열 (conditional shrinkage ablation)
 
 `cb_reg_v002_fe_v001`(BBEB7 + situational5 + eb_pitcher_batter_gap +
-Temporal10, 57 feature, pooled_oof_clipped_brier=**0.24711557**, Public
+Temporal10, 57 feature, fold_2024 clipped_brier=**0.24796919**, Public
 LB=838.38, 별도 브랜치 `experiment/situational_feature_v001`)를 기준으로,
 투수x조건(platoon/count) 조건부 shrinkage feature를 추가했을 때 성능이
 어떻게 변하는지 추적하는 ablation 시리즈다. 첫 시도(fe_v002)가
@@ -16,30 +16,35 @@ baseline보다 악화되어, 그 원인을 하나씩 격리해가며 검증한 1
 python "EDA feature experiment/Combined_Feature_Experiment/<스크립트명>.py"
 ```
 
-비교 지표는 전부 **pooled OOF clipped Brier score**(`validation/<name>/
-metadata.json`의 `summary.pooled_oof_clipped_brier`, **낮을수록 좋음**)이다.
+비교 지표는 **2024 fold(가장 최근 validation season) clipped Brier
+score**(`validation/<name>/fold_2024/metadata.json`의 `clipped_brier`,
+**낮을수록 좋음**)이다.
 
-## 실험 결과 요약 (Brier 오름차순 = 좋은 순)
+## 실험 결과 요약 (2024 fold Brier 오름차순 = 좋은 순)
 
-| 순위 | 스크립트 | pooled_oof_clipped_brier | vs fe_v001 |
+| 순위 | 스크립트 | fold_2024 clipped_brier | vs fe_v001(2024) |
 |---|---|---|---|
-| — | `cb_reg_v002_fe_v001` (baseline, 별도 브랜치) | 0.24711557 | — |
-| 1 | `cb_reg_v002_fe_v002j_no_game_month_train.py` | 0.24710723 | **-0.0000083** (근소 개선) |
-| 2 | `cb_reg_v002_fe_v002k_no_player_id_train.py` | 0.24711503 | -0.0000005 (거의 동일) |
-| 3 | `cb_reg_v002_fe_v002n_hbeb_success_train.py` | 0.24712091 | +0.0000053 (거의 동일) |
-| 4 | `cb_reg_v002_fe_v002h2_count_bbeb_delta_only_train.py` | 0.24715609 | +0.0000405 |
-| 5 | `cb_reg_v002_fe_v002i2_platoon_bbeb_delta_only_train.py` | 0.24735449 | +0.0002389 |
-| 6 | `cb_reg_v002_fe_v002l_count_platoon_bbeb_delta_train.py` | 0.24741517 | +0.0002996 |
-| 7 | `cb_reg_v002_fe_v002m_no_id_count_platoon_bbeb_delta_train.py` | 0.24743825 | +0.0003227 |
-| 8 | `cb_reg_v002_fe_v002h_count_bbeb_train.py` | 0.24766133 | +0.0005457 |
-| 9 | `cb_reg_v002_fe_v002e_delta_only_train.py` | 0.24793149 | +0.0008159 |
-| 10 | `cb_reg_v002_fe_v002c_count_only_train.py` | 0.24801057 | +0.0008950 |
-| 11 | `cb_reg_v002_fe_v002i_platoon_bbeb_train.py` | 0.24852347 | +0.0014079 |
-| 12 | `cb_reg_v002_fe_v002_mingroupn10_train.py` | 0.24870141 | +0.0015858 |
-| 13 | `cb_reg_v002_fe_v002_mingroupn50_train.py` | 0.24872978 | +0.0016142 |
-| 14 | `cb_reg_v002_fe_v002_train.py` | 0.24880612 | +0.0016905 (악화) |
-| 15 | `cb_reg_v002_fe_v002b_platoon_only_train.py` | 0.24881300 | +0.0016974 (악화) |
-| 16 | `cb_reg_v002_fe_v002_mingroupn30_train.py` | 0.24892446 | +0.0018089 (최악) |
+| — | `cb_reg_v002_fe_v001` (baseline, 별도 브랜치) | 0.24796919 | — |
+| 1 | `cb_reg_v002_fe_v002j_no_game_month_train.py` | 0.24794787 | **-0.00002132** |
+| 2 | `cb_reg_v002_fe_v002n_hbeb_success_train.py` | 0.24797458 | +0.00000539 |
+| 3 | `cb_reg_v002_fe_v002h2_count_bbeb_delta_only_train.py` | 0.24805013 | +0.00008094 |
+| 4 | `cb_reg_v002_fe_v002k_no_player_id_train.py` | 0.24817330 | +0.00020411 |
+| 5 | `cb_reg_v002_fe_v002i2_platoon_bbeb_delta_only_train.py` | 0.24849076 | +0.00052157 |
+| 6 | `cb_reg_v002_fe_v002l_count_platoon_bbeb_delta_train.py` | 0.24853651 | +0.00056732 |
+| 7 | `cb_reg_v002_fe_v002m_no_id_count_platoon_bbeb_delta_train.py` | 0.24868255 | +0.00071336 |
+| 8 | `cb_reg_v002_fe_v002h_count_bbeb_train.py` | 0.24871363 | +0.00074444 |
+| 9 | `cb_reg_v002_fe_v002e_delta_only_train.py` | 0.24891155 | +0.00094236 |
+| 10 | `cb_reg_v002_fe_v002c_count_only_train.py` | 0.24913036 | +0.00116117 |
+| 11 | `cb_reg_v002_fe_v002_mingroupn50_train.py` | 0.24977889 | +0.00180970 |
+| 12 | `cb_reg_v002_fe_v002_mingroupn10_train.py` | 0.24978134 | +0.00181215 |
+| 13 | `cb_reg_v002_fe_v002_train.py` | 0.24991890 | +0.00194971 |
+| 14 | `cb_reg_v002_fe_v002b_platoon_only_train.py` | 0.24993727 | +0.00196808 |
+| 15 | `cb_reg_v002_fe_v002_mingroupn30_train.py` | 0.24995982 | +0.00199063 |
+| 16 | `cb_reg_v002_fe_v002i_platoon_bbeb_train.py` | 0.25012034 | +0.00215115 |
+
+2024는 validation season 4개(2021~2024) 중 가장 최근 하나뿐이라 여러
+season을 평균하는 것보다 분산이 크다는 점은 참고할 것 — 격차가 작은
+구간(h/h2/i/i2 등)의 순위 차이는 노이즈일 수 있다.
 
 **결론**: platoon/count를 GITS 스타일 고정-strength 계층 shrinkage로 추가하면
 거의 항상 baseline보다 악화된다. 원인은 대부분 `platoon_rate`가 이미
@@ -72,7 +77,7 @@ cond_delta  = cond_rate - parent_rate
 - `platoon_rate`/`platoon_delta`: 투수 x 타자손(batter_hand) 조건
 - `count_rate`/`count_delta`: 투수 x 볼카운트 조건
 
-결과: **0.24880612** — baseline보다 악화. 이 실패를 원인 분리하기 위해
+결과: **0.24991890** — baseline보다 악화. 이 실패를 원인 분리하기 위해
 아래 ablation B~N이 이어진다.
 
 ### `cb_reg_v002_fe_v002_mingroupn10/30/50_train.py` — Step 4: 표본 부족 대응
@@ -82,20 +87,20 @@ fe_v002가 악화된 원인이 표본 부족(pitcher x condition 그룹이 너�
 fallback(delta=0). `MIN_GROUP_N`=10/30/50 세 버전 비교. 그 외 로직은 fe_v002와
 동일(61 feature, platoon+count 둘 다 포함).
 
-결과: 0.24870141 / 0.24892446 / 0.24872978 — 셋 다 fe_v002보다 약간 낫거나
+결과: 0.24978134 / 0.24995982 / 0.24977889 — 셋 다 fe_v002보다 약간 낫거나
 비슷하지만, 여전히 baseline보다 크게 악화. 표본 부족만으로는 설명되지 않음.
 
 ### `cb_reg_v002_fe_v002b_platoon_only_train.py` — Ablation B
 fe_v002의 원인 분리: **platoon 관련 2개(platoon_rate, platoon_delta)만**
 fe_v001에 추가, count는 제외.
 
-결과: **0.24881300** — fe_v002 전체 추가(0.24880612)와 거의 동일한 악화폭.
+결과: **0.24993727** — fe_v002 전체 추가(0.24991890)와 거의 동일한 악화폭.
 즉 fe_v002 악화의 대부분이 platoon에서 온다는 것을 확인.
 
 ### `cb_reg_v002_fe_v002c_count_only_train.py` — Ablation C
 **count 관련 2개(count_rate, count_delta)만** fe_v001에 추가, platoon은 제외.
 
-결과: **0.24801057** — B(platoon only)보다는 덜 나쁘지만 여전히 baseline보다
+결과: **0.24913036** — B(platoon only)보다는 덜 나쁘지만 여전히 baseline보다
 악화.
 
 ### `cb_reg_v002_fe_v002e_delta_only_train.py` — Ablation E
@@ -104,7 +109,7 @@ B/C 결과 분석으로 `platoon_rate`/`count_rate`가 이미 top feature인
 계열을 모델 입력에서 빼고 **delta 계열만(platoon_delta, count_delta, corr
 < 0.08로 독립적)** 넣으면 collinearity로 인한 악화가 사라지는지 검증.
 
-결과: **0.24793149** — 개선되긴 했지만 여전히 baseline보다 악화. rate/delta
+결과: **0.24891155** — 개선되긴 했지만 여전히 baseline보다 악화. rate/delta
 문제만으로는 fe_v002 악화를 다 설명하지 못함.
 
 ### BBEB(MLE) 방식으로 shrinkage 교체 — H, H2, I, I2
@@ -122,13 +127,13 @@ platoon 계열은 아예 넣지 않고, `count_bbeb_rate`/`count_bbeb_delta`만
 `fit_beta_binomial_prior_from_summary()`로 alpha/beta를 MLE 추정한 뒤 그
 prior로 각 행의 conjugate posterior를 계산(기존 BBEB의 target 방식과 동일).
 
-결과: **0.24766133** — GITS 방식의 ablation C(0.24801057)보다 fe_v001과의
+결과: **0.24871363** — GITS 방식의 ablation C(0.24913036)보다 fe_v001과의
 격차가 크게 좁혀짐. shrinkage 방식 교체가 유효함을 확인.
 
 #### `cb_reg_v002_fe_v002h2_count_bbeb_delta_only_train.py`
 h와 동일한 count_bbeb 계산이지만, **delta만** 최종 feature에 포함(rate 제외).
 
-결과: **0.24715609** — baseline(0.24711557)과 거의 같은 수준까지 좁혀짐.
+결과: **0.24805013** — baseline(0.24796919)과 거의 같은 수준까지 좁혀짐.
 h2가 이 시리즈 중 baseline에 가장 근접한 결과.
 
 #### `cb_reg_v002_fe_v002i_platoon_bbeb_train.py`
@@ -136,13 +141,13 @@ h와 같은 처방을 platoon에 적용: 기존 범주형 `platoon` 컬럼은 �
 목록에서 제거하고, 대신 `(pitcher_id, batter_hand)` 조합을 group으로 하는
 `platoon_bbeb_rate`/`platoon_bbeb_delta`를 BBEB(MLE)로 계산해 추가.
 
-결과: **0.24852347** — h(count_bbeb)만큼 개선되지 않음. platoon은 shrinkage
-방식을 바꿔도 여전히 손해가 큰 편.
+결과: **0.25012034** — h(count_bbeb)만큼 개선되지 않음. platoon은 shrinkage
+방식을 바꿔도 여전히 손해가 큰 편(이 시리즈 전체에서 가장 나쁜 값).
 
 #### `cb_reg_v002_fe_v002i2_platoon_bbeb_delta_only_train.py`
 i와 동일한 platoon_bbeb 계산이지만 **delta만** 포함(rate 제외).
 
-결과: **0.24735449** — i보다는 크게 개선되지만, h2(count_bbeb delta only)만큼
+결과: **0.24849076** — i보다는 크게 개선되지만, h2(count_bbeb delta only)만큼
 baseline에 근접하지는 못함.
 
 ### 결합 및 추가 ablation — L, M
@@ -151,7 +156,7 @@ baseline에 근접하지는 못함.
 h2와 i2에서 확인한 "BBEB(MLE) + delta only" 최선의 처방을 **count와
 platoon 둘 다** 결합(`count_bbeb_delta` + `platoon_bbeb_delta`, 총 59개).
 
-결과: **0.24741517** — h2 단독(0.24715609)보다 오히려 나빠짐. 두 delta를
+결과: **0.24853651** — h2 단독(0.24805013)보다 오히려 나빠짐. 두 delta를
 같이 넣는 것이 단독으로 넣는 것보다 이득이 없고 약간의 간섭이 있는 것으로
 보임.
 
@@ -161,8 +166,8 @@ l과 동일한 feature 구성에 더해, `pitcher_id`/`batter_id`/
 player-ID 제거를 재현·결합). BBEB/count_bbeb/platoon_bbeb의 그룹핑 키로는
 계속 필요하므로 데이터 로딩 단계에서는 유지.
 
-결과: **0.24743825** — l과 거의 동일(차이 미미). player ID 제거가 이
-조합에서는 뚜렷한 효과가 없음.
+결과: **0.24868255** — l보다 소폭 나쁨(+0.00014604). player ID 제거가 이
+조합에서는 뚜렷한 이득이 없음.
 
 ### 단일 feature 제거 ablation — J, K
 
@@ -173,7 +178,7 @@ fe_v001(57 feature)에서 **`game_month` 딱 1개만 제거**(56 feature). GITS
 두고 있었기에, 그 경고가 fe_v001 단독(조건부 feature 없이)에도 적용되는지
 가장 단순하게 확인.
 
-결과: **0.24710723** — **이 시리즈 전체에서 유일하게 baseline을 앞선 실험**
+결과: **0.24794787** — **이 시리즈 전체에서 유일하게 baseline을 앞선 실험**
 (근소하지만). game_month 제거가 조건부 feature 유무와 무관하게 약간의
 이득이 있을 가능성.
 
@@ -185,8 +190,9 @@ fe_v001에서 raw player ID categorical 4개(`pitcher_id`, `batter_id`,
 `pitcher_id`/`batter_id`는 BBEB 7개 중 5개의 그룹핑 키로 여전히 필요하므로
 모델 입력 feature 목록에서만 제외.
 
-결과: **0.24711503** — baseline과 거의 동일(차이 무시할 수준). 이
-파이프라인에서는 player ID의 해로운 영향이 GITS 보고만큼 크지 않음.
+결과: **0.24817330** — baseline보다 뚜렷이 나쁨(+0.00020411, raw47
+`cb_reg_v002`보다도 나쁨). 이 파이프라인에서는 player ID 제거의 이득이
+GITS 보고와 달리 재현되지 않고, 오히려 2024 시즌에서는 손해로 나타남.
 
 ### 대안 shrinkage 방식 — N
 
@@ -207,9 +213,9 @@ pitcher_success/batter_success만 격리해서 교체.
 3. `eb_pitcher_batter_gap`을 `hbeb_*` 기준으로 재정의.
 4. Temporal 10개는 fe_v001과 동일(raw 컬럼 참조는 hbeb 교체와 무관).
 
-결과: **0.24712091** — OOF 기준으로는 baseline과 거의 동일(근소하게 악화).
-OOF만으로는 HBEB가 우수하다는 가설을 지지하지 못하며, 실LB 검증이 별도로
-필요함(OOF-LB 역전이 이 격리 실험에도 재현되는지는 미확인).
+결과: **0.24797458** — 2024 fold 기준으로는 baseline과 거의 동일(근소하게
+악화). 이 결과만으로는 HBEB가 우수하다는 가설을 지지하지 못하며, 실LB
+검증이 별도로 필요함(OOF-LB 역전이 이 격리 실험에도 재현되는지는 미확인).
 
 ---
 
@@ -242,12 +248,13 @@ train.csv로 교차검증해서 확인했다: `top_bottom=='T'`(초)일 때
 - `model/<EXPERIMENT_NAME>/` — 최종 모델, `final_metadata.json`,
   `feature_manifest.json`(feature 목록 및 개수), prior JSON,
   `test_features_preview.csv`
-- `validation/<EXPERIMENT_NAME>/` — fold별 결과, `metadata.json`(pooled
-  Brier 등 `summary`), `qa_report.json`(Row QA + Feature QA + 특수 검증 결과)
+- `validation/<EXPERIMENT_NAME>/` — fold별 결과. `fold_2024/metadata.json`의
+  `clipped_brier`를 이 문서의 비교 기준으로 사용한다. `qa_report.json`(Row QA
+  + Feature QA + 특수 검증 결과)도 함께 남는다.
 
 ### 비교 방법
 `cb_reg_v002_fe_v001`(별도 브랜치 `experiment/situational_feature_v001`)은
-재학습하지 않고 기존 `validation/cb_reg_v002_fe_v001/metadata.json`의
-`summary.pooled_oof_clipped_brier`를 그대로 baseline으로 재사용한다. 각
-스크립트는 실행 마지막에 새 실험의 `pooled_oof_clipped_brier`와 나란히
-비교해서 출력한다.
+재학습하지 않고 기존 `validation/cb_reg_v002_fe_v001/fold_2024/metadata.json`의
+`clipped_brier`를 그대로 baseline으로 재사용한다. 각 스크립트는 실행
+마지막에 같은 방식으로 `fold_2024/metadata.json`을 열어 새 실험의
+`clipped_brier`를 baseline과 나란히 비교해서 출력한다.
