@@ -1751,11 +1751,11 @@
       "status": "PASS"
     },
     "correction": {
-      "max_abs_diff": 1.734723475976807e-18,
-      "mean_abs_diff": 5.204170427930421e-19,
-      "corr": 0.9999999999999999,
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "corr": 1.0,
       "n": 5,
-      "bit_identical": false,
+      "bit_identical": true,
       "row_domain_guard": {
         "row_id": true,
         "domain3": true
@@ -1849,11 +1849,11 @@
       "status": "PASS"
     },
     "R6 Deploy L1 corr": {
-      "max_abs_diff": 1.734723475976807e-18,
-      "mean_abs_diff": 5.204170427930421e-19,
-      "corr": 0.9999999999999999,
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "corr": 1.0,
       "n": 5,
-      "bit_identical": false,
+      "bit_identical": true,
       "row_domain_guard": {
         "row_id": true,
         "domain3": true
@@ -1898,6 +1898,8 @@
     }
   },
   "deploy_artifact": {
+    "loaded_with": "pickle",
+    "reference_available": true,
     "missing_keys": [],
     "dims": {
       "exact_lgb": 98,
@@ -1913,13 +1915,43 @@
     "n_adapter_models": 9,
     "artifact_mb": 25.51,
     "v18_stable_enabled": true,
-    "ref_v18_stable_enabled": null,
+    "ref_v18_stable_enabled": true,
+    "stable_enabled_match": true,
+    "expected_year_match": true,
+    "route_domain_match": true,
+    "gamma_match": true,
+    "shrink_match": true,
+    "seeds_match": true,
+    "selected_blocks_match": true,
+    "ref_dims": {
+      "exact": 98,
+      "ridge": 89,
+      "trend": 42,
+      "adapter": 128,
+      "adapter_base": 45,
+      "pitcher_conditional": 21,
+      "exact_adapter": 62,
+      "v18_stable": 25
+    },
+    "ref_dim_mismatch": {},
     "status": "PASS",
     "model_path": "model/v18_repro_v001/v18_repro_v001.pkl"
   },
-  "overall": "PASS",
+  "script_parity": {
+    "n": 5,
+    "row_id_order_match": true,
+    "max_abs_diff": 4.111825657737711e-09,
+    "mean_abs_diff": 2.5431064254455294e-09,
+    "bit_identical": false,
+    "threshold": 1e-10,
+    "range_ok": true,
+    "status": "FAIL",
+    "submission": "output/submission.csv"
+  },
+  "overall": "FAIL",
   "counts": {
     "PASS": 123,
-    "SKIP": 2
+    "SKIP": 2,
+    "FAIL": 1
   }
 }

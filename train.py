@@ -95,7 +95,11 @@ FEATURE_PARITY_DIR = VALIDATION_DIR / "feature_parity"
 # 2 = Feature, 3 = +Anchor/Residual, 4 = +Layer 1 V15 OOF crossfit,
 # 5 = +Layer 2 temporal-stable Ridge (PASS 2), 6 = +deploy artifact (2024->2025)
 # (3 이상은 lightgbm + scikit-learn 필요)
-PHASE = int(os.environ.get("V18_REPRO_PHASE", "3"))
+#
+# 기본값 6 — `python train.py` 만으로 학습 전 과정이 끝나고
+# MODEL_PATH(단일 pkl) 와 OUTPUT_PATH(submission.csv) 까지 생성된다.
+# 중간 단계만 보려면 V18_REPRO_PHASE=2|3|4|5 로 낮춘다.
+PHASE = int(os.environ.get("V18_REPRO_PHASE", "6"))
 
 # Phase 4 는 ExtraTrees 90회 적합(5년 × 3seed × 2fold × 3domain)이라 매우 비싸다.
 # 이미 v15_oof_{year}.npz 가 있으면 그 연도를 건너뛴다.
@@ -125,6 +129,20 @@ TARGET_YEARS = (
 # Phase 2 산출물 저장 여부 (대용량). npz(float32) 로 저장한다.
 DUMP_FEATURE_MATRICES = os.environ.get("V18_REPRO_DUMP", "1") == "1"
 FEATURE_DUMP_DIR = Path(os.environ.get("V18_REPRO_DUMP_DIR", str(VALIDATION_DIR / "matrices")))
+
+# ---------------------------------------------------------------------------
+# 규칙 준수 조치 (재현 이탈, 의도적) — Phase 8 진단 결과에 따른 것
+# ---------------------------------------------------------------------------
+# V18 은 Ridge 를 float32 행렬로 적합하므로 coef_/intercept_ 가 float32 가 되고,
+# sklearn predict 가 float32 BLAS 로 돌아 **batch 크기에 따라 결과가 1 float32 ulp 흔들린다.**
+#   실측: p2 차이 2.980e-08 = 2^-25 (float32 ulp)  ->  base = (p1+p2+p3)/3 -> 9.934e-09
+#         batch 1·8 에서만 어긋나고 64 이상은 전체 배치와 동일
+# 대회 공지 §3 "행 1개일 때와 전체일 때 예측값이 동일해야 한다" 에 걸린다.
+# 정보 누출은 아니지만(섭동이 행 수에만 의존) 규칙 준수를 우선해 계수를 float64 로 올린다.
+# 예측 변화는 ~1e-8 로 점수 영향이 없다.
+#
+# verbatim 예측은 R6(재현) 대조용으로 별도 저장하므로 재현 입증은 유지된다.
+RULE_SAFE_FLOAT64_RIDGE = os.environ.get("V18_REPRO_F64_RIDGE", "1") == "1"
 
 _SCREEN_CACHE_ENV = os.environ.get("V18_REPRO_SCREEN_CACHE", "").strip()
 SEED_CACHE_PATH = Path(_SCREEN_CACHE_ENV) if _SCREEN_CACHE_ENV else None  # 선택적 pickle 캐시
@@ -368,6 +386,26 @@ def pitcher_cluster_bootstrap_gain(frame, y, p_new, p_base, draws=1000, seed=979
     }
 
 
+def upcast_linear_to_float64(model, label: str = "") -> dict:
+    """선형 모델의 coef_ / intercept_ 를 float64 로 올린다.
+
+    입력 X 가 float32 여도 계수가 float64 면 numpy 가 X 를 float64 로 **정확히** 승격한 뒤
+    float64 BLAS 로 계산하므로 batch 크기 의존성이 ~1e-16 으로 떨어진다.
+    계수 값 자체는 float32 -> float64 변환이라 손실이 없다 (표현만 넓어진다).
+    """
+    info = {"label": label}
+    for attr in ("coef_", "intercept_"):
+        v = getattr(model, attr, None)
+        if v is None:
+            continue
+        arr = np.asarray(v)
+        info[attr + "_before"] = str(arr.dtype)
+        if arr.dtype != np.float64:
+            setattr(model, attr, arr.astype(np.float64))
+        info[attr + "_after"] = str(np.asarray(getattr(model, attr)).dtype)
+    return info
+
+
 def official_score(y, p, base_rate=None):
     """대회 공식 정의. r 은 전체 평가셋 제구율로 고정하고 max(0, ·) 를 적용한다."""
     y = np.asarray(y, dtype=np.float64)
@@ -417,6 +455,20 @@ def merge_years_json(path: Path, obj: dict) -> None:
         years = dict(old.get("years", {}))
         years.update(obj.get("years", {}))
         merged["years"] = years
+        # library_versions 를 통째로 덮어쓰면 "이 산출물을 만든 버전" 이력이 사라진다.
+        # 실행마다 다른 버전을 썼는지 사후에 알 수 있도록 이력을 누적한다.
+        hist = list(old.get("library_versions_history", []))
+        cur = obj.get("library_versions")
+        if cur and (not hist or hist[-1].get("versions") != cur):
+            hist.append({"at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                         "years": sorted(obj.get("years", {})), "versions": cur})
+        if hist:
+            merged["library_versions_history"] = hist
+    elif obj.get("library_versions"):
+        merged["library_versions_history"] = [
+            {"at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+             "years": sorted(obj.get("years", {})), "versions": obj["library_versions"]}
+        ]
     write_json(path, merged)
 
 
@@ -1892,7 +1944,8 @@ def run_phase6(screen: pd.DataFrame, domain_means: DomainMeans,
     m2 = Ridge(alpha=BASE_CFG["ridge_alpha"], solver="lsqr", max_iter=100, tol=1e-3)
     m2.fit(Ar, y24)
     p2 = np.clip(m2.predict(Br), 0.001, 0.999)
-    del Ar, Br, A0, B0, ss, gs
+    Br_saved = Br  # 규칙 준수 조치(4b)에서 float64 계수로 재계산할 때 쓴다
+    del Ar, A0, B0, ss, gs
     gc.collect()
 
     s = add_eng(source)
@@ -2010,6 +2063,43 @@ def run_phase6(screen: pd.DataFrame, domain_means: DomainMeans,
           f"{int(test.domain3.eq(V18_ROUTE_DOMAIN).sum())}")
     assert np.isfinite(final_direct).all() and ((final_direct >= 0) & (final_direct <= 1)).all()
 
+    # ---- 4b) 규칙 준수 조치 : Ridge 계수를 float64 로 올려 batch 의존성을 제거 ----
+    # 여기까지의 값(final_direct)은 notebook 과 bit 단위로 같은 **verbatim** 결과다.
+    # R6 재현 대조용으로 그대로 보존하고, artifact/submission 은 hardened 값을 쓴다.
+    verbatim = {
+        "p1": np.asarray(p1, np.float64), "p2": np.asarray(p2, np.float64),
+        "p3": np.asarray(p3, np.float64), "p_base25": p_base25.copy(),
+        "correction": correction.copy(), "final_v15_direct": final_v15_direct.copy(),
+        "stable_corr25": stable_corr25.copy(), "final_direct": final_direct.copy(),
+    }
+    hardening = {"applied": bool(RULE_SAFE_FLOAT64_RIDGE)}
+    if RULE_SAFE_FLOAT64_RIDGE:
+        hardening["models"] = [
+            upcast_linear_to_float64(m2, "base_ridge"),
+            upcast_linear_to_float64(stable_model, "v18_stable_model"),
+        ]
+        # float64 계수로 Layer 0 · Layer 2 를 다시 계산한다 (LGBM/ExtraTrees 는 무관)
+        p2 = np.clip(m2.predict(Br_saved), 0.001, 0.999)
+        p_base25 = np.clip(
+            (np.asarray(p1, float) + np.asarray(p2, float) + np.asarray(p3, float)) / 3.0, 0, 1)
+        final_v15_direct = np.clip(p_base25 + ADAPTER_SHRINK * correction, 0, 1)
+        final_direct = final_v15_direct.copy()
+        stable_corr25 = np.asarray(stable_model.predict(Bz), np.float64)
+        if v18_submit_recommended:
+            core25 = test.domain3.eq(V18_ROUTE_DOMAIN).to_numpy()
+            final_direct[core25] = np.clip(
+                final_direct[core25] + V18_GAMMA * stable_corr25[core25], 0, 1)
+        assert np.isfinite(final_direct).all() and ((final_direct >= 0) & (final_direct <= 1)).all()
+        delta = {k: float(np.abs(verbatim[k] - v).max()) for k, v in
+                 [("p2", p2), ("p_base25", p_base25),
+                  ("final_v15_direct", final_v15_direct),
+                  ("stable_corr25", stable_corr25), ("final_direct", final_direct)]}
+        hardening["delta_vs_verbatim"] = delta
+        print(f"    [rule-safe] Ridge coef_ float32 -> float64 적용. "
+              f"verbatim 대비 final 변화 = {delta['final_direct']:.3e}")
+    else:
+        print("    [rule-safe] 비활성 (V18_REPRO_F64_RIDGE=0) — verbatim 그대로 저장한다")
+
     # ---- 5) 단일 pkl artifact ----
     artifact = {
         "experiment_name": EXPERIMENT_NAME,
@@ -2047,6 +2137,14 @@ def run_phase6(screen: pd.DataFrame, domain_means: DomainMeans,
         "v18_stable_model": stable_model,
         "v18_stable_gamma": float(V18_GAMMA), "v18_route_domain": V18_ROUTE_DOMAIN,
         "postprocess": None,
+        # 규칙 준수 조치 기록 — Phase 3 검증에서 근거를 묻는다
+        "rule_safe_float64_ridge": bool(RULE_SAFE_FLOAT64_RIDGE),
+        "rule_safe_note": (
+            "V18 은 Ridge 를 float32 로 적합해 predict 가 batch 크기에 따라 1 float32 ulp "
+            "흔들린다(실측 p2 2.980e-08 = 2^-25). 대회 공지 §3 '행 1개일 때와 전체일 때 "
+            "예측값 동일' 을 만족시키기 위해 추론용 계수를 float64 로 올렸다. "
+            "정보 누출과 무관하며 예측 변화는 ~1e-8 이다."
+        ),
         "library_versions": library_versions(),
     }
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -2055,12 +2153,32 @@ def run_phase6(screen: pd.DataFrame, domain_means: DomainMeans,
     size_mb = MODEL_PATH.stat().st_size / 1e6
     print(f"    artifact -> {MODEL_PATH}  ({size_mb:.1f} MB)")
 
+    # 제출 zip 용 requirements.txt — artifact 를 unpickle 하려면 두 라이브러리가 필요하다
+    # (notebook cell 16 은 joblib 도 넣지만 단일 pkl 은 표준 pickle 로 읽는다)
+    lv = library_versions()
+    req = "".join(
+        f"{name}=={lv[key]}\n"
+        for name, key in [("lightgbm", "lightgbm"), ("scikit-learn", "scikit_learn"),
+                          ("numpy", "numpy"), ("pandas", "pandas")]
+        if lv.get(key)
+    )
+    (MODEL_DIR / "requirements.txt").write_text(req, encoding="utf-8")
+    print(f"    requirements -> {MODEL_DIR / 'requirements.txt'}\n{req.rstrip()}")
+
     # ---- 6) 산출물 ----
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     pd.DataFrame({ID: test[ID].to_numpy(), TARGET: final_direct}).to_csv(
         OUTPUT_PATH, index=False)
+    # R6(재현 대조)용 — notebook 과 bit 단위로 같아야 하는 verbatim 값
     np.savez_compressed(
         feature_dump_dir / "deploy_2025.npz",
+        row_id=test[ID].to_numpy().astype(str),
+        domain3=test.domain3.to_numpy().astype(str),
+        **verbatim,
+    )
+    # R7(script.py 대조)용 — artifact / submission 과 일치하는 값
+    np.savez_compressed(
+        feature_dump_dir / "deploy_2025_hardened.npz",
         row_id=test[ID].to_numpy().astype(str),
         domain3=test.domain3.to_numpy().astype(str),
         p_base25=p_base25, p1=np.asarray(p1, np.float64), p2=np.asarray(p2, np.float64),
@@ -2078,6 +2196,7 @@ def run_phase6(screen: pd.DataFrame, domain_means: DomainMeans,
         "artifact_path": str(MODEL_PATH), "artifact_mb": round(size_mb, 2),
         "trend_slope": float(slope), "trend_prior": trend_prior,
         "deploy_feature_parity_vs_phase2": parity,
+        "rule_safe_hardening": hardening,
         "dims": {"exact_lgb": len(exact_feature_cols), "ridge": len(ridge_feature_cols),
                  "trend_lgb": len(trend_feature_cols),
                  "adapter": len(adapter_feature_cols),
@@ -2185,15 +2304,39 @@ def main():
     if DUMP_FEATURE_MATRICES:
         FEATURE_DUMP_DIR.mkdir(parents=True, exist_ok=True)
 
+    phase_names = {2: "Feature", 3: "+Layer 0 Anchor/Residual",
+                   4: "+Layer 1 V15 OOF crossfit", 5: "+Layer 2 stable Ridge (PASS 2)",
+                   6: "+Deploy artifact (2024->2025)"}
     print("=" * 78)
     print(f"Experiment                : {EXPERIMENT_NAME}")
     print(f"Protocol                  : {PROTOCOL_VERSION}")
-    print(f"Phase                     : {PHASE}  (2=Feature, 3=+Anchor/Residual)")
+    print(f"Phase                     : {PHASE}  "
+          f"({phase_names.get(PHASE, '?')})")
     print(f"REPRO_BUILD_UNUSED_BLOCKS : {REPRO_BUILD_UNUSED_BLOCKS}")
     print(f"LOAD_ONLY_REFERENCED_COLS : {LOAD_ONLY_REFERENCED_COLUMNS}")
     print(f"Target years              : {TARGET_YEARS}")
-    print(f"N_JOBS                    : {N_JOBS}")
+    print(f"RESUME                    : {RESUME}")
+    print(f"N_JOBS                    : {N_JOBS}  (cpu {os.cpu_count()})")
+    print(f"SMOKE_MODE                : {SMOKE_MODE}")
+    print("-" * 78)
+    print("실행 계획")
+    for p in range(2, PHASE + 1):
+        print(f"  Phase {p}  {phase_names[p]}")
+    if PHASE >= 6:
+        print(f"  -> {MODEL_PATH}   (단일 pkl artifact)")
+        print(f"  -> {OUTPUT_PATH}  (submission)")
+    if PHASE >= 4 and not SMOKE_MODE:
+        n_fit = len(TARGET_YEARS) * len(CF_SEEDS) * 2 * 3
+        print(f"  ExtraTrees 적합 {n_fit}회 (Layer 1 crossfit)"
+              + (" + 9회 (deploy)" if PHASE >= 6 else ""))
+        print("  예상 소요: 6코어 기준 약 15~25분. V20_SMOKE=1 로 먼저 배선 확인 가능.")
+    print("환경변수: V18_REPRO_PHASE / V18_REPRO_YEARS / V18_REPRO_RESUME /"
+          " V18_REPRO_UNUSED / V18_REPRO_DUMP_DIR / V20_SMOKE")
     print("=" * 78)
+    if PHASE >= 5 and _YEARS_ENV and set(TARGET_YEARS) != set(PHASE5_SOURCE_YEARS):
+        print("[note] Phase 5/6 은 2020~2024 전체 V15_OOF 를 요구한다. "
+              "디스크에 있으면 그대로 쓰고, 없으면 명확히 실패한다.")
+        print("=" * 78)
 
     screen = load_train()
     validate_schema(screen)

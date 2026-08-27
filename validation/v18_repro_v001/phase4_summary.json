@@ -561,5 +561,24 @@
       "resumed_from_npz": true
     }
   },
-  "elapsed_sec": 352.9
+  "elapsed_sec": 340.0,
+  "library_versions_history": [
+    {
+      "at": "2026-08-27T16:36:49",
+      "years": [
+        "2024"
+      ],
+      "versions": {
+        "python": "3.11.15",
+        "numpy": "1.26.4",
+        "pandas": "2.0.3",
+        "scikit_learn": "1.9.0",
+        "lightgbm": "4.7.0",
+        "joblib": "1.5.3",
+        "scipy": "1.17.1",
+        "n_jobs": 6,
+        "cpu_count": 8
+      }
+    }
+  ]
 }

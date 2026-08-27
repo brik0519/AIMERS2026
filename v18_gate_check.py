@@ -66,6 +66,8 @@ V15_KEYS = [
     ("v15_oof", "R4 V15 OOF"),
 ]
 R4_BSS_ABS = 0.5
+# Phase 7 — script.py 산출 parity (notebook 자체 smoke 와 동일 임계)
+R7_SCRIPT_MAX_ABS = 1e-10
 # Phase 5 — Layer 2 V18 temporal-stable Ridge
 P18_KEYS = [
     ("corr", "R5 L2 Correction"),
@@ -419,8 +421,37 @@ def check_deploy_artifact(model_path: Path, ref_manifest: dict) -> dict:
         return {"status": "SKIP", "note": f"{model_path} 없음 (PHASE<6)"}
     import pickle
 
-    with open(model_path, "rb") as f:
-        art = pickle.load(f)
+    class _TolerantUnpickler(pickle.Unpickler):
+        """lightgbm / sklearn 이 없는 환경에서도 **구조**만 검사할 수 있게 한다.
+
+        artifact 의 키·차원·설정값 확인에는 모델 객체 실체가 필요 없다.
+        복원할 수 없는 클래스는 빈 더미로 대체한다 (예측에는 절대 쓰지 않는다).
+        """
+
+        def find_class(self, module, name):
+            try:
+                return super().find_class(module, name)
+            except (ImportError, AttributeError):
+                # __reduce__ 가 인자를 넘기거나 __setstate__ 를 부르는 경우까지 견딘다
+                return type(
+                    f"_Missing_{module}_{name}", (),
+                    {"__init__": lambda self, *a, **k: None,
+                     "__setstate__": lambda self, state: None,
+                     "__reduce__": lambda self: (dict, ())},
+                )
+
+    loaded_with = "pickle"
+    try:
+        with open(model_path, "rb") as f:
+            art = pickle.load(f)
+    except (ImportError, ModuleNotFoundError, AttributeError):
+        try:
+            with open(model_path, "rb") as f:
+                art = _TolerantUnpickler(f).load()
+            loaded_with = "tolerant (모델 모듈 부재 — 구조만 검사)"
+        except Exception as e:  # noqa: BLE001
+            return {"status": "SKIP",
+                    "note": f"artifact 를 열 수 없다: {type(e).__name__}: {e}"}
     required = [
         "expected_year", "anchor_team_id", "selected_blocks",
         "base_exact_lgb", "exact_feature_cols", "exact_cat_maps",
@@ -452,6 +483,8 @@ def check_deploy_artifact(model_path: Path, ref_manifest: dict) -> dict:
     n_models = len(art.get("adapter_models", {}))
     ref = ref_manifest.get("deploy", {})
     checks = {
+        "loaded_with": loaded_with,
+        "reference_available": bool(ref),   # False 면 아래 대조가 vacuous 하다
         "missing_keys": missing,
         "dims": dims, "dim_mismatch": dim_bad,
         "n_adapter_models": n_models,
@@ -466,11 +499,83 @@ def check_deploy_artifact(model_path: Path, ref_manifest: dict) -> dict:
         checks["expected_year_match"] = (
             int(art.get("expected_year", -1)) == int(ref.get("expected_year", -2))
         )
+        checks["route_domain_match"] = (
+            art.get("v18_route_domain") == ref.get("v18_route_domain")
+        )
+        checks["gamma_match"] = (
+            abs(float(art.get("v18_stable_gamma", -1))
+                - float(ref.get("v18_stable_gamma", -2))) < 1e-12
+        )
+        checks["shrink_match"] = (
+            abs(float(art.get("adapter_shrink", -1))
+                - float(ref.get("adapter_shrink", -2))) < 1e-12
+        )
+        checks["seeds_match"] = (
+            list(art.get("adapter_seeds", [])) == list(ref.get("adapter_seeds", []))
+        )
+        checks["selected_blocks_match"] = (
+            list(art.get("selected_blocks", [])) == list(ref.get("selected_blocks", []))
+        )
+        ref_dims = {k.replace("_cols_n", "").replace("_feature", ""): v
+                    for k, v in ref.items() if k.endswith("_cols_n")}
+        checks["ref_dims"] = ref_dims
+        checks["ref_dim_mismatch"] = {
+            k: (dims[k], ref_dims[k]) for k in dims if k in ref_dims and dims[k] != ref_dims[k]
+        }
+    else:
+        checks["note"] = ("reference manifest_deploy.json 의 deploy 섹션이 없어 "
+                          "대조가 vacuous 하다 — --stage deploy 를 먼저 실행할 것")
     ok = (not missing and not dim_bad and n_models == 9
           and checks.get("stable_enabled_match", True)
-          and checks.get("expected_year_match", True))
+          and checks.get("expected_year_match", True)
+          and checks.get("route_domain_match", True)
+          and checks.get("gamma_match", True)
+          and checks.get("shrink_match", True)
+          and checks.get("seeds_match", True)
+          and checks.get("selected_blocks_match", True)
+          and not checks.get("ref_dim_mismatch", {}))
     checks["status"] = "PASS" if ok else "FAIL"
     return checks
+
+
+def compare_script_output(cand_dir: Path, submission: Path) -> dict:
+    """R7 — script.py 산출 submission.csv 가 train.py 내부 예측과 같은가.
+
+    notebook cell 16 의 자기 smoke(`WORKING_TREE_SMOKE_OK max_abs_diff < 1e-10`) 와 같은 검사다.
+    잔여 오차 요인 2가지가 원본 설계에 이미 있다 — 둘 다 임계보다 6자릿수 작다.
+      · script.py 는 `corr += c/len(seeds)` (누적 평균),
+        train.py Phase 6 은 `np.mean(np.column_stack(...))` (일괄 평균)
+      · submission.csv 는 pandas 기본 float 포맷 → CSV 왕복 오차 (§G-6)
+    """
+    dep = cand_dir / "deploy_2025.npz"
+    if not dep.exists():
+        return {"status": "SKIP", "note": "deploy_2025.npz 없음 (PHASE<6)"}
+    if not submission.exists():
+        return {"status": "SKIP", "note": f"{submission} 없음 (script.py 미실행)"}
+    z = np.load(dep, allow_pickle=True)
+    sub = pd.read_csv(submission, encoding="utf-8-sig")
+    cols = list(sub.columns)
+    if cols != ["row_id", "control_success"]:
+        return {"status": "FAIL", "note": f"submission 컬럼 불일치: {cols}"}
+    ref = z["final_direct"].astype(np.float64)
+    cand = sub["control_success"].to_numpy(np.float64)
+    order_ok = bool(np.array_equal(z["row_id"].astype(str),
+                                   sub["row_id"].astype(str).to_numpy()))
+    if ref.shape != cand.shape:
+        return {"status": "FAIL", "note": "행 수 불일치",
+                "n_ref": int(ref.size), "n_cand": int(cand.size)}
+    d = np.abs(ref - cand)
+    mx = float(d.max())
+    ok = order_ok and mx < R7_SCRIPT_MAX_ABS and bool(
+        np.isfinite(cand).all() and (cand >= 0).all() and (cand <= 1).all())
+    return {
+        "n": int(ref.size), "row_id_order_match": order_ok,
+        "max_abs_diff": mx, "mean_abs_diff": float(d.mean()),
+        "bit_identical": bool(mx == 0.0),
+        "threshold": R7_SCRIPT_MAX_ABS,
+        "range_ok": bool(np.isfinite(cand).all() and (cand >= 0).all() and (cand <= 1).all()),
+        "status": "PASS" if ok else "FAIL",
+    }
 
 
 def check_artifact_chain(cand_dir: Path, year: int) -> dict:
@@ -601,6 +706,8 @@ def main():
     ap.add_argument("--validation-dir", required=True)  # selfcheck 에서도 출력 위치로 쓴다
     ap.add_argument("--year", type=int, action="append", default=None)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--submission", default=None,
+                    help="R7 검사용 submission.csv (기본 ./output/submission.csv)")
     ap.add_argument("--model-path", default=None,
                     help="R6b 검사용 단일 pkl 경로 (기본 ./model/<exp>/<exp>.pkl)")
     ap.add_argument("--selfcheck", nargs=2, metavar=("REF_A", "REF_B"), default=None,
@@ -631,6 +738,12 @@ def main():
         m = json.loads(p.read_text(encoding="utf-8"))
         ref_manifest.setdefault("meta", m)
         ref_manifest["years"].update(m.get("years", {}))
+        # manifest_p18.json / manifest_deploy.json 의 stage 섹션도 그대로 실어야
+        # R5 promotion gate / R6b artifact 검사가 reference 와 대조할 수 있다.
+        # (없으면 비교가 조용히 vacuous 하게 통과한다)
+        for stage_key in ("p18", "deploy"):
+            if stage_key in m:
+                ref_manifest[stage_key] = m[stage_key]
 
     cand_summary = {}
     p3 = vdir / "phase3_summary.json"
@@ -712,6 +825,15 @@ def main():
     rows.append({"year": "-", "gate": "R6b Deploy Artifact", "status": art.get("status"),
                  "max_abs_diff": None, "mean_abs_diff": None, "note": art.get("note", "")})
 
+    # ---- R7 : script.py 산출 parity ----
+    sub_path = Path(args.submission) if args.submission else Path("./output/submission.csv")
+    r7 = compare_script_output(cand_dir, sub_path)
+    r7["submission"] = str(sub_path)
+    report["script_parity"] = r7
+    rows.append({"year": "-", "gate": "R7 script.py Parity", "status": r7.get("status"),
+                 "max_abs_diff": r7.get("max_abs_diff"),
+                 "mean_abs_diff": r7.get("mean_abs_diff"), "note": r7.get("note", "")})
+
     tab = pd.DataFrame(rows)
     statuses = set(tab.status)
     report["overall"] = (
@@ -765,6 +887,13 @@ def main():
         if r["gate"].startswith("R6 Deploy"):
             rr = report["deploy_by_gate"][r["gate"]]
             det = (f"n={rr.get('n')} bit={rr.get('bit_identical')}"
+                   if rr.get("status") != "SKIP" else rr.get("note", ""))
+            print(f"{'-':<6}{r['gate']:<34}{det[:25]:<26}"
+                  f"{fmt(r['max_abs_diff']):<13}{r['status']}")
+            continue
+        if r["gate"] == "R7 script.py Parity":
+            rr = report["script_parity"]
+            det = (f"n={rr.get('n')} order={'Y' if rr.get('row_id_order_match') else 'N'}"
                    if rr.get("status") != "SKIP" else rr.get("note", ""))
             print(f"{'-':<6}{r['gate']:<34}{det[:25]:<26}"
                   f"{fmt(r['max_abs_diff']):<13}{r['status']}")

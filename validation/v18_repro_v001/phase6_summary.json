@@ -17,6 +17,32 @@
     "pitcher_conditional": 0.0,
     "exact_asof_state": 0.0
   },
+  "rule_safe_hardening": {
+    "applied": true,
+    "models": [
+      {
+        "label": "base_ridge",
+        "coef__before": "float32",
+        "coef__after": "float64",
+        "intercept__before": "float32",
+        "intercept__after": "float64"
+      },
+      {
+        "label": "v18_stable_model",
+        "coef__before": "float32",
+        "coef__after": "float64",
+        "intercept__before": "float32",
+        "intercept__after": "float64"
+      }
+    ],
+    "delta_vs_verbatim": {
+      "p2": 1.3535601639524941e-08,
+      "p_base25": 4.511867268686132e-09,
+      "final_v15_direct": 4.511867268686132e-09,
+      "stable_corr25": 5.333888938169329e-10,
+      "final_direct": 4.11182560222656e-09
+    }
+  },
   "dims": {
     "exact_lgb": 98,
     "ridge": 89,
@@ -42,29 +68,29 @@
   "n_adapter_models": 9,
   "pred": {
     "p_base25": {
-      "mean": 0.4352146963590801,
-      "min": 0.38666782658924653,
-      "max": 0.46575943140722975
+      "mean": 0.43521469477656505,
+      "min": 0.3866678239339764,
+      "max": 0.4657594279700505
     },
     "correction": {
       "mean": 0.00816641412858746,
-      "min": 0.005342031521249699,
-      "max": 0.01263072654919322
+      "min": 0.0053420315212497,
+      "max": 0.012630726549193219
     },
     "final_v15_direct": {
-      "mean": 0.4392979034233738,
-      "min": 0.39145919276286106,
-      "max": 0.47207479468182634
+      "mean": 0.4392979018408588,
+      "min": 0.39145919010759095,
+      "max": 0.4720747912446471
     },
     "stable_corr25": {
-      "mean": -0.0012239489005878568,
-      "min": -0.005913379602134228,
-      "max": 0.003697821171954274
+      "mean": -0.0012239488508840879,
+      "min": -0.005913379446141365,
+      "max": 0.003697821705343168
     },
     "final_direct": {
-      "mean": 0.43837994174793293,
-      "min": 0.3870241580612604,
-      "max": 0.4713071186967098
+      "mean": 0.4383799402026957,
+      "min": 0.3870241555229849,
+      "max": 0.47130711512595175
     }
   },
   "library_versions": {
