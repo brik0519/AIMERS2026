@@ -2,10 +2,10 @@
   "n_rows": 4000,
   "samples": 12,
   "model_coef_dtypes": {
-    "base_ridge.coef_": "float32",
-    "base_ridge.intercept_": "float32",
-    "v18_stable_model.coef_": "float32",
-    "v18_stable_model.intercept_": "float32"
+    "base_ridge.coef_": "float64",
+    "base_ridge.intercept_": "float64",
+    "v18_stable_model.coef_": "float64",
+    "v18_stable_model.intercept_": "float64"
   },
   "ridge_shape_dependence": {
     "sklearn_predict_max_diff": 0.0,
@@ -34,20 +34,20 @@
     "B0": 0.0,
     "Bz_ridge": 0.0,
     "p1": 0.0,
-    "p2": 2.9802322387695312e-08,
+    "p2": 0.0,
     "p3": 0.0,
-    "base": 9.934107481068821e-09,
+    "base": 0.0,
     "base_pred_f32": 0.0,
     "X_base_pred_col": 0.0,
     "X": 0.0,
     "corr": 1.3877787807814457e-17,
-    "stable_corr": 1.862645149230957e-09,
-    "final": 9.934107481068821e-09
+    "stable_corr": 3.469446951953614e-18,
+    "final": 5.551115123125783e-17
   },
-  "first_amplifying_stage": "p2",
+  "first_amplifying_stage": null,
   "batch_size_dependence": {
-    "1": 9.934107481068821e-09,
-    "8": 9.934107481068821e-09,
+    "1": 0.0,
+    "8": 0.0,
     "64": 0.0,
     "512": 0.0
   }

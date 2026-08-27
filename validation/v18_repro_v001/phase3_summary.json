@@ -939,7 +939,7 @@
     "max_accessed_season": 2024,
     "policy": "V18 원본 전 시즌 groupby 유지. 읽기는 season <= source_year 만 assert."
   },
-  "elapsed_sec": 340.0,
+  "elapsed_sec": 347.8,
   "library_versions_history": [
     {
       "at": "2026-08-27T16:36:49",
