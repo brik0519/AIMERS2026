@@ -1940,18 +1940,18 @@
   "script_parity": {
     "n": 5,
     "row_id_order_match": true,
-    "max_abs_diff": 4.111825657737711e-09,
-    "mean_abs_diff": 2.5431064254455294e-09,
+    "compared_against": "hardened",
+    "max_abs_diff": 5.551115123125783e-17,
+    "mean_abs_diff": 3.3306690738754695e-17,
     "bit_identical": false,
     "threshold": 1e-10,
     "range_ok": true,
-    "status": "FAIL",
+    "status": "PASS",
     "submission": "output/submission.csv"
   },
-  "overall": "FAIL",
+  "overall": "PASS",
   "counts": {
-    "PASS": 123,
-    "SKIP": 2,
-    "FAIL": 1
+    "PASS": 124,
+    "SKIP": 2
   }
 }

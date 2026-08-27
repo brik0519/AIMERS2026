@@ -547,9 +547,15 @@ def compare_script_output(cand_dir: Path, submission: Path) -> dict:
         train.py Phase 6 은 `np.mean(np.column_stack(...))` (일괄 평균)
       · submission.csv 는 pandas 기본 float 포맷 → CSV 왕복 오차 (§G-6)
     """
-    dep = cand_dir / "deploy_2025.npz"
+    # hardened 산출물이 있으면 그쪽이 artifact / submission 과 일치하는 값이다.
+    # (규칙 준수 조치로 Ridge 계수를 float64 로 올린 경우 verbatim 과 ~4e-9 다르다)
+    dep = cand_dir / "deploy_2025_hardened.npz"
+    which = "hardened"
     if not dep.exists():
-        return {"status": "SKIP", "note": "deploy_2025.npz 없음 (PHASE<6)"}
+        dep = cand_dir / "deploy_2025.npz"
+        which = "verbatim"
+    if not dep.exists():
+        return {"status": "SKIP", "note": "deploy_2025[_hardened].npz 없음 (PHASE<6)"}
     if not submission.exists():
         return {"status": "SKIP", "note": f"{submission} 없음 (script.py 미실행)"}
     z = np.load(dep, allow_pickle=True)
@@ -570,6 +576,7 @@ def compare_script_output(cand_dir: Path, submission: Path) -> dict:
         np.isfinite(cand).all() and (cand >= 0).all() and (cand <= 1).all())
     return {
         "n": int(ref.size), "row_id_order_match": order_ok,
+        "compared_against": which,
         "max_abs_diff": mx, "mean_abs_diff": float(d.mean()),
         "bit_identical": bool(mx == 0.0),
         "threshold": R7_SCRIPT_MAX_ABS,
