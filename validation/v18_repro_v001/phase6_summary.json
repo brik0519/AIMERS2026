@@ -1,0 +1,81 @@
+{
+  "experiment_name": "v18_repro_v001",
+  "regime": "deploy (2024 full-fit -> 2025), NOT validation crossfit",
+  "expected_year": 2025,
+  "n_test_rows": 5,
+  "anchor_team_id": 13,
+  "v18_stable_enabled": true,
+  "artifact_path": "model/v18_repro_v001/v18_repro_v001.pkl",
+  "artifact_mb": 25.51,
+  "trend_slope": -0.012836636139525709,
+  "trend_prior": {
+    "R_CORE": 0.4670631003330109,
+    "R_ANCHOR": 0.5160232637889947,
+    "F": 0.44644360378050096
+  },
+  "deploy_feature_parity_vs_phase2": {
+    "pitcher_conditional": 0.0,
+    "exact_asof_state": 0.0
+  },
+  "dims": {
+    "exact_lgb": 98,
+    "ridge": 89,
+    "trend_lgb": 42,
+    "adapter": 128,
+    "adapter_base": 45,
+    "pitcher_conditional": 21,
+    "exact_adapter": 62,
+    "v18_stable": 25
+  },
+  "adapter_cfg": {
+    "n_estimators": 120,
+    "max_depth": 10,
+    "min_samples_leaf": 200,
+    "max_features": 0.7
+  },
+  "adapter_seeds": [
+    42,
+    2026,
+    314
+  ],
+  "adapter_shrink": 0.5,
+  "n_adapter_models": 9,
+  "pred": {
+    "p_base25": {
+      "mean": 0.4352146963590801,
+      "min": 0.38666782658924653,
+      "max": 0.46575943140722975
+    },
+    "correction": {
+      "mean": 0.00816641412858746,
+      "min": 0.005342031521249699,
+      "max": 0.01263072654919322
+    },
+    "final_v15_direct": {
+      "mean": 0.4392979034233738,
+      "min": 0.39145919276286106,
+      "max": 0.47207479468182634
+    },
+    "stable_corr25": {
+      "mean": -0.0012239489005878568,
+      "min": -0.005913379602134228,
+      "max": 0.003697821171954274
+    },
+    "final_direct": {
+      "mean": 0.43837994174793293,
+      "min": 0.3870241580612604,
+      "max": 0.4713071186967098
+    }
+  },
+  "library_versions": {
+    "python": "3.11.15",
+    "numpy": "1.26.4",
+    "pandas": "2.0.3",
+    "scikit_learn": "1.9.0",
+    "lightgbm": "4.7.0",
+    "joblib": "1.5.3",
+    "scipy": "1.17.1",
+    "n_jobs": 6,
+    "cpu_count": 8
+  }
+}

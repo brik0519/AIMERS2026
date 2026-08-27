@@ -147,7 +147,7 @@
     "ridge_features": 89,
     "trend_features": 42
   },
-  "repro_build_unused_blocks": false,
+  "repro_build_unused_blocks": true,
   "unused_block_names": [
     "BATTER_CONDITIONAL",
     "CROSS_DOMAIN_PROFILE",
@@ -161,10 +161,10 @@
     "python": "3.11.15",
     "numpy": "1.26.4",
     "pandas": "2.0.3",
-    "scikit_learn": "1.8.0",
-    "lightgbm": "4.6.0",
+    "scikit_learn": "1.9.0",
+    "lightgbm": "4.7.0",
     "joblib": "1.5.3",
-    "scipy": "1.15.3",
+    "scipy": "1.17.1",
     "n_jobs": 6,
     "cpu_count": 8
   },
@@ -174,7 +174,7 @@
       "source_year": 2023,
       "bank_prior": 0.49995723449750534,
       "bank_source_max_season": 2023,
-      "sec_features": 8.74,
+      "sec_features": 12.69,
       "blocks": {
         "self_state": {
           "block": "self_state",
@@ -583,7 +583,101 @@
           "checksum": 2414164784.820109
         }
       },
-      "unused_blocks": {},
+      "unused_blocks": {
+        "CROSS_DOMAIN_PROFILE": {
+          "block": "CROSS_DOMAIN_PROFILE",
+          "shape": [
+            253507,
+            20
+          ],
+          "n_cols": 20,
+          "columns": [
+            "xd__p_global__rate",
+            "xd__p_global__reliability",
+            "xd__p_global__delta",
+            "xd__p_global__log_n",
+            "xd__p_domain__rate",
+            "xd__p_domain__reliability",
+            "xd__p_domain__delta",
+            "xd__p_domain__log_n",
+            "xd__p_domain_minus_global",
+            "xd__p_transfer_confidence",
+            "xd__b_global__rate",
+            "xd__b_global__reliability",
+            "xd__b_global__delta",
+            "xd__b_global__log_n",
+            "xd__b_domain__rate",
+            "xd__b_domain__reliability",
+            "xd__b_domain__delta",
+            "xd__b_domain__log_n",
+            "xd__b_domain_minus_global",
+            "xd__b_transfer_confidence"
+          ],
+          "dtypes": [
+            "float32"
+          ],
+          "n_nan": 0,
+          "min": -0.6033726334571838,
+          "max": 8.002694129943848,
+          "mean": 1.2595289469489201,
+          "checksum": 6385988.095083598
+        },
+        "BATTER_CONDITIONAL": {
+          "block": "BATTER_CONDITIONAL",
+          "shape": [
+            253507,
+            9
+          ],
+          "n_cols": 9,
+          "columns": [
+            "bc__pitcher_hand__rate",
+            "bc__pitcher_hand__reliability",
+            "bc__pitcher_hand__delta",
+            "bc__v15_count__rate",
+            "bc__v15_count__reliability",
+            "bc__v15_count__delta",
+            "bc__domain3__rate",
+            "bc__domain3__reliability",
+            "bc__domain3__delta"
+          ],
+          "dtypes": [
+            "float32"
+          ],
+          "n_nan": 0,
+          "min": -0.14960485696792603,
+          "max": 0.9834254384040833,
+          "mean": 0.37780526690804955,
+          "checksum": 861986.5181825303
+        },
+        "ROLE_DEPLOYMENT": {
+          "block": "ROLE_DEPLOYMENT",
+          "shape": [
+            253507,
+            10
+          ],
+          "n_cols": 10,
+          "columns": [
+            "role__log_n",
+            "role__inning_z",
+            "role__inning_abs_z",
+            "role__li_z",
+            "role__li_abs_z",
+            "role__late_surprise",
+            "role__highli_surprise",
+            "role__domain_log_n",
+            "role__domain_inning_abs_z",
+            "role__domain_late_surprise"
+          ],
+          "dtypes": [
+            "float32"
+          ],
+          "n_nan": 0,
+          "min": -35.75,
+          "max": 43.84287643432617,
+          "mean": 1.2443174576888372,
+          "checksum": 3154431.8574632406
+        }
+      },
       "pitcher_half_fold1_share": {
         "42": 0.5024042728603155,
         "2026": 0.49401002733652327,
@@ -3060,5 +3154,5 @@
       }
     }
   },
-  "elapsed_sec": 198.0
+  "elapsed_sec": 352.9
 }

@@ -224,10 +224,10 @@
     "python": "3.11.15",
     "numpy": "1.26.4",
     "pandas": "2.0.3",
-    "scikit_learn": "1.8.0",
-    "lightgbm": "4.6.0",
+    "scikit_learn": "1.9.0",
+    "lightgbm": "4.7.0",
     "joblib": "1.5.3",
-    "scipy": "1.15.3",
+    "scipy": "1.17.1",
     "n_jobs": 6,
     "cpu_count": 8
   }

@@ -72,6 +72,17 @@ P18_KEYS = [
     ("p18", "R5 P18 Final"),
 ]
 P18_TRANSITIONS = (2021, 2022, 2023, 2024)
+# Phase 6 — deploy artifact (2024 -> 2025)
+DEPLOY_KEYS = [
+    ("p1", "R6 Deploy exact_lgb"),
+    ("p2", "R6 Deploy ridge"),
+    ("p3", "R6 Deploy trend_lgb"),
+    ("p_base25", "R6 Deploy p_base25"),
+    ("correction", "R6 Deploy L1 corr"),
+    ("final_v15_direct", "R6 Deploy V15 direct"),
+    ("stable_corr25", "R6 Deploy L2 corr"),
+    ("final_direct", "R6 Deploy FINAL"),
+]
 
 
 def load_matrix(path: Path):
@@ -359,6 +370,109 @@ def compare_p18(ref_dir: Path, cand_dir: Path, year: int) -> dict:
     return out
 
 
+def compare_deploy(ref_dir: Path, cand_dir: Path, vdir: Path) -> dict:
+    """R6 — Phase 6 배포 경로 parity (2024 -> 2025).
+
+    validation 이 아니라 deploy regime 이다. Layer 1 이 crossfit 없이 2024 전체로
+    학습되므로 ExtraTrees 병렬 누적 잡음(2^-53 근처)이 그대로 실린다.
+    """
+    rp = ref_dir / "deploy_2025.npz"
+    cp = cand_dir / "deploy_2025.npz"
+    if not rp.exists():
+        return {k: {"status": "SKIP", "note": "reference deploy_2025.npz 없음 (stage != deploy)"}
+                for k, _ in DEPLOY_KEYS}
+    if not cp.exists():
+        return {k: {"status": "SKIP", "note": "candidate deploy_2025.npz 없음 (PHASE<6)"}
+                for k, _ in DEPLOY_KEYS}
+    a, b = np.load(rp, allow_pickle=True), np.load(cp, allow_pickle=True)
+    guard = {}
+    for k in ("row_id", "domain3"):
+        if k in a.files and k in b.files:
+            guard[k] = bool(np.array_equal(a[k].astype(str), b[k].astype(str)))
+    out = {}
+    for key, _label in DEPLOY_KEYS:
+        if key not in a.files or key not in b.files:
+            out[key] = {"status": "SKIP", "note": f"{key} 없음"}
+            continue
+        ra = a[key].astype(np.float64)
+        cb_ = b[key].astype(np.float64)
+        if ra.shape != cb_.shape:
+            out[key] = {"status": "FAIL", "note": "shape mismatch",
+                        "ref_shape": list(ra.shape), "cand_shape": list(cb_.shape)}
+            continue
+        d = np.abs(ra - cb_)
+        mx = float(d.max())
+        corr = (float(np.corrcoef(ra, cb_)[0, 1]) if ra.size > 1 and ra.std() > 0 else 1.0)
+        ok = mx < R3_PRED_MAX_ABS and all(guard.values())
+        out[key] = {
+            "max_abs_diff": mx, "mean_abs_diff": float(d.mean()), "corr": corr,
+            "n": int(ra.size), "bit_identical": bool(mx == 0.0),
+            "row_domain_guard": guard,
+            "status": "PASS" if ok else "FAIL",
+        }
+    return out
+
+
+def check_deploy_artifact(model_path: Path, ref_manifest: dict) -> dict:
+    """R6b — 단일 pkl artifact 가 배포에 필요한 키를 전부 담고 있는가 + 차원 일치."""
+    if not model_path.exists():
+        return {"status": "SKIP", "note": f"{model_path} 없음 (PHASE<6)"}
+    import pickle
+
+    with open(model_path, "rb") as f:
+        art = pickle.load(f)
+    required = [
+        "expected_year", "anchor_team_id", "selected_blocks",
+        "base_exact_lgb", "exact_feature_cols", "exact_cat_maps",
+        "base_ridge", "ridge_feature_cols", "ridge_med", "ridge_mu", "ridge_sd",
+        "base_trend_lgb", "trend_num_cols", "trend_cat_maps", "trend_feature_cols",
+        "trend_prior", "target_global_bank",
+        "adapter_prep", "adapter_base_feature_cols", "adapter_feature_cols",
+        "pitcher_conditional_specs", "pitcher_conditional_cols", "exact_adapter_cols",
+        "adapter_seeds", "adapter_shrink", "adapter_models",
+        "v18_stable_enabled", "v18_stable_specs", "v18_stable_cols",
+        "v18_stable_mu", "v18_stable_sd", "v18_stable_model",
+        "v18_stable_gamma", "v18_route_domain",
+    ]
+    missing = [k for k in required if k not in art]
+    dims = {
+        "exact_lgb": len(art.get("exact_feature_cols", [])),
+        "ridge": len(art.get("ridge_feature_cols", [])),
+        "trend_lgb": len(art.get("trend_feature_cols", [])),
+        "adapter": len(art.get("adapter_feature_cols", [])),
+        "adapter_base": len(art.get("adapter_base_feature_cols", [])),
+        "pitcher_conditional": len(art.get("pitcher_conditional_cols", [])),
+        "exact_adapter": len(art.get("exact_adapter_cols", [])),
+        "v18_stable": len(art.get("v18_stable_cols", [])),
+    }
+    expect = {"exact_lgb": 98, "ridge": 89, "trend_lgb": 42, "adapter": 128,
+              "adapter_base": 45, "pitcher_conditional": 21, "exact_adapter": 62,
+              "v18_stable": 25}
+    dim_bad = {k: (dims[k], expect[k]) for k in expect if dims[k] != expect[k]}
+    n_models = len(art.get("adapter_models", {}))
+    ref = ref_manifest.get("deploy", {})
+    checks = {
+        "missing_keys": missing,
+        "dims": dims, "dim_mismatch": dim_bad,
+        "n_adapter_models": n_models,
+        "artifact_mb": round(model_path.stat().st_size / 1e6, 2),
+        "v18_stable_enabled": bool(art.get("v18_stable_enabled")),
+        "ref_v18_stable_enabled": ref.get("v18_stable_enabled"),
+    }
+    if ref:
+        checks["stable_enabled_match"] = (
+            bool(art.get("v18_stable_enabled")) == bool(ref.get("v18_stable_enabled"))
+        )
+        checks["expected_year_match"] = (
+            int(art.get("expected_year", -1)) == int(ref.get("expected_year", -2))
+        )
+    ok = (not missing and not dim_bad and n_models == 9
+          and checks.get("stable_enabled_match", True)
+          and checks.get("expected_year_match", True))
+    checks["status"] = "PASS" if ok else "FAIL"
+    return checks
+
+
 def check_artifact_chain(cand_dir: Path, year: int) -> dict:
     """R0 — candidate 자체 산출물 체인 정합성 (reference 불필요).
 
@@ -487,6 +601,8 @@ def main():
     ap.add_argument("--validation-dir", required=True)  # selfcheck 에서도 출력 위치로 쓴다
     ap.add_argument("--year", type=int, action="append", default=None)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--model-path", default=None,
+                    help="R6b 검사용 단일 pkl 경로 (기본 ./model/<exp>/<exp>.pkl)")
     ap.add_argument("--selfcheck", nargs=2, metavar=("REF_A", "REF_B"), default=None,
                     help="R3-0 자기 결정성: reference 2회 실행분을 서로 비교한다")
     args = ap.parse_args()
@@ -578,6 +694,24 @@ def main():
                  "max_abs_diff": gate5.get("max_metric_abs_diff"),
                  "mean_abs_diff": None, "note": gate5.get("note", "")})
 
+    # ---- R6 : Phase 6 deploy (2024 -> 2025) ----
+    dep = compare_deploy(ref_dir, cand_dir, vdir)
+    report["deploy"] = dep
+    for key, label in DEPLOY_KEYS:
+        r_ = dep.get(key, {"status": "SKIP"})
+        report.setdefault("deploy_by_gate", {})[label] = r_
+        rows.append({"year": "-", "gate": label, "status": r_.get("status"),
+                     "max_abs_diff": r_.get("max_abs_diff"),
+                     "mean_abs_diff": r_.get("mean_abs_diff"), "note": r_.get("note", "")})
+    exp = Path(str(vdir)).name
+    model_path = (Path(args.model_path) if args.model_path
+                  else Path("./model") / exp / f"{exp}.pkl")
+    art = check_deploy_artifact(model_path, ref_manifest)
+    art["model_path"] = str(model_path)
+    report["deploy_artifact"] = art
+    rows.append({"year": "-", "gate": "R6b Deploy Artifact", "status": art.get("status"),
+                 "max_abs_diff": None, "mean_abs_diff": None, "note": art.get("note", "")})
+
     tab = pd.DataFrame(rows)
     statuses = set(tab.status)
     report["overall"] = (
@@ -628,6 +762,19 @@ def main():
     print(f"{'Year':<6}{'Gate':<34}{'Result':<26}{'Max Diff':<13}{'Status'}")
     print("=" * 96)
     for _, r in tab.iterrows():
+        if r["gate"].startswith("R6 Deploy"):
+            rr = report["deploy_by_gate"][r["gate"]]
+            det = (f"n={rr.get('n')} bit={rr.get('bit_identical')}"
+                   if rr.get("status") != "SKIP" else rr.get("note", ""))
+            print(f"{'-':<6}{r['gate']:<34}{det[:25]:<26}"
+                  f"{fmt(r['max_abs_diff']):<13}{r['status']}")
+            continue
+        if r["gate"] == "R6b Deploy Artifact":
+            aa = report["deploy_artifact"]
+            det = (f"{aa.get('artifact_mb')}MB models={aa.get('n_adapter_models')}"
+                   if aa.get("status") != "SKIP" else aa.get("note", ""))
+            print(f"{'-':<6}{r['gate']:<34}{det[:25]:<26}{'-':<13}{r['status']}")
+            continue
         if r["gate"] == "R5 Promotion Gate":
             g5 = report["promotion_gate"]
             det = (f"submit={g5.get('cand_submit_recommended')} "

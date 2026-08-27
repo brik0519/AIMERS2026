@@ -56,6 +56,12 @@ DEFS_ONLY_CELLS = {13}
 #   → 재현 충실도가 가장 높은 형태다 (재작성 0줄).
 P18_EXTRA_CELLS = [14, 15]
 
+# --stage deploy : Phase 6 (2024→2025 배포 artifact) + script.py 생성 + zip smoke.
+#   cell 16 이 cell 1~8 외에 필요로 하는 이름은 AST 확인 결과 정확히 6개이고
+#   그중 V18_SUBMIT_RECOMMENDED / summary 는 cell 15 가 만든다.
+#   → ROWS / Y / V15_OOF / BASE_BY_YEAR 4개만 주입하면 14·15·16 을 통째로 verbatim exec 할 수 있다.
+DEPLOY_EXTRA_CELLS = [14, 15, 16]
+
 _LIB_IMPORT_LINES = (
     "import lightgbm as lgb",
     "from sklearn.linear_model import Ridge",
@@ -314,23 +320,18 @@ def dump_year(ns: dict, year: int, out_dir: Path, stage: str) -> dict:
     return info
 
 
-def dump_p18(ns: dict, out_dir: Path, nb_path: Path, data_dir: Path) -> dict:
-    """Layer 2 (PASS 2). cell 14 / cell 15 를 통째로 verbatim exec 한다.
-
-    선행 조건: 같은 out_dir 에 `--stage v15_oof` 로 만든
-    v15_oof_{2020..2024}.npz 5개가 있어야 한다.
-    """
+def _seed_pass1_globals(ns: dict, out_dir: Path, need_base: bool = False) -> tuple:
+    """Phase 3/4 산출물(npz)에서 ROWS / Y / V15_OOF / BASE_BY_YEAR 를 복원해 주입한다."""
     TARGET = ns["TARGET"]
     screen = ns["screen"]
     years = [2020, 2021, 2022, 2023, 2024]
-
-    ROWS, Y, V15_OOF = {}, {}, {}
+    ROWS, Y, V15_OOF, BASE = {}, {}, {}, {}
     for y in years:
         rows = screen.loc[screen.season.eq(int(y))].reset_index(drop=True)
         p = out_dir / f"v15_oof_{y}.npz"
         if not p.exists():
             raise FileNotFoundError(
-                f"--stage p18 은 v15_oof npz 5개가 필요하다. 없음: {p}\n"
+                f"v15_oof npz 5개가 필요하다. 없음: {p}\n"
                 f"  먼저 --stage v15_oof 로 2020~2024 를 모두 dump 할 것."
             )
         z = np.load(p)
@@ -341,11 +342,95 @@ def dump_p18(ns: dict, out_dir: Path, nb_path: Path, data_dir: Path) -> dict:
         ROWS[y] = rows
         Y[y] = rows[TARGET].to_numpy(np.float64)
         V15_OOF[y] = oof
+        BASE[y] = z["p_base"].astype(np.float64)
         del z
     ns["ROWS"] = ROWS
     ns["Y"] = Y
     ns["V15_OOF"] = V15_OOF
-    print("  [ref] ROWS / Y / V15_OOF 주입 완료 (2020~2024)", flush=True)
+    if need_base:
+        ns["BASE_BY_YEAR"] = BASE
+    print("  [ref] ROWS / Y / V15_OOF"
+          + (" / BASE_BY_YEAR" if need_base else "")
+          + " 주입 완료 (2020~2024)", flush=True)
+    return ROWS, Y, V15_OOF, BASE
+
+
+def dump_deploy(ns: dict, out_dir: Path, nb_path: Path, data_dir: Path) -> dict:
+    """Phase 6 — cell 14·15·16 을 통째로 verbatim exec 한다.
+
+    cell 16 은 배포 artifact 학습 + script.py 생성 + zip + subprocess smoke 까지 수행하므로
+    **Phase 7 의 ground truth 도 함께 만들어진다.**
+    """
+    ROWS, Y, V15_OOF, BASE = _seed_pass1_globals(ns, out_dir, need_base=True)
+
+    cells = load_cells(nb_path, DEPLOY_EXTRA_CELLS)
+    for i in DEPLOY_EXTRA_CELLS:
+        src, _ = patch_cell(i, cells[i], data_dir, "deploy")
+        t0 = time.time()
+        exec(compile(src, f"<v18_cell_{i}>", "exec"), ns)
+        print(f"  [ref] cell {i} exec  {time.time() - t0:8.1f}s", flush=True)
+        gc.collect()
+
+    test = ns["test"]
+    np.savez_compressed(
+        out_dir / "deploy_2025.npz",
+        row_id=test.row_id.to_numpy().astype(str),
+        domain3=test.domain3.to_numpy().astype(str),
+        p_base25=np.asarray(ns["p_base25"], np.float64),
+        p1=np.asarray(ns["p1"], np.float64),
+        p2=np.asarray(ns["p2"], np.float64),
+        p3=np.asarray(ns["p3"], np.float64),
+        correction=np.asarray(ns["correction"], np.float64),
+        final_v15_direct=np.asarray(ns["final_v15_direct"], np.float64),
+        stable_corr25=np.asarray(ns["stable_corr25"], np.float64),
+        final_direct=np.asarray(ns["final_direct"], np.float64),
+    )
+    pre = ns["preprocess"]
+    info = {
+        "expected_year": int(ns["expected_year"]),
+        "n_test_rows": int(len(test)),
+        "v18_stable_enabled": bool(pre.get("v18_stable_enabled")),
+        "v18_submit_recommended": bool(ns["V18_SUBMIT_RECOMMENDED"]),
+        "protocol": pre.get("protocol"),
+        "selected_blocks": list(pre.get("selected_blocks", [])),
+        "exact_feature_cols_n": len(pre["exact_feature_cols"]),
+        "ridge_feature_cols_n": len(pre["ridge_feature_cols"]),
+        "trend_feature_cols_n": len(pre["trend_feature_cols"]),
+        "adapter_feature_cols_n": len(pre["adapter_feature_cols"]),
+        "adapter_base_feature_cols_n": len(pre["adapter_base_feature_cols"]),
+        "pitcher_conditional_cols_n": len(pre["pitcher_conditional_cols"]),
+        "exact_adapter_cols_n": len(pre["exact_adapter_cols"]),
+        "v18_stable_cols_n": len(pre["v18_stable_cols"]),
+        "trend_prior": {k: float(v) for k, v in pre["trend_prior"].items()},
+        "adapter_seeds": list(pre["adapter_seeds"]),
+        "adapter_shrink": float(pre["adapter_shrink"]),
+        "v18_stable_gamma": float(pre["v18_stable_gamma"]),
+        "v18_route_domain": pre["v18_route_domain"],
+        "final_direct": {"mean": float(np.mean(ns["final_direct"])),
+                         "min": float(np.min(ns["final_direct"])),
+                         "max": float(np.max(ns["final_direct"]))},
+        "work_root": str(ns["WORK_ROOT"]),
+        "zip_path": str(ns.get("zip_path", "")),
+    }
+    # cell 16 이 만든 script.py 를 Phase 7 ground truth 로 보존한다
+    src_script = Path(ns["WORK_ROOT"]) / "script.py"
+    if src_script.exists():
+        (out_dir / "script_reference.py").write_text(
+            src_script.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        info["script_reference"] = str(out_dir / "script_reference.py")
+    print(f"  [ref] deploy 완료 · v18_stable_enabled={info['v18_stable_enabled']} "
+          f"· test rows={info['n_test_rows']}", flush=True)
+    return info
+
+
+def dump_p18(ns: dict, out_dir: Path, nb_path: Path, data_dir: Path) -> dict:
+    """Layer 2 (PASS 2). cell 14 / cell 15 를 통째로 verbatim exec 한다.
+
+    선행 조건: 같은 out_dir 에 `--stage v15_oof` 로 만든
+    v15_oof_{2020..2024}.npz 5개가 있어야 한다.
+    """
+    ROWS, Y, V15_OOF, _ = _seed_pass1_globals(ns, out_dir, need_base=False)
 
     cells = load_cells(nb_path, P18_EXTRA_CELLS)
     for i in P18_EXTRA_CELLS:
@@ -383,10 +468,10 @@ def main():
     ap.add_argument("--data-dir", default="./data")
     ap.add_argument("--out", default="validation/v18_repro_v001/reference")
     ap.add_argument("--year", type=int, action="append", default=None)
-    ap.add_argument("--stage", choices=["features", "anchor", "v15_oof", "p18"],
+    ap.add_argument("--stage", choices=["features", "anchor", "v15_oof", "p18", "deploy"],
                     default="features")
     args = ap.parse_args()
-    if args.stage != "p18" and not args.year:
+    if args.stage not in ("p18", "deploy") and not args.year:
         ap.error("--year 는 --stage p18 이 아닌 경우 필수다")
 
     nb_path = Path(args.notebook)
@@ -421,12 +506,14 @@ def main():
         "cf_seeds": list(ns["CF_SEEDS"]),
         "years": {},
     }
-    if args.stage == "p18":
-        print("[ref] Layer 2 (PASS 2) ...", flush=True)
+    if args.stage in ("p18", "deploy"):
+        label = "Layer 2 (PASS 2)" if args.stage == "p18" else "Deploy artifact (2024->2025)"
+        print(f"[ref] {label} ...", flush=True)
         t0 = time.time()
-        manifest["p18"] = dump_p18(ns, out_dir, nb_path, data_dir)
-        print(f"[ref] p18 done  {time.time() - t0:.1f}s", flush=True)
-        mpath = out_dir / "manifest_p18.json"
+        fn = dump_p18 if args.stage == "p18" else dump_deploy
+        manifest[args.stage] = fn(ns, out_dir, nb_path, data_dir)
+        print(f"[ref] {args.stage} done  {time.time() - t0:.1f}s", flush=True)
+        mpath = out_dir / f"manifest_{args.stage}.json"
         mpath.write_text(json.dumps(manifest, indent=2, ensure_ascii=False, default=str),
                          encoding="utf-8")
         print(f"[ref] manifest -> {mpath}")

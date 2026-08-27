@@ -92,8 +92,8 @@ FEATURE_PARITY_DIR = VALIDATION_DIR / "feature_parity"
 # 실행 제어
 # =========================================================
 
-# 2 = Feature 까지, 3 = +Anchor/Residual, 4 = +Layer 1 V15 OOF crossfit,
-# 5 = +Layer 2 temporal-stable Ridge (PASS 2, 2020~2024 V15_OOF 전부 필요)
+# 2 = Feature, 3 = +Anchor/Residual, 4 = +Layer 1 V15 OOF crossfit,
+# 5 = +Layer 2 temporal-stable Ridge (PASS 2), 6 = +deploy artifact (2024->2025)
 # (3 이상은 lightgbm + scikit-learn 필요)
 PHASE = int(os.environ.get("V18_REPRO_PHASE", "3"))
 
@@ -504,6 +504,20 @@ def validate_schema(screen: pd.DataFrame) -> None:
             if c in test_sample.columns:
                 a, b = str(screen[c].dtype), str(test_sample[c].dtype)
                 assert a == b, f"context dtype mismatch {c}: train={a} test={b}"
+
+        # base_state 는 `_lookup` 의 MultiIndex 키다. 값이 '___','1__',…,'123' 인데
+        # **'123' 만 들어있는 파일**을 읽으면 pandas 가 int64 로 추론하고,
+        # object "123" 로 만들어진 EB 표와 키가 어긋나 pc__base_state__* 가
+        # 조용히 0.0 이 된다 (T2 검사 D 에서 실측: 0.489 -> 0.0).
+        # 계산은 바꾸지 않고, 그 조건이 되면 시끄럽게 실패시킨다.
+        for name, frame in [("train", screen), ("test", test_sample)]:
+            if "base_state" in frame.columns:
+                dt = str(frame["base_state"].dtype)
+                assert dt == "object", (
+                    f"{name}.base_state dtype={dt} (object 여야 한다). "
+                    "숫자로 추론되면 pitcher_conditional 의 base_state 조회가 "
+                    "조용히 실패한다. 입력 파일의 base_state 값 구성을 확인할 것."
+                )
 
 
 def fit_router(screen: pd.DataFrame) -> int:
@@ -1775,6 +1789,320 @@ def run_phase5(screen: pd.DataFrame, feature_dump_dir: Path, validation_dir: Pat
 
 
 # =========================================================
+# Phase 6 — Final artifact (deploy regime, 2024 -> 2025)
+#           notebook cell 16 의 모델 구축부. zip / subprocess smoke 는 Phase 7.
+# =========================================================
+
+DEPLOY_SOURCE_YEAR = VALID_YEAR          # 2024
+DEPLOY_PC_TRAIN_SOURCE = BASE_SOURCE_YEAR  # 2023 — 학습 feature 는 2023 EB
+
+
+def run_phase6(screen: pd.DataFrame, domain_means: DomainMeans,
+               feature_dump_dir: Path, validation_dir: Path) -> dict:
+    """배포 regime. validation 과 5가지가 다르다 — 그대로 재현한다.
+
+      1) Layer 1 은 2024 **전체**로 학습한다 (crossfit 없음)
+      2) `FINAL_ADAPTER_CFG` (n_estimators=120). `V15_CF_CFG`(100) 가 아니다
+      3) `fit_adapter_prep` 소스가 **raw24** 다 (학습 시즌과 동일)
+      4) 학습 PC EB 는 2023, 추론 PC EB 는 2024
+      5) Layer 2 는 **in-sample adapter 출력**이 아니라 p_base25 기반 direct 예측을 보정한다
+    """
+    _import_phase3_libs()
+    _import_phase4_libs()
+
+    expected_year = int(screen[SEASON_COL].max()) + 1
+    raw24 = screen.loc[screen[SEASON_COL].eq(DEPLOY_SOURCE_YEAR)].reset_index(drop=True)
+    y24 = raw24[TARGET].to_numpy(np.float64)
+
+    # ---- Phase 3 / 4 / 5 산출물 ----
+    za = np.load(feature_dump_dir / f"anchor_{DEPLOY_SOURCE_YEAR}.npz")
+    p_base24 = za["p_base"].astype(np.float64)
+    zo = np.load(feature_dump_dir / f"v15_oof_{DEPLOY_SOURCE_YEAR}.npz")
+    v15_oof24 = zo["v15_oof"].astype(np.float64)
+    assert np.array_equal(zo["target"].astype(np.float64), y24), "v15_oof target mismatch"
+    assert float(np.abs(zo["p_base"].astype(np.float64) - p_base24).max()) == 0.0, (
+        "anchor_2024 와 v15_oof_2024 의 p_base 가 다르다 — R0 Artifact Chain 확인"
+    )
+    gate_path = validation_dir / "gate.json"
+    assert gate_path.exists(), f"Phase 5 의 {gate_path} 가 필요하다"
+    v18_submit_recommended = bool(
+        json.loads(gate_path.read_text(encoding="utf-8"))["submit_recommended"]
+    )
+    print(f"    V18_SUBMIT_RECOMMENDED (Phase 5) : {v18_submit_recommended}")
+
+    # ---- test 적재 / 검증 ----
+    test = pd.read_csv(TEST_PATH, encoding="utf-8-sig", low_memory=False)
+    test[SEASON_COL] = pd.to_numeric(test[SEASON_COL], errors="raise").astype(int)
+    test["game_type"] = test["game_type"].astype("string").fillna("<NA>").astype(str)
+    assert TARGET not in test, "test.csv 에 target 이 있다"
+    if bool((test[SEASON_COL] != expected_year).any()):
+        raise RuntimeError(f"evaluation season differs from expected {expected_year}")
+    if bool((~test.game_type.isin(["R", "F"])).any()):
+        raise RuntimeError("unexpected game_type")
+    anchor_team_id = fit_router(screen)
+    test = attach_domain3(test, anchor_team_id)
+    assert str(test["base_state"].dtype) == "object", (
+        f"test.base_state dtype={test['base_state'].dtype} — object 여야 한다 (L-3 참조)"
+    )
+    print(f"    expected_year={expected_year}  test rows={len(test)}  "
+          f"domain3={test.domain3.value_counts().to_dict()}")
+
+    # ---- 1) 2024 -> 2025 shared base ----
+    source = raw24
+    ss = build_self_state(source.drop(columns=[TARGET], errors="ignore"))
+    source_bank = fit_global_season_bank(
+        screen.loc[screen[SEASON_COL].lt(DEPLOY_SOURCE_YEAR), BANK_COLS], DEPLOY_SOURCE_YEAR
+    )
+    gs = transform_global_season(source_bank, source.drop(columns=[TARGET], errors="ignore"))
+    target_bank = fit_global_season_bank(
+        screen.loc[screen[SEASON_COL].lt(expected_year), BANK_COLS], expected_year
+    )
+    st = build_self_state(test)
+    gt = transform_global_season(target_bank, test)
+    A0 = pd.concat(
+        [source[RAWNUM].apply(pd.to_numeric, errors="coerce").reset_index(drop=True),
+         ss.reset_index(drop=True), gs.reset_index(drop=True)], axis=1)
+    B0 = pd.concat(
+        [test[RAWNUM].apply(pd.to_numeric, errors="coerce").reset_index(drop=True),
+         st.reset_index(drop=True), gt.reset_index(drop=True)], axis=1)
+
+    ca, cb, exact_maps = encode_cats(source, test)
+    A_exact = pd.concat([A0, ca], axis=1)
+    B_exact = pd.concat([B0, cb], axis=1)
+    exact_feature_cols = list(A_exact.columns)
+    assert len(exact_feature_cols) == EXPECTED_DIMS["exact_lgb_features"]
+    m1 = lgb.LGBMClassifier(objective="binary", verbosity=-1, n_jobs=N_JOBS,
+                            **BASE_CFG["exact_lgb"])
+    m1.fit(A_exact, y24)
+    p1 = m1.predict_proba(B_exact)[:, 1]
+    del A_exact, B_exact, ca, cb
+    gc.collect()
+
+    Ar = A0.replace([np.inf, -np.inf], np.nan)
+    Br = B0.replace([np.inf, -np.inf], np.nan)
+    ridge_feature_cols = list(A0.columns)
+    ridge_med = Ar.median().fillna(0.0)
+    Ar = Ar.fillna(ridge_med).to_numpy(np.float32)
+    Br = Br.fillna(ridge_med).to_numpy(np.float32)
+    ridge_mu = Ar.mean(0)
+    ridge_sd = Ar.std(0)
+    ridge_sd = np.where(ridge_sd > 1e-6, ridge_sd, 1.0)
+    Ar = np.clip((Ar - ridge_mu) / ridge_sd, -8, 8)
+    Br = np.clip((Br - ridge_mu) / ridge_sd, -8, 8)
+    m2 = Ridge(alpha=BASE_CFG["ridge_alpha"], solver="lsqr", max_iter=100, tol=1e-3)
+    m2.fit(Ar, y24)
+    p2 = np.clip(m2.predict(Br), 0.001, 0.999)
+    del Ar, Br, A0, B0, ss, gs
+    gc.collect()
+
+    s = add_eng(source)
+    t = add_eng(test)
+    trend_num_cols = RAWNUM + ENG_COLS
+    An = s[trend_num_cols].apply(pd.to_numeric, errors="coerce").reset_index(drop=True)
+    Bn = t[trend_num_cols].apply(pd.to_numeric, errors="coerce").reset_index(drop=True)
+    cta, ctb, trend_maps = encode_cats(s, t)
+    At = pd.concat([An, cta], axis=1).astype(np.float32)
+    Bt = pd.concat([Bn, ctb], axis=1).astype(np.float32)
+    trend_feature_cols = list(At.columns)
+    slope = domain_means.trailing_core_slope(DEPLOY_SOURCE_YEAR)
+    base_dom = np.array(
+        [domain_means.value(DEPLOY_SOURCE_YEAR, d, DEPLOY_SOURCE_YEAR)
+         for d in source.domain3.to_numpy()], dtype=np.float64)
+    trend_prior = {d: domain_means.value(DEPLOY_SOURCE_YEAR, d, DEPLOY_SOURCE_YEAR) + slope
+                   for d in ["R_CORE", "R_ANCHOR", "F"]}
+    bt = np.array([trend_prior[d] for d in test.domain3.to_numpy()], dtype=np.float64)
+    m3 = lgb.LGBMRegressor(objective="regression_l2", verbosity=-1, n_jobs=N_JOBS,
+                           **BASE_CFG["trend_lgb"])
+    m3.fit(At, y24 - base_dom)
+    p3 = np.clip(bt + m3.predict(Bt), 0.001, 0.999)
+    del At, Bt, An, Bn, cta, ctb, s, t
+    gc.collect()
+
+    p_base25 = np.clip(
+        (np.asarray(p1, float) + np.asarray(p2, float) + np.asarray(p3, float)) / 3.0, 0, 1)
+    print(f"    p_base25 mean={float(p_base25.mean()):.6f}  slope={slope:.10f}")
+
+    # ---- 2) V15 블록 : 학습은 2023 EB, 추론은 2024 EB ----
+    pc23 = make_pc_specs(screen, DEPLOY_PC_TRAIN_SOURCE)
+    pc24 = make_pc_specs(screen, DEPLOY_SOURCE_YEAR)
+    pc24_train = transform_pc_specs(pc23, raw24)
+    pc25 = transform_pc_specs(pc24, test)
+    ex24 = build_exact_asof_state(screen, raw24, DEPLOY_SOURCE_YEAR)
+    ex25 = pd.concat([st.add_prefix("exact__"), gt.add_prefix("exact__")], axis=1) \
+        .replace([np.inf, -np.inf], np.nan).fillna(0).astype(np.float32)
+
+    # notebook cell 16 line 94~97 의 자기검증: 배포 학습 feature 가
+    # validation 에서 이미 gate 통과한 블록과 같은가
+    parity = {}
+    for name, built in [("pitcher_conditional", pc24_train), ("exact_asof_state", ex24)]:
+        ref = feature_dump_dir / f"{name}_{DEPLOY_SOURCE_YEAR}.npz"
+        if ref.exists():
+            z = np.load(ref, allow_pickle=True)
+            assert list(built.columns) == [str(c) for c in z["columns"]], name
+            d = float(np.abs(built.to_numpy(np.float32).astype(np.float64)
+                             - z["values"].astype(np.float64)).max())
+            parity[name] = d
+            assert d < 1e-7, (name, d)
+    print(f"    deploy 학습 feature parity vs Phase2 산출물: {parity}")
+
+    prep24 = fit_adapter_prep(raw24)
+    X24_base = transform_adapter(prep24, raw24, p_base24)
+    X25_base = transform_adapter(prep24, test, p_base25)
+    adapter_base_feature_cols = list(X24_base.columns)
+    X24_final = pd.concat([X24_base.reset_index(drop=True), pc24_train.reset_index(drop=True),
+                           ex24.reset_index(drop=True)], axis=1)
+    X25 = pd.concat([X25_base.reset_index(drop=True), pc25.reset_index(drop=True),
+                     ex25.reset_index(drop=True)], axis=1)
+    assert list(X24_final.columns) == list(X25.columns)
+    assert not X24_final.columns.duplicated().any()
+    assert np.isfinite(X24_final.to_numpy(float)).all() and np.isfinite(X25.to_numpy(float)).all()
+    assert X24_final.shape[1] == EXPECTED_DIMS["adapter_matrix"] == 128
+    adapter_feature_cols = list(X24_final.columns)
+    print(f"    deploy adapter {list(X24_final.shape)} -> test {list(X25.shape)}")
+
+    # ---- 3) 최종 residual adapter : 2024 전체 학습, crossfit 없음 ----
+    res24 = y24 - p_base24
+    adapter_models = {}
+    corrections = []
+    for seed in CF_SEEDS:
+        c = np.zeros(len(test), dtype=np.float64)
+        for d in ["R_CORE", "R_ANCHOR", "F"]:
+            tr = raw24.domain3.eq(d).to_numpy()
+            te = test.domain3.eq(d).to_numpy()
+            t0 = time.time()
+            m = ExtraTreesRegressor(n_jobs=N_JOBS, random_state=16200 + int(seed),
+                                    **FINAL_ADAPTER_CFG)
+            m.fit(X24_final.loc[tr], res24[tr])
+            adapter_models[(int(seed), d)] = m
+            if te.any():
+                c[te] = m.predict(X25.loc[te])
+            print(f"      adapter seed={seed} domain={d:<8} n_tr={int(tr.sum()):>7} "
+                  f"n_te={int(te.sum()):>4} sec={time.time() - t0:.1f}")
+            gc.collect()
+        corrections.append(c)
+    correction = np.mean(np.column_stack(corrections), axis=1)
+    final_v15_direct = np.clip(p_base25 + ADAPTER_SHRINK * correction, 0, 1)
+    final_direct = final_v15_direct.copy()
+    assert np.isfinite(final_direct).all() and ((final_direct >= 0) & (final_direct <= 1)).all()
+
+    # ---- 4) Layer 2 : 2024 OOF 잔차로 학습해 2025 R_CORE 에만 적용 ----
+    stable_specs24 = build_v18_stable_specs(screen, DEPLOY_SOURCE_YEAR)
+    stable24 = transform_v18_stable_specs(stable_specs24, raw24)
+    stable_specs25 = build_v18_stable_specs(screen, expected_year)
+    stable25 = transform_v18_stable_specs(stable_specs25, test)
+    assert list(stable24.columns) == list(stable25.columns)
+    A = stable24.to_numpy(np.float32)
+    B = stable25.to_numpy(np.float32)
+    v18_mu = A.mean(0)
+    v18_sd = A.std(0)
+    v18_sd = np.where(v18_sd > 1e-6, v18_sd, 1.0).astype(np.float32)
+    Az = np.clip((A - v18_mu) / v18_sd, -8, 8)
+    Bz = np.clip((B - v18_mu) / v18_sd, -8, 8)
+    stable_model = Ridge(alpha=V18_RIDGE_ALPHA, solver="lsqr", max_iter=200, tol=1e-5)
+    stable_model.fit(Az, y24 - v15_oof24)
+    stable_corr25 = np.asarray(stable_model.predict(Bz), np.float64)
+    if v18_submit_recommended:
+        core25 = test.domain3.eq(V18_ROUTE_DOMAIN).to_numpy()
+        final_direct[core25] = np.clip(
+            final_direct[core25] + V18_GAMMA * stable_corr25[core25], 0, 1)
+    print(f"    V18 deploy correction enabled={v18_submit_recommended}  "
+          f"stable {list(stable24.shape)}  core test rows="
+          f"{int(test.domain3.eq(V18_ROUTE_DOMAIN).sum())}")
+    assert np.isfinite(final_direct).all() and ((final_direct >= 0) & (final_direct <= 1)).all()
+
+    # ---- 5) 단일 pkl artifact ----
+    artifact = {
+        "experiment_name": EXPERIMENT_NAME,
+        "protocol": PROTOCOL_VERSION,
+        "source_protocol": SOURCE_PROTOCOL,
+        "expected_year": int(expected_year),
+        "anchor_team_id": int(anchor_team_id),
+        "selected_blocks": list(DEPLOY_SELECTED_BLOCKS),
+        "rawnum": list(RAWNUM), "cat_small": list(CAT_SMALL),
+        "eng_cols": list(ENG_COLS), "adapter_rawnum": list(ADAPTER_RAWNUM),
+        # Layer 0
+        "base_exact_lgb": m1, "exact_feature_cols": exact_feature_cols,
+        "exact_cat_maps": exact_maps,
+        "base_ridge": m2, "ridge_feature_cols": ridge_feature_cols,
+        "ridge_med": ridge_med.to_dict(),
+        "ridge_mu": ridge_mu.astype(np.float32), "ridge_sd": ridge_sd.astype(np.float32),
+        "base_trend_lgb": m3, "trend_num_cols": list(trend_num_cols),
+        "trend_cat_maps": trend_maps, "trend_feature_cols": trend_feature_cols,
+        "trend_prior": trend_prior, "trend_slope": float(slope),
+        "target_global_bank": target_bank,
+        # Layer 1
+        "adapter_prep": prep24,
+        "adapter_base_feature_cols": adapter_base_feature_cols,
+        "adapter_feature_cols": adapter_feature_cols,
+        "pitcher_conditional_specs": pc24,
+        "pitcher_conditional_cols": list(pc25.columns),
+        "exact_adapter_cols": list(ex25.columns),
+        "adapter_seeds": list(CF_SEEDS), "adapter_shrink": float(ADAPTER_SHRINK),
+        "adapter_models": adapter_models,
+        # Layer 2
+        "v18_stable_enabled": bool(v18_submit_recommended),
+        "v18_stable_specs": stable_specs25,
+        "v18_stable_cols": list(stable25.columns),
+        "v18_stable_mu": v18_mu.astype(np.float32), "v18_stable_sd": v18_sd,
+        "v18_stable_model": stable_model,
+        "v18_stable_gamma": float(V18_GAMMA), "v18_route_domain": V18_ROUTE_DOMAIN,
+        "postprocess": None,
+        "library_versions": library_versions(),
+    }
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    with open(MODEL_PATH, "wb") as f:
+        pickle.dump(artifact, f, protocol=pickle.HIGHEST_PROTOCOL)
+    size_mb = MODEL_PATH.stat().st_size / 1e6
+    print(f"    artifact -> {MODEL_PATH}  ({size_mb:.1f} MB)")
+
+    # ---- 6) 산출물 ----
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({ID: test[ID].to_numpy(), TARGET: final_direct}).to_csv(
+        OUTPUT_PATH, index=False)
+    np.savez_compressed(
+        feature_dump_dir / "deploy_2025.npz",
+        row_id=test[ID].to_numpy().astype(str),
+        domain3=test.domain3.to_numpy().astype(str),
+        p_base25=p_base25, p1=np.asarray(p1, np.float64), p2=np.asarray(p2, np.float64),
+        p3=np.asarray(p3, np.float64), correction=correction,
+        final_v15_direct=final_v15_direct, stable_corr25=stable_corr25,
+        final_direct=final_direct,
+    )
+    summary = {
+        "experiment_name": EXPERIMENT_NAME,
+        "regime": "deploy (2024 full-fit -> 2025), NOT validation crossfit",
+        "expected_year": int(expected_year),
+        "n_test_rows": int(len(test)),
+        "anchor_team_id": int(anchor_team_id),
+        "v18_stable_enabled": bool(v18_submit_recommended),
+        "artifact_path": str(MODEL_PATH), "artifact_mb": round(size_mb, 2),
+        "trend_slope": float(slope), "trend_prior": trend_prior,
+        "deploy_feature_parity_vs_phase2": parity,
+        "dims": {"exact_lgb": len(exact_feature_cols), "ridge": len(ridge_feature_cols),
+                 "trend_lgb": len(trend_feature_cols),
+                 "adapter": len(adapter_feature_cols),
+                 "adapter_base": len(adapter_base_feature_cols),
+                 "pitcher_conditional": len(pc25.columns),
+                 "exact_adapter": len(ex25.columns),
+                 "v18_stable": len(stable25.columns)},
+        "adapter_cfg": FINAL_ADAPTER_CFG, "adapter_seeds": list(CF_SEEDS),
+        "adapter_shrink": ADAPTER_SHRINK,
+        "n_adapter_models": len(adapter_models),
+        "pred": {k: {"mean": float(np.mean(v)), "min": float(np.min(v)),
+                     "max": float(np.max(v))}
+                 for k, v in [("p_base25", p_base25), ("correction", correction),
+                              ("final_v15_direct", final_v15_direct),
+                              ("stable_corr25", stable_corr25),
+                              ("final_direct", final_direct)]},
+        "library_versions": library_versions(),
+    }
+    write_json(validation_dir / "phase6_summary.json", summary)
+    del X24_final, X25, raw24
+    gc.collect()
+    return summary
+
+
+# =========================================================
 # 실행
 # =========================================================
 
@@ -2197,6 +2525,17 @@ def main():
         phase5_summary = run_phase5(screen, FEATURE_DUMP_DIR, VALIDATION_DIR)
         print(f"[Phase 5] done  {time.time() - t5:.1f}s")
 
+    # ---------------- Phase 6 : deploy artifact ----------------
+    phase6_summary = None
+    if PHASE >= 6:
+        print()
+        print("=" * 78)
+        print("[Phase 6] Final artifact — deploy regime (2024 -> 2025)")
+        print("=" * 78)
+        t6 = time.time()
+        phase6_summary = run_phase6(screen, domain_means, FEATURE_DUMP_DIR, VALIDATION_DIR)
+        print(f"[Phase 6] done  {time.time() - t6:.1f}s")
+
     # DOMAIN_MEANS 미래 접근 감사 (§14)
     phase3_summary["domain_means_audit"] = {
         "n_access": len(domain_means.access_log),
@@ -2315,6 +2654,12 @@ def main():
         print(f"  -> {VALIDATION_DIR}/v18_strict_temporal_transfer.csv · "
               f"gamma_stress.csv · v18_months.csv · v18_domains.csv")
         print(f"  -> {FEATURE_DUMP_DIR}/p18_{{2021..2024}}.npz")
+    if PHASE >= 6 and phase6_summary is not None:
+        print(f"  -> {VALIDATION_DIR}/phase6_summary.json")
+        print(f"  -> {MODEL_PATH}  ({phase6_summary['artifact_mb']} MB, "
+              f"v18_stable_enabled={phase6_summary['v18_stable_enabled']})")
+        print(f"  -> {OUTPUT_PATH}")
+        print(f"  -> {FEATURE_DUMP_DIR}/deploy_2025.npz")
     print(f"  -> {MODEL_DIR}/metadata.json")
     print("=" * 78)
 
