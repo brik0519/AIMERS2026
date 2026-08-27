@@ -164,6 +164,7 @@
       "lightgbm": "4.7.0",
       "joblib": "1.5.3",
       "scipy": "1.17.1",
+      "threadpoolctl": "3.6.0",
       "n_jobs": 6,
       "cpu_count": 8
     }

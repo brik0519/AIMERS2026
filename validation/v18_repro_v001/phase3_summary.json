@@ -8,6 +8,7 @@
     "lightgbm": "4.7.0",
     "joblib": "1.5.3",
     "scipy": "1.17.1",
+    "threadpoolctl": "3.6.0",
     "n_jobs": 6,
     "cpu_count": 8
   },
@@ -939,10 +940,10 @@
     "max_accessed_season": 2024,
     "policy": "V18 원본 전 시즌 groupby 유지. 읽기는 season <= source_year 만 assert."
   },
-  "elapsed_sec": 1345.9,
+  "elapsed_sec": 1346.8,
   "library_versions_history": [
     {
-      "at": "2026-08-27T17:29:57",
+      "at": "2026-08-27T19:37:08",
       "years": [
         "2020",
         "2021",
@@ -958,6 +959,7 @@
         "lightgbm": "4.7.0",
         "joblib": "1.5.3",
         "scipy": "1.17.1",
+        "threadpoolctl": "3.6.0",
         "n_jobs": 6,
         "cpu_count": 8
       }

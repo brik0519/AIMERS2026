@@ -38,6 +38,8 @@ reference 대비 의도적 차이 3가지 (그 외는 verbatim)
  D3) `_lookup` 의 MultiIndex 키를 str 로 강제한다. 근거는 아래 참조.
  D4) 선형 모델(Ridge 2개)의 계수를 float64 로 보장한다. **규칙 준수 조치**이며
      Phase 8 진단에서 batch 크기 의존성(2^-25)이 실측되어 적용했다. 아래 `_load_artifact` 참조.
+ D5) artifact 를 만든 라이브러리 버전과 실행 환경 버전을 대조해 **경고만** 남긴다.
+     평가 서버에서 중단시키면 0점이므로 실패시키지 않는다.
 
 D3 상세 — 유일한 로직 hardening:
     base_state 는 값이 '___','1__',…,'123' 인데 **'123' 만 순수 숫자**다.
@@ -112,6 +114,23 @@ def _load_artifact() -> dict:
             v = getattr(m, attr, None)
             if v is not None and np.asarray(v).dtype != np.float64:
                 setattr(m, attr, np.asarray(v).astype(np.float64))
+
+    # D5 — artifact 를 만든 환경과 현재 실행 환경의 버전 대조 (경고만, 중단하지 않는다).
+    #   artifact 는 pickle 이라 scikit-learn 버전이 다르면 복원이 깨지거나
+    #   예측이 달라질 수 있다. 평가 서버 로그에 남겨 원인 추적을 돕는다.
+    built = meta.get("library_versions") or {}
+    for pkg, mod in (("scikit_learn", "sklearn"), ("lightgbm", "lightgbm"),
+                     ("numpy", "numpy"), ("pandas", "pandas")):
+        want = built.get(pkg)
+        if not want:
+            continue
+        try:
+            have = __import__(mod).__version__
+        except Exception:  # noqa: BLE001
+            continue
+        if have != want:
+            print(f"  [warn] {mod} artifact={want} runtime={have} — 버전 불일치."
+                  f" 예측이 달라질 수 있다.", file=sys.stderr)
     return meta
 
 

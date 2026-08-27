@@ -43,6 +43,22 @@
       "final_direct": 4.11182560222656e-09
     }
   },
+  "eval_server_env_check": {
+    "mismatch": {
+      "scipy": {
+        "eval_server": "1.15.3",
+        "local": "1.17.1"
+      },
+      "scikit-learn": {
+        "eval_server": "1.8.0",
+        "local": "1.9.0"
+      }
+    },
+    "python_local": "3.11.15",
+    "python_eval_server": "3.11.15",
+    "python_major_minor_ok": true,
+    "lightgbm_local": "4.7.0"
+  },
   "dims": {
     "exact_lgb": 98,
     "ridge": 89,
@@ -101,6 +117,7 @@
     "lightgbm": "4.7.0",
     "joblib": "1.5.3",
     "scipy": "1.17.1",
+    "threadpoolctl": "3.6.0",
     "n_jobs": 6,
     "cpu_count": 8
   }

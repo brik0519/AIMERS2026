@@ -165,6 +165,7 @@
     "lightgbm": "4.7.0",
     "joblib": "1.5.3",
     "scipy": "1.17.1",
+    "threadpoolctl": "3.6.0",
     "n_jobs": 6,
     "cpu_count": 8
   },
@@ -174,7 +175,7 @@
       "source_year": 2019,
       "bank_prior": 0.5646700054335694,
       "bank_source_max_season": 2019,
-      "sec_features": 8.71,
+      "sec_features": 8.66,
       "blocks": {
         "self_state": {
           "block": "self_state",
@@ -846,7 +847,7 @@
       "source_year": 2020,
       "bank_prior": 0.5327116970588356,
       "bank_source_max_season": 2020,
-      "sec_features": 9.77,
+      "sec_features": 10.13,
       "blocks": {
         "self_state": {
           "block": "self_state",
@@ -1518,7 +1519,7 @@
       "source_year": 2021,
       "bank_prior": 0.5327616072006734,
       "bank_source_max_season": 2021,
-      "sec_features": 10.72,
+      "sec_features": 10.87,
       "blocks": {
         "self_state": {
           "block": "self_state",
@@ -2190,7 +2191,7 @@
       "source_year": 2022,
       "bank_prior": 0.5289204435249241,
       "bank_source_max_season": 2022,
-      "sec_features": 11.43,
+      "sec_features": 11.39,
       "blocks": {
         "self_state": {
           "block": "self_state",
@@ -2862,7 +2863,7 @@
       "source_year": 2023,
       "bank_prior": 0.49995723449750534,
       "bank_source_max_season": 2023,
-      "sec_features": 12.09,
+      "sec_features": 12.55,
       "blocks": {
         "self_state": {
           "block": "self_state",
@@ -3530,10 +3531,10 @@
       }
     }
   },
-  "elapsed_sec": 1345.9,
+  "elapsed_sec": 1346.8,
   "library_versions_history": [
     {
-      "at": "2026-08-27T17:29:57",
+      "at": "2026-08-27T19:37:08",
       "years": [
         "2020",
         "2021",
@@ -3549,6 +3550,7 @@
         "lightgbm": "4.7.0",
         "joblib": "1.5.3",
         "scipy": "1.17.1",
+        "threadpoolctl": "3.6.0",
         "n_jobs": 6,
         "cpu_count": 8
       }
