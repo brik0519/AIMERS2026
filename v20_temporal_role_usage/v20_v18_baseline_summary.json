@@ -1,0 +1,23 @@
+{
+  "protocol": "V20_TEMPORAL_ROLE_USAGE_V1",
+  "config_hash": "02c293c52808e5c0",
+  "current_lb": 1081.6824647538,
+  "target_lb": 1200.0,
+  "temporal_2022_to_2023_gain": 21.18096088538084,
+  "temporal_2023_to_2024_gain": 24.705400277513718,
+  "core_2024_gain": 35.07144956108607,
+  "bootstrap": {
+    "mean": 24.971686249886222,
+    "median": 24.921901543855075,
+    "p05": 11.104137974287791,
+    "p10": 13.895843861397475,
+    "p95": 40.30251741828685,
+    "prob_positive": 0.9986666666666667
+  },
+  "early_gain": 31.734139203387485,
+  "late_gain": 15.525541794436663,
+  "gamma": 0.75,
+  "route_domain": "R_CORE",
+  "submit_recommended": true,
+  "warning": "2023/2024 are development-exposed. The key promotion evidence is strict source-year residual transfer plus stable adjacent-year feature persistence; this is not a 1100 guarantee."
+}

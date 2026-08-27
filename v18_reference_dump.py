@@ -50,6 +50,12 @@ V18_CODE_CELLS = [1, 2, 3, 4, 5, 6, 7, 8]
 V15_OOF_EXTRA_CELLS = [12, 13]
 DEFS_ONLY_CELLS = {13}
 
+# --stage p18 : Layer 2 (PASS 2) + 승격 gate.
+#   cell 14 · cell 15 는 top-level 코드라 함수로 호출할 수 없다. 대신
+#   ROWS / Y / V15_OOF 를 미리 namespace 에 심어두고 **셀을 통째로 verbatim exec** 한다.
+#   → 재현 충실도가 가장 높은 형태다 (재작성 0줄).
+P18_EXTRA_CELLS = [14, 15]
+
 _LIB_IMPORT_LINES = (
     "import lightgbm as lgb",
     "from sklearn.linear_model import Ridge",
@@ -308,15 +314,80 @@ def dump_year(ns: dict, year: int, out_dir: Path, stage: str) -> dict:
     return info
 
 
+def dump_p18(ns: dict, out_dir: Path, nb_path: Path, data_dir: Path) -> dict:
+    """Layer 2 (PASS 2). cell 14 / cell 15 를 통째로 verbatim exec 한다.
+
+    선행 조건: 같은 out_dir 에 `--stage v15_oof` 로 만든
+    v15_oof_{2020..2024}.npz 5개가 있어야 한다.
+    """
+    TARGET = ns["TARGET"]
+    screen = ns["screen"]
+    years = [2020, 2021, 2022, 2023, 2024]
+
+    ROWS, Y, V15_OOF = {}, {}, {}
+    for y in years:
+        rows = screen.loc[screen.season.eq(int(y))].reset_index(drop=True)
+        p = out_dir / f"v15_oof_{y}.npz"
+        if not p.exists():
+            raise FileNotFoundError(
+                f"--stage p18 은 v15_oof npz 5개가 필요하다. 없음: {p}\n"
+                f"  먼저 --stage v15_oof 로 2020~2024 를 모두 dump 할 것."
+            )
+        z = np.load(p)
+        oof = z["v15_oof"].astype(np.float64)
+        assert len(oof) == len(rows), (y, len(oof), len(rows))
+        assert np.array_equal(z["target"].astype(np.float64),
+                              rows[TARGET].to_numpy(np.float64)), f"target mismatch {y}"
+        ROWS[y] = rows
+        Y[y] = rows[TARGET].to_numpy(np.float64)
+        V15_OOF[y] = oof
+        del z
+    ns["ROWS"] = ROWS
+    ns["Y"] = Y
+    ns["V15_OOF"] = V15_OOF
+    print("  [ref] ROWS / Y / V15_OOF 주입 완료 (2020~2024)", flush=True)
+
+    cells = load_cells(nb_path, P18_EXTRA_CELLS)
+    for i in P18_EXTRA_CELLS:
+        src, _ = patch_cell(i, cells[i], data_dir, "p18")
+        t0 = time.time()
+        exec(compile(src, f"<v18_cell_{i}>", "exec"), ns)
+        print(f"  [ref] cell {i} exec  {time.time() - t0:6.1f}s", flush=True)
+        gc.collect()
+
+    P18 = ns["P18"]
+    CORR = ns["CORR"]
+    info: dict = {
+        "transitions": sorted(int(k) for k in P18),
+        "temporal_rows": ns["TEMPORAL_ROWS"],
+        "v18_submit_recommended": bool(ns["V18_SUBMIT_RECOMMENDED"]),
+        "summary": ns["summary"],
+    }
+    for ty in sorted(P18):
+        core = ROWS[ty].domain3.eq(ns["V18_ROUTE_DOMAIN"]).to_numpy()
+        np.savez_compressed(
+            out_dir / f"p18_{ty}.npz",
+            p18=np.asarray(P18[ty], np.float64),
+            v15_oof=np.asarray(V15_OOF[ty], np.float64),
+            corr=np.asarray(CORR[ty], np.float64),
+            target=Y[ty],
+            core=core,
+        )
+    print(f"  [ref] V18_SUBMIT_RECOMMENDED: {info['v18_submit_recommended']}", flush=True)
+    return info
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--notebook", required=True)
     ap.add_argument("--data-dir", default="./data")
     ap.add_argument("--out", default="validation/v18_repro_v001/reference")
-    ap.add_argument("--year", type=int, action="append", required=True)
-    ap.add_argument("--stage", choices=["features", "anchor", "v15_oof"],
+    ap.add_argument("--year", type=int, action="append", default=None)
+    ap.add_argument("--stage", choices=["features", "anchor", "v15_oof", "p18"],
                     default="features")
     args = ap.parse_args()
+    if args.stage != "p18" and not args.year:
+        ap.error("--year 는 --stage p18 이 아닌 경우 필수다")
 
     nb_path = Path(args.notebook)
     data_dir = Path(args.data_dir)
@@ -350,6 +421,17 @@ def main():
         "cf_seeds": list(ns["CF_SEEDS"]),
         "years": {},
     }
+    if args.stage == "p18":
+        print("[ref] Layer 2 (PASS 2) ...", flush=True)
+        t0 = time.time()
+        manifest["p18"] = dump_p18(ns, out_dir, nb_path, data_dir)
+        print(f"[ref] p18 done  {time.time() - t0:.1f}s", flush=True)
+        mpath = out_dir / "manifest_p18.json"
+        mpath.write_text(json.dumps(manifest, indent=2, ensure_ascii=False, default=str),
+                         encoding="utf-8")
+        print(f"[ref] manifest -> {mpath}")
+        return
+
     for year in args.year:
         print(f"[ref] dumping year {year} ...", flush=True)
         t0 = time.time()

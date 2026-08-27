@@ -5,12 +5,12 @@
   "protocol": "V18_TEMPORAL_STABLE_HAND_PRESSURE_COUNT_RIDGE",
   "source_protocol": "V20_TEMPORAL_ROLE_USAGE_V1",
   "target": "control_success",
-  "phase_implemented": 4,
+  "phase_implemented": 5,
   "architecture": {
     "layers": 3,
     "layer0": "recent 1-season anchor: LGBMClassifier + Ridge(a=1e4) + trend-centered LGBMRegressor, equal 1/3",
     "layer1": "three-domain ExtraTrees residual adapter, shrink 0.50, pitcher-half crossfit x3 seeds",
-    "layer2": "temporal-stable conditional Ridge(a=1e3) on prev-year OOF residual, gamma 0.75, R_CORE only  [NOT IMPLEMENTED AT THIS PHASE]",
+    "layer2": "temporal-stable conditional Ridge(a=1e3) on prev-year OOF residual, gamma 0.75, R_CORE only",
     "router": "domain3 = F / R_ANCHOR / R_CORE, anchor from F & season<=2022"
   },
   "features": {

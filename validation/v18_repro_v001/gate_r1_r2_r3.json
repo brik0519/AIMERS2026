@@ -305,6 +305,14 @@
           "target": 0.0
         },
         "status": "PASS"
+      },
+      "R5 L2 Correction": {
+        "status": "SKIP",
+        "note": "2020 는 Layer 2 전이 대상이 아님"
+      },
+      "R5 P18 Final": {
+        "status": "SKIP",
+        "note": "2020 는 Layer 2 전이 대상이 아님"
       }
     },
     "2021": {
@@ -602,6 +610,36 @@
         "base_target_guard": {
           "p_base": 0.0,
           "target": 0.0
+        },
+        "status": "PASS"
+      },
+      "R5 L2 Correction": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 1.0,
+        "bss_ref": null,
+        "bss_cand": null,
+        "bss_abs_diff": null,
+        "bit_identical": true,
+        "v15_oof_target_guard": {
+          "v15_oof": 2.220446049250313e-16,
+          "target": 0.0,
+          "core": true
+        },
+        "status": "PASS"
+      },
+      "R5 P18 Final": {
+        "max_abs_diff": 2.220446049250313e-16,
+        "mean_abs_diff": 1.4126712707300607e-18,
+        "corr": 1.0,
+        "bss_ref": 1836.9740268449618,
+        "bss_cand": 1836.9740268449618,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "v15_oof_target_guard": {
+          "v15_oof": 2.220446049250313e-16,
+          "target": 0.0,
+          "core": true
         },
         "status": "PASS"
       }
@@ -903,6 +941,36 @@
           "target": 0.0
         },
         "status": "PASS"
+      },
+      "R5 L2 Correction": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 1.0,
+        "bss_ref": null,
+        "bss_cand": null,
+        "bss_abs_diff": null,
+        "bit_identical": true,
+        "v15_oof_target_guard": {
+          "v15_oof": 2.220446049250313e-16,
+          "target": 0.0,
+          "core": true
+        },
+        "status": "PASS"
+      },
+      "R5 P18 Final": {
+        "max_abs_diff": 2.220446049250313e-16,
+        "mean_abs_diff": 1.1287422940602953e-18,
+        "corr": 1.0,
+        "bss_ref": 2500.652188384445,
+        "bss_cand": 2500.652188384445,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "v15_oof_target_guard": {
+          "v15_oof": 2.220446049250313e-16,
+          "target": 0.0,
+          "core": true
+        },
+        "status": "PASS"
       }
     },
     "2023": {
@@ -1200,6 +1268,36 @@
         "base_target_guard": {
           "p_base": 0.0,
           "target": 0.0
+        },
+        "status": "PASS"
+      },
+      "R5 L2 Correction": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 0.9999999999999998,
+        "bss_ref": null,
+        "bss_cand": null,
+        "bss_abs_diff": null,
+        "bit_identical": true,
+        "v15_oof_target_guard": {
+          "v15_oof": 2.220446049250313e-16,
+          "target": 0.0,
+          "core": true
+        },
+        "status": "PASS"
+      },
+      "R5 P18 Final": {
+        "max_abs_diff": 2.220446049250313e-16,
+        "mean_abs_diff": 1.5616149946209054e-18,
+        "corr": 0.9999999999999999,
+        "bss_ref": 729.6820288603678,
+        "bss_cand": 729.6820288603678,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "v15_oof_target_guard": {
+          "v15_oof": 2.220446049250313e-16,
+          "target": 0.0,
+          "core": true
         },
         "status": "PASS"
       }
@@ -1501,11 +1599,58 @@
           "target": 0.0
         },
         "status": "PASS"
+      },
+      "R5 L2 Correction": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 0.9999999999999999,
+        "bss_ref": null,
+        "bss_cand": null,
+        "bss_abs_diff": null,
+        "bit_identical": true,
+        "v15_oof_target_guard": {
+          "v15_oof": 2.220446049250313e-16,
+          "target": 0.0,
+          "core": true
+        },
+        "status": "PASS"
+      },
+      "R5 P18 Final": {
+        "max_abs_diff": 2.220446049250313e-16,
+        "mean_abs_diff": 8.977887003047532e-19,
+        "corr": 1.0,
+        "bss_ref": 945.2816728532598,
+        "bss_cand": 945.2816728532598,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "v15_oof_target_guard": {
+          "v15_oof": 2.220446049250313e-16,
+          "target": 0.0,
+          "core": true
+        },
+        "status": "PASS"
       }
     }
   },
+  "promotion_gate": {
+    "ref_submit_recommended": true,
+    "cand_submit_recommended": true,
+    "submit_recommended_match": true,
+    "metric_abs_diffs": {
+      "temporal_2022_to_2023_gain": 0.0,
+      "temporal_2023_to_2024_gain": 0.0,
+      "core_2024_gain": 0.0,
+      "early_gain": 0.0,
+      "late_gain": 0.0,
+      "boot_p05": 0.0,
+      "boot_prob_positive": 0.0
+    },
+    "max_metric_abs_diff": 0.0,
+    "status": "PASS"
+  },
   "overall": "PASS",
   "counts": {
-    "PASS": 100
+    "PASS": 109,
+    "SKIP": 2
   }
 }

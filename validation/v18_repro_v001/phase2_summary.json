@@ -174,7 +174,7 @@
       "source_year": 2023,
       "bank_prior": 0.49995723449750534,
       "bank_source_max_season": 2023,
-      "sec_features": 12.1,
+      "sec_features": 11.63,
       "blocks": {
         "self_state": {
           "block": "self_state",
@@ -3530,5 +3530,5 @@
       }
     }
   },
-  "elapsed_sec": 54.0
+  "elapsed_sec": 82.7
 }

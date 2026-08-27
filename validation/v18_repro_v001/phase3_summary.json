@@ -939,5 +939,5 @@
     "max_accessed_season": 2023,
     "policy": "V18 원본 전 시즌 groupby 유지. 읽기는 season <= source_year 만 assert."
   },
-  "elapsed_sec": 54.0
+  "elapsed_sec": 82.7
 }

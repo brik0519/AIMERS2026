@@ -1,0 +1,234 @@
+{
+  "experiment_name": "v18_repro_v001",
+  "layer": "layer2_v18_temporal_stable_ridge",
+  "regime": "strict next-year (fit on T-1 OOF residual, apply to T)",
+  "transitions": [
+    2021,
+    2022,
+    2023,
+    2024
+  ],
+  "ridge": {
+    "alpha": 1000.0,
+    "solver": "lsqr",
+    "max_iter": 200,
+    "tol": 1e-05
+  },
+  "gamma": 0.75,
+  "route_domain": "R_CORE",
+  "stable_cols": [
+    "stable__batter_hand__delta",
+    "stable__batter_hand__weighted_delta",
+    "stable__batter_hand__reliability",
+    "stable__pressure_bhand__delta",
+    "stable__pressure_bhand__weighted_delta",
+    "stable__pressure_bhand__reliability",
+    "ctx__ball_0",
+    "ctx__ball_1",
+    "ctx__ball_2",
+    "ctx__ball_3",
+    "ctx__strike_0",
+    "ctx__strike_1",
+    "ctx__strike_2",
+    "ctx__count_0_0",
+    "ctx__count_0_1",
+    "ctx__count_0_2",
+    "ctx__count_1_0",
+    "ctx__count_1_1",
+    "ctx__count_1_2",
+    "ctx__count_2_0",
+    "ctx__count_2_1",
+    "ctx__count_2_2",
+    "ctx__count_3_0",
+    "ctx__count_3_1",
+    "ctx__count_3_2"
+  ],
+  "temporal_rows": [
+    {
+      "source_year": 2020,
+      "target_year": 2021,
+      "v15_bss": 1866.5786463076706,
+      "v18_bss": 1836.9740268449618,
+      "gain": -29.604619462708797,
+      "core_gain": -41.022728005801696
+    },
+    {
+      "source_year": 2021,
+      "target_year": 2022,
+      "v15_bss": 2479.607212772417,
+      "v18_bss": 2500.652188384445,
+      "gain": 21.044975612027883,
+      "core_gain": 29.810177350186905
+    },
+    {
+      "source_year": 2022,
+      "target_year": 2023,
+      "v15_bss": 708.501067974987,
+      "v18_bss": 729.6820288603678,
+      "gain": 21.18096088538084,
+      "core_gain": 29.59004758830156
+    },
+    {
+      "source_year": 2023,
+      "target_year": 2024,
+      "v15_bss": 920.5762725757461,
+      "v18_bss": 945.2816728532598,
+      "gain": 24.705400277513718,
+      "core_gain": 35.07144956108607
+    }
+  ],
+  "gamma_stress": [
+    {
+      "target_year": 2021,
+      "gamma_0.55": -15.059952014418059,
+      "gamma_0.65": -21.727730987841596,
+      "gamma_0.75": -29.604619462708797,
+      "gamma_0.85": -38.69061743909674,
+      "gamma_0.95": -48.98572491699451
+    },
+    {
+      "target_year": 2022,
+      "gamma_0.55": 21.546451786846774,
+      "gamma_0.65": 21.851483669576737,
+      "gamma_0.75": 21.044975612027883,
+      "gamma_0.85": 19.12692761427661,
+      "gamma_0.95": 16.097339676268348
+    },
+    {
+      "target_year": 2023,
+      "gamma_0.55": 19.433225755982676,
+      "gamma_0.65": 20.66168614857088,
+      "gamma_0.75": 21.18096088538084,
+      "gamma_0.85": 20.991049966390165,
+      "gamma_0.95": 20.09195339167661
+    },
+    {
+      "target_year": 2024,
+      "gamma_0.55": 21.466907704370442,
+      "gamma_0.65": 23.390664369815568,
+      "gamma_0.75": 24.705400277513718,
+      "gamma_0.85": 25.411115427453865,
+      "gamma_0.95": 25.507809819724685
+    }
+  ],
+  "months": [
+    {
+      "month": 3,
+      "n": 12361,
+      "v15": 1138.184181897861,
+      "v18": 1193.2912249710937,
+      "gain": 55.10704307323272
+    },
+    {
+      "month": 4,
+      "n": 42588,
+      "v15": 724.029181853747,
+      "v18": 731.4124678496459,
+      "gain": 7.383285995898859
+    },
+    {
+      "month": 5,
+      "n": 44078,
+      "v15": 1229.255882473923,
+      "v18": 1278.032975524357,
+      "gain": 48.777093050433905
+    },
+    {
+      "month": 6,
+      "n": 44514,
+      "v15": 1130.125234859558,
+      "v18": 1161.8019614537568,
+      "gain": 31.676726594198726
+    },
+    {
+      "month": 7,
+      "n": 33070,
+      "v15": 1042.588698900604,
+      "v18": 1048.7759094397586,
+      "gain": 6.187210539154648
+    },
+    {
+      "month": 8,
+      "n": 41920,
+      "v15": 736.4764136606472,
+      "v18": 737.4339915160233,
+      "gain": 0.9575778553761438
+    },
+    {
+      "month": 9,
+      "n": 33305,
+      "v15": 415.65390743407704,
+      "v18": 458.7597655148157,
+      "gain": 43.10585808073864
+    },
+    {
+      "month": 10,
+      "n": 1671,
+      "v15": 275.5557986055646,
+      "v18": 292.36866469912746,
+      "gain": 16.81286609356289
+    }
+  ],
+  "domains": [
+    {
+      "domain": "R_CORE",
+      "v15": 728.3601937661199,
+      "v18": 763.431643327206,
+      "gain": 35.07144956108607
+    },
+    {
+      "domain": "R_ANCHOR",
+      "v15": 893.027635608179,
+      "v18": 893.027635608179,
+      "gain": 0.0
+    },
+    {
+      "domain": "F",
+      "v15": 645.8427667560995,
+      "v18": 645.8427667560995,
+      "gain": 0.0
+    }
+  ],
+  "promotion_gate": {
+    "protocol": "V18_TEMPORAL_STABLE_HAND_PRESSURE_COUNT_RIDGE",
+    "current_lb": 1081.6824647538,
+    "temporal_2022_to_2023_gain": 21.18096088538084,
+    "temporal_2023_to_2024_gain": 24.705400277513718,
+    "core_2024_gain": 35.07144956108607,
+    "bootstrap": {
+      "mean": 24.971686249886645,
+      "median": 24.921901543855075,
+      "p05": 11.104137974287791,
+      "p10": 13.895843861397475,
+      "p95": 40.30251741828627,
+      "prob_positive": 0.9986666666666667
+    },
+    "early_gain": 31.734139203387485,
+    "late_gain": 15.525541794436663,
+    "gamma": 0.75,
+    "route_domain": "R_CORE",
+    "stress_ok": true,
+    "submit_recommended": true,
+    "gate_conditions": {
+      "g23>=8.0": true,
+      "g24>=10.0": true,
+      "core24>=15.0": true,
+      "boot_p05>=3.0": true,
+      "boot_prob>=0.97": true,
+      "late_gain>=0.0": true,
+      "stress_ok": true
+    },
+    "warning": "2023/2024 are development-exposed. Validation BSS is not an LB estimate."
+  },
+  "library_versions": {
+    "python": "3.11.15",
+    "numpy": "1.26.4",
+    "pandas": "2.0.3",
+    "scikit_learn": "1.8.0",
+    "lightgbm": "4.6.0",
+    "joblib": "1.5.3",
+    "scipy": "1.15.3",
+    "n_jobs": 6,
+    "cpu_count": 8
+  }
+}

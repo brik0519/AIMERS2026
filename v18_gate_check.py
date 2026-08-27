@@ -66,6 +66,12 @@ V15_KEYS = [
     ("v15_oof", "R4 V15 OOF"),
 ]
 R4_BSS_ABS = 0.5
+# Phase 5 — Layer 2 V18 temporal-stable Ridge
+P18_KEYS = [
+    ("corr", "R5 L2 Correction"),
+    ("p18", "R5 P18 Final"),
+]
+P18_TRANSITIONS = (2021, 2022, 2023, 2024)
 
 
 def load_matrix(path: Path):
@@ -295,6 +301,99 @@ def compare_v15_oof(ref_dir: Path, cand_dir: Path, year: int) -> dict:
     return out
 
 
+def compare_p18(ref_dir: Path, cand_dir: Path, year: int) -> dict:
+    """R5 — Layer 2 parity.
+
+    잔여 오차는 0 이 아닐 것으로 예상한다. Layer 2 Ridge 의 학습 타깃이
+    `Y[T-1] - V15_OOF[T-1]` 이라 V15_OOF 의 2^-52 실행 잡음이 계수로 전파되고,
+    solver='lsqr' 는 tol=1e-5 의 반복 해법이다. ~1e-14 수준은 정상이다.
+    """
+    if year not in P18_TRANSITIONS:
+        return {k: {"status": "SKIP", "note": f"{year} 는 Layer 2 전이 대상이 아님"}
+                for k, _ in P18_KEYS}
+    rp = ref_dir / f"p18_{year}.npz"
+    cp = cand_dir / f"p18_{year}.npz"
+    if not rp.exists():
+        return {k: {"status": "SKIP", "note": "reference p18 없음 (stage != p18)"}
+                for k, _ in P18_KEYS}
+    if not cp.exists():
+        return {k: {"status": "SKIP", "note": "candidate p18 npz 없음 (PHASE<5)"}
+                for k, _ in P18_KEYS}
+    a, b = np.load(rp), np.load(cp)
+    guard = {}
+    for k in ("v15_oof", "target", "core"):
+        if k in a.files and k in b.files:
+            if k == "core":
+                guard[k] = bool(np.array_equal(a[k], b[k]))
+            else:
+                guard[k] = float(np.abs(a[k].astype(np.float64)
+                                        - b[k].astype(np.float64)).max())
+    out = {}
+    for key, _label in P18_KEYS:
+        if key not in a.files or key not in b.files:
+            out[key] = {"status": "SKIP", "note": f"{key} 없음"}
+            continue
+        ra = a[key].astype(np.float64)
+        cb_ = b[key].astype(np.float64)
+        if ra.shape != cb_.shape:
+            out[key] = {"status": "FAIL", "note": "shape mismatch"}
+            continue
+        d = np.abs(ra - cb_)
+        mx, mn = float(d.max()), float(d.mean())
+        corr = float(np.corrcoef(ra, cb_)[0, 1])
+        tgt = a["target"].astype(np.float64) if "target" in a.files else None
+        bss_diff = (abs(raw_bss(tgt, ra) - raw_bss(tgt, cb_))
+                    if tgt is not None and key == "p18" else None)
+        ok = mx < R3_PRED_MAX_ABS and corr > 0.99999
+        if bss_diff is not None:
+            ok = ok and bss_diff < R4_BSS_ABS
+        out[key] = {
+            "max_abs_diff": mx, "mean_abs_diff": mn, "corr": corr,
+            "bss_ref": raw_bss(tgt, ra) if (tgt is not None and key == "p18") else None,
+            "bss_cand": raw_bss(tgt, cb_) if (tgt is not None and key == "p18") else None,
+            "bss_abs_diff": bss_diff,
+            "bit_identical": bool(mx == 0.0),
+            "v15_oof_target_guard": guard,
+            "status": "PASS" if ok else "FAIL",
+        }
+    return out
+
+
+def compare_promotion_gate(ref_dir: Path, vdir: Path) -> dict:
+    """R5 — 승격 gate 일치. V18_SUBMIT_RECOMMENDED 불리언과 전이 gain 을 비교한다."""
+    rm = ref_dir / "manifest_p18.json"
+    cg = vdir / "gate.json"
+    if not rm.exists():
+        return {"status": "SKIP", "note": "reference manifest_p18.json 없음"}
+    if not cg.exists():
+        return {"status": "SKIP", "note": "candidate gate.json 없음 (PHASE<5)"}
+    r = json.loads(rm.read_text(encoding="utf-8")).get("p18", {})
+    c = json.loads(cg.read_text(encoding="utf-8"))
+    rs = r.get("summary", {})
+    out = {
+        "ref_submit_recommended": bool(r.get("v18_submit_recommended")),
+        "cand_submit_recommended": bool(c.get("submit_recommended")),
+    }
+    out["submit_recommended_match"] = (
+        out["ref_submit_recommended"] == out["cand_submit_recommended"]
+    )
+    diffs = {}
+    for k in ("temporal_2022_to_2023_gain", "temporal_2023_to_2024_gain",
+              "core_2024_gain", "early_gain", "late_gain"):
+        if k in rs and k in c:
+            diffs[k] = abs(float(rs[k]) - float(c[k]))
+    for k in ("p05", "prob_positive"):
+        if "bootstrap" in rs and "bootstrap" in c:
+            diffs["boot_" + k] = abs(float(rs["bootstrap"][k]) - float(c["bootstrap"][k]))
+    out["metric_abs_diffs"] = diffs
+    out["max_metric_abs_diff"] = max(diffs.values()) if diffs else None
+    ok = out["submit_recommended_match"] and (
+        out["max_metric_abs_diff"] is None or out["max_metric_abs_diff"] < R4_BSS_ABS
+    )
+    out["status"] = "PASS" if ok else "FAIL"
+    return out
+
+
 def run_selfcheck(dir_a: Path, dir_b: Path, years: list[int]) -> dict:
     """R3-0 — 자기 결정성.
 
@@ -410,6 +509,9 @@ def main():
         v15 = compare_v15_oof(ref_dir, cand_dir, year)
         for key, label in V15_KEYS:
             y[label] = v15.get(key, {"status": "SKIP"})
+        p18 = compare_p18(ref_dir, cand_dir, year)
+        for key, label in P18_KEYS:
+            y[label] = p18.get(key, {"status": "SKIP"})
         report["years"][str(year)] = y
 
         for label, res in y.items():
@@ -423,6 +525,12 @@ def main():
                     "note": res.get("note", ""),
                 }
             )
+
+    gate5 = compare_promotion_gate(ref_dir, vdir)
+    report["promotion_gate"] = gate5
+    rows.append({"year": "-", "gate": "R5 Promotion Gate", "status": gate5.get("status"),
+                 "max_abs_diff": gate5.get("max_metric_abs_diff"),
+                 "mean_abs_diff": None, "note": gate5.get("note", "")})
 
     tab = pd.DataFrame(rows)
     statuses = set(tab.status)
@@ -474,6 +582,14 @@ def main():
     print(f"{'Year':<6}{'Gate':<34}{'Result':<26}{'Max Diff':<13}{'Status'}")
     print("=" * 96)
     for _, r in tab.iterrows():
+        if r["gate"] == "R5 Promotion Gate":
+            g5 = report["promotion_gate"]
+            det = (f"submit={g5.get('cand_submit_recommended')} "
+                   f"match={g5.get('submit_recommended_match')}"
+                   if g5.get("status") != "SKIP" else g5.get("note", ""))
+            print(f"{'-':<6}{r['gate']:<34}{det[:25]:<26}"
+                  f"{fmt(r['max_abs_diff']):<13}{r['status']}")
+            continue
         res = report["years"][str(r["year"])][r["gate"]]
         if r["gate"] == "R1 Data":
             detail = f"rows={res.get('n_rows')}" if res.get("status") != "SKIP" else res.get("note", "")
@@ -486,7 +602,7 @@ def main():
         elif r["gate"] == "R3 Trend Scalars":
             detail = (f"slope={fmt(res.get('trend_slope_diff'))} prior={fmt(res.get('trend_prior_max_diff'))}"
                       if res.get("status") != "SKIP" else res.get("note", ""))
-        elif r["gate"].startswith("R4"):
+        elif r["gate"].startswith(("R4", "R5")):
             detail = (
                 f"corr={res.get('corr'):.8f} dBSS={res.get('bss_abs_diff'):.3f}"
                 if res.get("status") != "SKIP" and res.get("bss_abs_diff") is not None

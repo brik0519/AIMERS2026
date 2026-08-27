@@ -92,7 +92,8 @@ FEATURE_PARITY_DIR = VALIDATION_DIR / "feature_parity"
 # 실행 제어
 # =========================================================
 
-# 2 = Feature 까지, 3 = +Anchor/Residual, 4 = +Layer 1 V15 OOF crossfit
+# 2 = Feature 까지, 3 = +Anchor/Residual, 4 = +Layer 1 V15 OOF crossfit,
+# 5 = +Layer 2 temporal-stable Ridge (PASS 2, 2020~2024 V15_OOF 전부 필요)
 # (3 이상은 lightgbm + scikit-learn 필요)
 PHASE = int(os.environ.get("V18_REPRO_PHASE", "3"))
 
@@ -334,6 +335,37 @@ def raw_bss(y, p):
     p = np.clip(np.asarray(p, dtype=np.float64), 0, 1)
     ref = max(float(y.mean() * (1 - y.mean())), 1e-12)
     return float(100000.0 * (1.0 - np.mean((p - y) ** 2) / ref))
+
+
+def pitcher_cluster_bootstrap_gain(frame, y, p_new, p_base, draws=1000, seed=979):
+    """notebook cell 4 원본. 투수 단위 cluster bootstrap."""
+    pid = frame.pitcher_id.astype(str).to_numpy()
+    y = np.asarray(y, float)
+    p_new = np.asarray(p_new, float)
+    p_base = np.asarray(p_base, float)
+    codes, uniq = pd.factorize(pid, sort=False)
+    G = len(uniq)
+    n = np.bincount(codes, minlength=G).astype(float)
+    sy = np.bincount(codes, weights=y, minlength=G)
+    en = np.bincount(codes, weights=(p_new - y) ** 2, minlength=G)
+    eb = np.bincount(codes, weights=(p_base - y) ** 2, minlength=G)
+    rng = np.random.default_rng(seed)
+    g = []
+    for _ in range(int(draws)):
+        draw = rng.integers(0, G, size=G)
+        w = np.bincount(draw, minlength=G).astype(float)
+        N = float(w @ n)
+        if N < 100:
+            continue
+        ym = float(w @ sy / N)
+        ref = max(ym * (1 - ym), 1e-12)
+        g.append(float(100000.0 * ((w @ eb - w @ en) / N) / ref))
+    a = np.asarray(g, float)
+    return {
+        "mean": float(a.mean()), "median": float(np.median(a)),
+        "p05": float(np.quantile(a, 0.05)), "p10": float(np.quantile(a, 0.10)),
+        "p95": float(np.quantile(a, 0.95)), "prob_positive": float((a > 0).mean()),
+    }
 
 
 def official_score(y, p, base_rate=None):
@@ -1511,6 +1543,238 @@ def run_v15_oof(year, X, y, base, frame, verbose=True):
 
 
 # =========================================================
+# Phase 5 — Layer 2 : V18 temporal-stable conditional Ridge
+#                     (notebook cell 14 = PASS 2, cell 15 = 승격 gate)
+# =========================================================
+
+PHASE5_SOURCE_YEARS = [2020, 2021, 2022, 2023, 2024]
+PHASE5_TRANSITIONS = [2021, 2022, 2023, 2024]
+
+# Layer 2 는 v18_stable / bootstrap / month 집계에만 쓰이는 소수 컬럼만 필요하다.
+# 전체 rows 를 5개 연도치 들고 있지 않기 위한 슬림 프레임이며,
+# 값 동일성은 reference(전체 컬럼) 대비 R5 gate 로 실증한다.
+PHASE5_SLIM_COLS = ["pitcher_id", "batter_hand", "balls_before", "strikes_before",
+                    "domain3", "game_month"]
+
+
+def run_phase5(screen: pd.DataFrame, feature_dump_dir: Path, validation_dir: Path) -> dict:
+    """PASS 2. V15_OOF 는 Phase 4 산출물(npz)에서 읽는다.
+
+    fold 가 독립이 아니므로 연도별 subprocess 로 나눌 수 없다.
+    2021~2024 전이 각각이 직전 연도의 OOF 잔차를 필요로 한다.
+    """
+    _import_phase3_libs()
+
+    # ---------- 입력 적재 ----------
+    ROWS, Y, V15_OOF = {}, {}, {}
+    for y in PHASE5_SOURCE_YEARS:
+        rows = screen.loc[screen[SEASON_COL].eq(int(y))].reset_index(drop=True)
+        Y[y] = rows[TARGET].to_numpy(np.float64)
+        oof_path = feature_dump_dir / f"v15_oof_{y}.npz"
+        if not oof_path.exists():
+            raise FileNotFoundError(
+                f"Phase 5 는 Phase 4 산출물이 전부 필요하다. 없음: {oof_path}\n"
+                f"  V18_REPRO_PHASE=4 로 {PHASE5_SOURCE_YEARS} 를 모두 먼저 실행할 것."
+            )
+        z = np.load(oof_path)
+        V15_OOF[y] = z["v15_oof"].astype(np.float64)
+        assert len(V15_OOF[y]) == len(rows), (y, len(V15_OOF[y]), len(rows))
+        # guard: Phase 4 가 같은 행 집합을 봤는가
+        assert np.array_equal(z["target"].astype(np.float64), Y[y]), f"target mismatch {y}"
+        ROWS[y] = rows  # STABLE 생성 후 슬림으로 교체한다
+        del z
+
+    # ---------- STABLE 행렬 (notebook cell 14 앞부분) ----------
+    STABLE, STABLE_SPECS = {}, {}
+    for y in PHASE5_SOURCE_YEARS:
+        STABLE_SPECS[y] = build_v18_stable_specs(screen, y)
+        STABLE[y] = transform_v18_stable_specs(STABLE_SPECS[y], ROWS[y])
+        print(f"    stable matrix {y} {list(STABLE[y].shape)}")
+        ROWS[y] = ROWS[y][PHASE5_SLIM_COLS].copy()
+        gc.collect()
+
+    # ---------- PASS 2 : 전이별 Layer 2 (notebook cell 14) ----------
+    TEMPORAL_MODELS, TEMPORAL_ROWS, P18, CORR = {}, [], {}, {}
+    gamma_stress_rows = []
+    for target_year in PHASE5_TRANSITIONS:
+        source_year = target_year - 1
+        model = Ridge(alpha=V18_RIDGE_ALPHA, solver="lsqr", max_iter=200, tol=1e-5)
+        A = STABLE[source_year].to_numpy(np.float32)
+        B = STABLE[target_year].to_numpy(np.float32)
+        mu = A.mean(0)
+        sd = A.std(0)
+        sd = np.where(sd > 1e-6, sd, 1.0).astype(np.float32)
+        Az = np.clip((A - mu) / sd, -8, 8)
+        Bz = np.clip((B - mu) / sd, -8, 8)
+        resid = Y[source_year] - V15_OOF[source_year]
+        model.fit(Az, resid)
+        corr = np.asarray(model.predict(Bz), np.float64)
+        CORR[target_year] = corr
+        TEMPORAL_MODELS[target_year] = {
+            "model": model, "mu": mu.astype(np.float32), "sd": sd,
+            "source_year": source_year,
+        }
+        base = V15_OOF[target_year]
+        frame = ROWS[target_year]
+        core = frame.domain3.eq(V18_ROUTE_DOMAIN).to_numpy()
+        p = base.copy()
+        p[core] = np.clip(p[core] + V18_GAMMA * corr[core], 0, 1)
+        P18[target_year] = p
+        row = {
+            "source_year": source_year,
+            "target_year": target_year,
+            "v15_bss": raw_bss(Y[target_year], base),
+            "v18_bss": raw_bss(Y[target_year], p),
+            "gain": raw_bss(Y[target_year], p) - raw_bss(Y[target_year], base),
+            "core_gain": (raw_bss(Y[target_year][core], p[core])
+                          - raw_bss(Y[target_year][core], base[core])),
+        }
+        TEMPORAL_ROWS.append(row)
+        print(f"    {row}")
+        stress = {
+            g: raw_bss(Y[target_year],
+                       np.where(core, np.clip(base + g * corr, 0, 1), base))
+               - raw_bss(Y[target_year], base)
+            for g in V18_GAMMA_STRESS
+        }
+        print(f"    gamma stress {target_year} {stress}")
+        gamma_stress_rows.append({"target_year": target_year,
+                                  **{f"gamma_{g}": v for g, v in stress.items()}})
+        del A, B, Az, Bz
+        gc.collect()
+
+    temporal_df = pd.DataFrame(TEMPORAL_ROWS)
+    temporal_df.to_csv(validation_dir / "v18_strict_temporal_transfer.csv", index=False)
+    pd.DataFrame(gamma_stress_rows).to_csv(validation_dir / "gamma_stress.csv", index=False)
+
+    # ---------- 승격 gate (notebook cell 15) ----------
+    p15 = V15_OOF[VALID_YEAR]
+    p18 = P18[VALID_YEAR]
+    frame = ROWS[VALID_YEAR]
+    yy = Y[VALID_YEAR]
+    boot = pitcher_cluster_bootstrap_gain(
+        frame, yy, p18, p15, draws=3000 if not SMOKE_MODE else 200, seed=18018
+    )
+    print(f"    bootstrap V18 vs V15: {boot}")
+
+    month_rows = []
+    for mo in sorted(frame.game_month.unique()):
+        z = frame.game_month.eq(mo).to_numpy()
+        month_rows.append({
+            "month": int(mo), "n": int(z.sum()),
+            "v15": raw_bss(yy[z], p15[z]), "v18": raw_bss(yy[z], p18[z]),
+            "gain": raw_bss(yy[z], p18[z]) - raw_bss(yy[z], p15[z]),
+        })
+    month_df = pd.DataFrame(month_rows)
+    month_df.to_csv(validation_dir / "v18_months.csv", index=False)
+
+    early = frame.game_month.le(6).to_numpy()
+    late = frame.game_month.ge(7).to_numpy()
+    early_gain = raw_bss(yy[early], p18[early]) - raw_bss(yy[early], p15[early])
+    late_gain = raw_bss(yy[late], p18[late]) - raw_bss(yy[late], p15[late])
+    print(f"    early_gain {early_gain}  late_gain {late_gain}")
+
+    domain_rows = []
+    for d in ["R_CORE", "R_ANCHOR", "F"]:
+        z = frame.domain3.eq(d).to_numpy()
+        domain_rows.append({
+            "domain": d, "v15": raw_bss(yy[z], p15[z]), "v18": raw_bss(yy[z], p18[z]),
+            "gain": raw_bss(yy[z], p18[z]) - raw_bss(yy[z], p15[z]),
+        })
+    domain_df = pd.DataFrame(domain_rows)
+    domain_df.to_csv(validation_dir / "v18_domains.csv", index=False)
+
+    g23 = float(temporal_df.loc[temporal_df.target_year.eq(2023), "gain"].iloc[0])
+    g24 = float(temporal_df.loc[temporal_df.target_year.eq(2024), "gain"].iloc[0])
+    core24 = float(domain_df.loc[domain_df.domain.eq("R_CORE"), "gain"].iloc[0])
+    stress_ok = True
+    for ty in [2023, 2024]:
+        base = V15_OOF[ty]
+        corr = CORR[ty]
+        core = ROWS[ty].domain3.eq(V18_ROUTE_DOMAIN).to_numpy()
+        for g in (0.65, 0.75, 0.85):
+            pp = base.copy()
+            pp[core] = np.clip(pp[core] + g * corr[core], 0, 1)
+            stress_ok &= (raw_bss(Y[ty], pp) - raw_bss(Y[ty], base) > 0)
+
+    v18_submit_recommended = bool(
+        g23 >= MIN_GAIN_2023 and g24 >= MIN_GAIN_2024 and core24 >= MIN_CORE_GAIN_2024
+        and boot["p05"] >= MIN_BOOT_P05 and boot["prob_positive"] >= MIN_BOOT_PROB
+        and late_gain >= MIN_LATE_GAIN and stress_ok
+    )
+    summary = {
+        "protocol": PROTOCOL_VERSION,
+        "current_lb": 1081.6824647538,
+        "temporal_2022_to_2023_gain": g23,
+        "temporal_2023_to_2024_gain": g24,
+        "core_2024_gain": core24,
+        "bootstrap": boot,
+        "early_gain": float(early_gain),
+        "late_gain": float(late_gain),
+        "gamma": V18_GAMMA,
+        "route_domain": V18_ROUTE_DOMAIN,
+        "stress_ok": bool(stress_ok),
+        "submit_recommended": v18_submit_recommended,
+        "gate_conditions": {
+            "g23>=8.0": g23 >= MIN_GAIN_2023,
+            "g24>=10.0": g24 >= MIN_GAIN_2024,
+            "core24>=15.0": core24 >= MIN_CORE_GAIN_2024,
+            "boot_p05>=3.0": boot["p05"] >= MIN_BOOT_P05,
+            "boot_prob>=0.97": boot["prob_positive"] >= MIN_BOOT_PROB,
+            "late_gain>=0.0": late_gain >= MIN_LATE_GAIN,
+            "stress_ok": bool(stress_ok),
+        },
+        "warning": "2023/2024 are development-exposed. Validation BSS is not an LB estimate.",
+    }
+    print(f"    V18_SUBMIT_RECOMMENDED: {v18_submit_recommended}")
+    write_json(validation_dir / "gate.json", summary)
+
+    # ---------- 산출물 ----------
+    oof_parts = []
+    for ty in PHASE5_TRANSITIONS:
+        rows = ROWS[ty]
+        fold = pd.DataFrame({
+            "season": int(ty),
+            "domain3": rows.domain3.to_numpy(),
+            "target": Y[ty],
+            "anchor": V15_OOF[ty],
+            "correction_prediction": CORR[ty],
+            "final_prediction": P18[ty],
+            "anchor_residual": Y[ty] - V15_OOF[ty],
+            "final_residual": Y[ty] - P18[ty],
+        })
+        fold.to_csv(validation_dir / f"fold_{ty}.csv", index=False, float_format="%.17g")
+        oof_parts.append(fold)
+        np.savez_compressed(
+            feature_dump_dir / f"p18_{ty}.npz",
+            p18=P18[ty], v15_oof=V15_OOF[ty], corr=CORR[ty], target=Y[ty],
+            core=ROWS[ty].domain3.eq(V18_ROUTE_DOMAIN).to_numpy(),
+        )
+    pd.concat(oof_parts, ignore_index=True).to_csv(
+        validation_dir / "oof.csv", index=False, float_format="%.17g"
+    )
+
+    phase5 = {
+        "experiment_name": EXPERIMENT_NAME,
+        "layer": "layer2_v18_temporal_stable_ridge",
+        "regime": "strict next-year (fit on T-1 OOF residual, apply to T)",
+        "transitions": PHASE5_TRANSITIONS,
+        "ridge": {"alpha": V18_RIDGE_ALPHA, "solver": "lsqr",
+                  "max_iter": 200, "tol": 1e-5},
+        "gamma": V18_GAMMA, "route_domain": V18_ROUTE_DOMAIN,
+        "stable_cols": list(STABLE[VALID_YEAR].columns),
+        "temporal_rows": TEMPORAL_ROWS,
+        "gamma_stress": gamma_stress_rows,
+        "months": month_rows,
+        "domains": domain_rows,
+        "promotion_gate": summary,
+        "library_versions": library_versions(),
+    }
+    write_json(validation_dir / "phase5_summary.json", phase5)
+    return phase5
+
+
+# =========================================================
 # 실행
 # =========================================================
 
@@ -1914,6 +2178,25 @@ def main():
         del st, rows, blocks
         gc.collect()
 
+    # ---------------- Phase 5 : PASS 2 (Layer 2) ----------------
+    phase5_summary = None
+    if PHASE >= 5:
+        missing = [y for y in PHASE5_SOURCE_YEARS if set(TARGET_YEARS) and y not in TARGET_YEARS]
+        if missing and _YEARS_ENV:
+            print()
+            print("!" * 78)
+            print("Phase 5 는 2-pass 의 PASS 2 이며 2020~2024 전체 V15_OOF 가 필요하다.")
+            print(f"현재 V18_REPRO_YEARS={TARGET_YEARS} 로 제한되어 있으나, "
+                  "Phase 4 산출물이 디스크에 있으면 그대로 사용한다.")
+            print("!" * 78)
+        print()
+        print("=" * 78)
+        print("[Phase 5] Layer 2 — V18 temporal-stable conditional Ridge (PASS 2)")
+        print("=" * 78)
+        t5 = time.time()
+        phase5_summary = run_phase5(screen, FEATURE_DUMP_DIR, VALIDATION_DIR)
+        print(f"[Phase 5] done  {time.time() - t5:.1f}s")
+
     # DOMAIN_MEANS 미래 접근 감사 (§14)
     phase3_summary["domain_means_audit"] = {
         "n_access": len(domain_means.access_log),
@@ -1949,7 +2232,11 @@ def main():
                 "pitcher-half crossfit x3 seeds"
                 + ("" if PHASE >= 4 else "  [NOT IMPLEMENTED AT THIS PHASE]")
             ),
-            "layer2": "temporal-stable conditional Ridge(a=1e3) on prev-year OOF residual, gamma 0.75, R_CORE only  [NOT IMPLEMENTED AT THIS PHASE]",
+            "layer2": (
+                "temporal-stable conditional Ridge(a=1e3) on prev-year OOF residual, "
+                "gamma 0.75, R_CORE only"
+                + ("" if PHASE >= 5 else "  [NOT IMPLEMENTED AT THIS PHASE]")
+            ),
             "router": "domain3 = F / R_ANCHOR / R_CORE, anchor from F & season<=2022",
         },
         "features": {
@@ -2019,6 +2306,15 @@ def main():
         print(f"  -> {VALIDATION_DIR}/v15_seed_scores_{{year}}.csv")
         print(f"  -> {VALIDATION_DIR}/v15_fold_scores_{{year}}.csv")
         print(f"  -> {FEATURE_DUMP_DIR}/v15_oof_{{year}}.npz")
+    if PHASE >= 5 and phase5_summary is not None:
+        print(f"  -> {VALIDATION_DIR}/phase5_summary.json")
+        print(f"  -> {VALIDATION_DIR}/gate.json  "
+              f"(V18_SUBMIT_RECOMMENDED="
+              f"{phase5_summary['promotion_gate']['submit_recommended']})")
+        print(f"  -> {VALIDATION_DIR}/fold_{{2021..2024}}.csv · oof.csv")
+        print(f"  -> {VALIDATION_DIR}/v18_strict_temporal_transfer.csv · "
+              f"gamma_stress.csv · v18_months.csv · v18_domains.csv")
+        print(f"  -> {FEATURE_DUMP_DIR}/p18_{{2021..2024}}.npz")
     print(f"  -> {MODEL_DIR}/metadata.json")
     print("=" * 78)
 
