@@ -147,7 +147,7 @@
     "ridge_features": 89,
     "trend_features": 42
   },
-  "repro_build_unused_blocks": true,
+  "repro_build_unused_blocks": false,
   "unused_block_names": [
     "BATTER_CONDITIONAL",
     "CROSS_DOMAIN_PROFILE",
@@ -174,7 +174,7 @@
       "source_year": 2023,
       "bank_prior": 0.49995723449750534,
       "bank_source_max_season": 2023,
-      "sec_features": 10.97,
+      "sec_features": 8.74,
       "blocks": {
         "self_state": {
           "block": "self_state",
@@ -583,101 +583,7 @@
           "checksum": 2414164784.820109
         }
       },
-      "unused_blocks": {
-        "CROSS_DOMAIN_PROFILE": {
-          "block": "CROSS_DOMAIN_PROFILE",
-          "shape": [
-            253507,
-            20
-          ],
-          "n_cols": 20,
-          "columns": [
-            "xd__p_global__rate",
-            "xd__p_global__reliability",
-            "xd__p_global__delta",
-            "xd__p_global__log_n",
-            "xd__p_domain__rate",
-            "xd__p_domain__reliability",
-            "xd__p_domain__delta",
-            "xd__p_domain__log_n",
-            "xd__p_domain_minus_global",
-            "xd__p_transfer_confidence",
-            "xd__b_global__rate",
-            "xd__b_global__reliability",
-            "xd__b_global__delta",
-            "xd__b_global__log_n",
-            "xd__b_domain__rate",
-            "xd__b_domain__reliability",
-            "xd__b_domain__delta",
-            "xd__b_domain__log_n",
-            "xd__b_domain_minus_global",
-            "xd__b_transfer_confidence"
-          ],
-          "dtypes": [
-            "float32"
-          ],
-          "n_nan": 0,
-          "min": -0.6033726334571838,
-          "max": 8.002694129943848,
-          "mean": 1.2595289469489201,
-          "checksum": 6385988.095083598
-        },
-        "BATTER_CONDITIONAL": {
-          "block": "BATTER_CONDITIONAL",
-          "shape": [
-            253507,
-            9
-          ],
-          "n_cols": 9,
-          "columns": [
-            "bc__pitcher_hand__rate",
-            "bc__pitcher_hand__reliability",
-            "bc__pitcher_hand__delta",
-            "bc__v15_count__rate",
-            "bc__v15_count__reliability",
-            "bc__v15_count__delta",
-            "bc__domain3__rate",
-            "bc__domain3__reliability",
-            "bc__domain3__delta"
-          ],
-          "dtypes": [
-            "float32"
-          ],
-          "n_nan": 0,
-          "min": -0.14960485696792603,
-          "max": 0.9834254384040833,
-          "mean": 0.37780526690804955,
-          "checksum": 861986.5181825303
-        },
-        "ROLE_DEPLOYMENT": {
-          "block": "ROLE_DEPLOYMENT",
-          "shape": [
-            253507,
-            10
-          ],
-          "n_cols": 10,
-          "columns": [
-            "role__log_n",
-            "role__inning_z",
-            "role__inning_abs_z",
-            "role__li_z",
-            "role__li_abs_z",
-            "role__late_surprise",
-            "role__highli_surprise",
-            "role__domain_log_n",
-            "role__domain_inning_abs_z",
-            "role__domain_late_surprise"
-          ],
-          "dtypes": [
-            "float32"
-          ],
-          "n_nan": 0,
-          "min": -35.75,
-          "max": 43.84287643432617,
-          "mean": 1.2443174576888372,
-          "checksum": 3154431.8574632406
-        }
-      },
+      "unused_blocks": {},
       "pitcher_half_fold1_share": {
         "42": 0.5024042728603155,
         "2026": 0.49401002733652327,
@@ -846,7 +752,7 @@
       "source_year": 2019,
       "bank_prior": 0.5646700054335694,
       "bank_source_max_season": 2019,
-      "sec_features": 8.93,
+      "sec_features": 6.83,
       "blocks": {
         "self_state": {
           "block": "self_state",
@@ -1255,101 +1161,7 @@
           "checksum": 931157663.8877212
         }
       },
-      "unused_blocks": {
-        "CROSS_DOMAIN_PROFILE": {
-          "block": "CROSS_DOMAIN_PROFILE",
-          "shape": [
-            244087,
-            20
-          ],
-          "n_cols": 20,
-          "columns": [
-            "xd__p_global__rate",
-            "xd__p_global__reliability",
-            "xd__p_global__delta",
-            "xd__p_global__log_n",
-            "xd__p_domain__rate",
-            "xd__p_domain__reliability",
-            "xd__p_domain__delta",
-            "xd__p_domain__log_n",
-            "xd__p_domain_minus_global",
-            "xd__p_transfer_confidence",
-            "xd__b_global__rate",
-            "xd__b_global__reliability",
-            "xd__b_global__delta",
-            "xd__b_global__log_n",
-            "xd__b_domain__rate",
-            "xd__b_domain__reliability",
-            "xd__b_domain__delta",
-            "xd__b_domain__log_n",
-            "xd__b_domain_minus_global",
-            "xd__b_transfer_confidence"
-          ],
-          "dtypes": [
-            "float32"
-          ],
-          "n_nan": 0,
-          "min": -0.7073289155960083,
-          "max": 8.052932739257812,
-          "mean": 1.2980104784236113,
-          "checksum": 6336549.6729396805
-        },
-        "BATTER_CONDITIONAL": {
-          "block": "BATTER_CONDITIONAL",
-          "shape": [
-            244087,
-            9
-          ],
-          "n_cols": 9,
-          "columns": [
-            "bc__pitcher_hand__rate",
-            "bc__pitcher_hand__reliability",
-            "bc__pitcher_hand__delta",
-            "bc__v15_count__rate",
-            "bc__v15_count__reliability",
-            "bc__v15_count__delta",
-            "bc__domain3__rate",
-            "bc__domain3__reliability",
-            "bc__domain3__delta"
-          ],
-          "dtypes": [
-            "float32"
-          ],
-          "n_nan": 0,
-          "min": -0.1566253900527954,
-          "max": 0.982332170009613,
-          "mean": 0.40463030228499053,
-          "checksum": 888884.9693445284
-        },
-        "ROLE_DEPLOYMENT": {
-          "block": "ROLE_DEPLOYMENT",
-          "shape": [
-            244087,
-            10
-          ],
-          "n_cols": 10,
-          "columns": [
-            "role__log_n",
-            "role__inning_z",
-            "role__inning_abs_z",
-            "role__li_z",
-            "role__li_abs_z",
-            "role__late_surprise",
-            "role__highli_surprise",
-            "role__domain_log_n",
-            "role__domain_inning_abs_z",
-            "role__domain_late_surprise"
-          ],
-          "dtypes": [
-            "float32"
-          ],
-          "n_nan": 0,
-          "min": -14.0,
-          "max": 35.59440612792969,
-          "mean": 1.2903346561773448,
-          "checksum": 3149539.1522235954
-        }
-      },
+      "unused_blocks": {},
       "pitcher_half_fold1_share": {
         "42": 0.47852200240078335,
         "2026": 0.47981252586168044,
@@ -1518,7 +1330,7 @@
       "source_year": 2020,
       "bank_prior": 0.5327116970588356,
       "bank_source_max_season": 2020,
-      "sec_features": 9.82,
+      "sec_features": 7.28,
       "blocks": {
         "self_state": {
           "block": "self_state",
@@ -1927,101 +1739,7 @@
           "checksum": 1369544432.9103374
         }
       },
-      "unused_blocks": {
-        "CROSS_DOMAIN_PROFILE": {
-          "block": "CROSS_DOMAIN_PROFILE",
-          "shape": [
-            247088,
-            20
-          ],
-          "n_cols": 20,
-          "columns": [
-            "xd__p_global__rate",
-            "xd__p_global__reliability",
-            "xd__p_global__delta",
-            "xd__p_global__log_n",
-            "xd__p_domain__rate",
-            "xd__p_domain__reliability",
-            "xd__p_domain__delta",
-            "xd__p_domain__log_n",
-            "xd__p_domain_minus_global",
-            "xd__p_transfer_confidence",
-            "xd__b_global__rate",
-            "xd__b_global__reliability",
-            "xd__b_global__delta",
-            "xd__b_global__log_n",
-            "xd__b_domain__rate",
-            "xd__b_domain__reliability",
-            "xd__b_domain__delta",
-            "xd__b_domain__log_n",
-            "xd__b_domain_minus_global",
-            "xd__b_transfer_confidence"
-          ],
-          "dtypes": [
-            "float32"
-          ],
-          "n_nan": 0,
-          "min": -0.6794198751449585,
-          "max": 8.167919158935547,
-          "mean": 1.3027733789075666,
-          "checksum": 6437993.372950256
-        },
-        "BATTER_CONDITIONAL": {
-          "block": "BATTER_CONDITIONAL",
-          "shape": [
-            247088,
-            9
-          ],
-          "n_cols": 9,
-          "columns": [
-            "bc__pitcher_hand__rate",
-            "bc__pitcher_hand__reliability",
-            "bc__pitcher_hand__delta",
-            "bc__v15_count__rate",
-            "bc__v15_count__reliability",
-            "bc__v15_count__delta",
-            "bc__domain3__rate",
-            "bc__domain3__reliability",
-            "bc__domain3__delta"
-          ],
-          "dtypes": [
-            "float32"
-          ],
-          "n_nan": 0,
-          "min": -0.14388184249401093,
-          "max": 0.9827415943145752,
-          "mean": 0.39724579704417623,
-          "checksum": 883392.0255004627
-        },
-        "ROLE_DEPLOYMENT": {
-          "block": "ROLE_DEPLOYMENT",
-          "shape": [
-            247088,
-            10
-          ],
-          "n_cols": 10,
-          "columns": [
-            "role__log_n",
-            "role__inning_z",
-            "role__inning_abs_z",
-            "role__li_z",
-            "role__li_abs_z",
-            "role__late_surprise",
-            "role__highli_surprise",
-            "role__domain_log_n",
-            "role__domain_inning_abs_z",
-            "role__domain_late_surprise"
-          ],
-          "dtypes": [
-            "float32"
-          ],
-          "n_nan": 0,
-          "min": -14.8970947265625,
-          "max": 26.471956253051758,
-          "mean": 1.2853443087338887,
-          "checksum": 3175931.545564391
-        }
-      },
+      "unused_blocks": {},
       "pitcher_half_fold1_share": {
         "42": 0.5171517839797967,
         "2026": 0.4677968982710613,
@@ -2190,7 +1908,7 @@
       "source_year": 2021,
       "bank_prior": 0.5327616072006734,
       "bank_source_max_season": 2021,
-      "sec_features": 10.21,
+      "sec_features": 8.85,
       "blocks": {
         "self_state": {
           "block": "self_state",
@@ -2599,101 +2317,7 @@
           "checksum": 1784923092.5846207
         }
       },
-      "unused_blocks": {
-        "CROSS_DOMAIN_PROFILE": {
-          "block": "CROSS_DOMAIN_PROFILE",
-          "shape": [
-            247472,
-            20
-          ],
-          "n_cols": 20,
-          "columns": [
-            "xd__p_global__rate",
-            "xd__p_global__reliability",
-            "xd__p_global__delta",
-            "xd__p_global__log_n",
-            "xd__p_domain__rate",
-            "xd__p_domain__reliability",
-            "xd__p_domain__delta",
-            "xd__p_domain__log_n",
-            "xd__p_domain_minus_global",
-            "xd__p_transfer_confidence",
-            "xd__b_global__rate",
-            "xd__b_global__reliability",
-            "xd__b_global__delta",
-            "xd__b_global__log_n",
-            "xd__b_domain__rate",
-            "xd__b_domain__reliability",
-            "xd__b_domain__delta",
-            "xd__b_domain__log_n",
-            "xd__b_domain_minus_global",
-            "xd__b_transfer_confidence"
-          ],
-          "dtypes": [
-            "float32"
-          ],
-          "n_nan": 0,
-          "min": -0.7356642484664917,
-          "max": 8.133294105529785,
-          "mean": 1.2811547049093224,
-          "checksum": 6340998.342666397
-        },
-        "BATTER_CONDITIONAL": {
-          "block": "BATTER_CONDITIONAL",
-          "shape": [
-            247472,
-            9
-          ],
-          "n_cols": 9,
-          "columns": [
-            "bc__pitcher_hand__rate",
-            "bc__pitcher_hand__reliability",
-            "bc__pitcher_hand__delta",
-            "bc__v15_count__rate",
-            "bc__v15_count__reliability",
-            "bc__v15_count__delta",
-            "bc__domain3__rate",
-            "bc__domain3__reliability",
-            "bc__domain3__delta"
-          ],
-          "dtypes": [
-            "float32"
-          ],
-          "n_nan": 0,
-          "min": -0.15185025334358215,
-          "max": 0.9837427735328674,
-          "mean": 0.38924209616910316,
-          "checksum": 866938.6802084426
-        },
-        "ROLE_DEPLOYMENT": {
-          "block": "ROLE_DEPLOYMENT",
-          "shape": [
-            247472,
-            10
-          ],
-          "n_cols": 10,
-          "columns": [
-            "role__log_n",
-            "role__inning_z",
-            "role__inning_abs_z",
-            "role__li_z",
-            "role__li_abs_z",
-            "role__late_surprise",
-            "role__highli_surprise",
-            "role__domain_log_n",
-            "role__domain_inning_abs_z",
-            "role__domain_late_surprise"
-          ],
-          "dtypes": [
-            "float32"
-          ],
-          "n_nan": 0,
-          "min": -16.0,
-          "max": 33.77894592285156,
-          "mean": 1.3149661545088192,
-          "checksum": 3254173.0418860647
-        }
-      },
+      "unused_blocks": {},
       "pitcher_half_fold1_share": {
         "42": 0.5046510312277752,
         "2026": 0.44972764595590614,
@@ -2862,7 +2486,7 @@
       "source_year": 2022,
       "bank_prior": 0.5289204435249241,
       "bank_source_max_season": 2022,
-      "sec_features": 10.89,
+      "sec_features": 9.17,
       "blocks": {
         "self_state": {
           "block": "self_state",
@@ -3271,101 +2895,7 @@
           "checksum": 2134735454.8208342
         }
       },
-      "unused_blocks": {
-        "CROSS_DOMAIN_PROFILE": {
-          "block": "CROSS_DOMAIN_PROFILE",
-          "shape": [
-            245525,
-            20
-          ],
-          "n_cols": 20,
-          "columns": [
-            "xd__p_global__rate",
-            "xd__p_global__reliability",
-            "xd__p_global__delta",
-            "xd__p_global__log_n",
-            "xd__p_domain__rate",
-            "xd__p_domain__reliability",
-            "xd__p_domain__delta",
-            "xd__p_domain__log_n",
-            "xd__p_domain_minus_global",
-            "xd__p_transfer_confidence",
-            "xd__b_global__rate",
-            "xd__b_global__reliability",
-            "xd__b_global__delta",
-            "xd__b_global__log_n",
-            "xd__b_domain__rate",
-            "xd__b_domain__reliability",
-            "xd__b_domain__delta",
-            "xd__b_domain__log_n",
-            "xd__b_domain_minus_global",
-            "xd__b_transfer_confidence"
-          ],
-          "dtypes": [
-            "float32"
-          ],
-          "n_nan": 0,
-          "min": -0.7065380811691284,
-          "max": 8.007699966430664,
-          "mean": 1.3245329820696088,
-          "checksum": 6504119.208452814
-        },
-        "BATTER_CONDITIONAL": {
-          "block": "BATTER_CONDITIONAL",
-          "shape": [
-            245525,
-            9
-          ],
-          "n_cols": 9,
-          "columns": [
-            "bc__pitcher_hand__rate",
-            "bc__pitcher_hand__reliability",
-            "bc__pitcher_hand__delta",
-            "bc__v15_count__rate",
-            "bc__v15_count__reliability",
-            "bc__v15_count__delta",
-            "bc__domain3__rate",
-            "bc__domain3__reliability",
-            "bc__domain3__delta"
-          ],
-          "dtypes": [
-            "float32"
-          ],
-          "n_nan": 0,
-          "min": -0.1416422724723816,
-          "max": 0.9827122688293457,
-          "mean": 0.38842989295698904,
-          "checksum": 858323.2452143827
-        },
-        "ROLE_DEPLOYMENT": {
-          "block": "ROLE_DEPLOYMENT",
-          "shape": [
-            245525,
-            10
-          ],
-          "n_cols": 10,
-          "columns": [
-            "role__log_n",
-            "role__inning_z",
-            "role__inning_abs_z",
-            "role__li_z",
-            "role__li_abs_z",
-            "role__late_surprise",
-            "role__highli_surprise",
-            "role__domain_log_n",
-            "role__domain_inning_abs_z",
-            "role__domain_late_surprise"
-          ],
-          "dtypes": [
-            "float32"
-          ],
-          "n_nan": 0,
-          "min": -16.212371826171875,
-          "max": 34.42499923706055,
-          "mean": 1.3554104614313178,
-          "checksum": 3327871.535429243
-        }
-      },
+      "unused_blocks": {},
       "pitcher_half_fold1_share": {
         "42": 0.4982181040627227,
         "2026": 0.4552896853680888,
@@ -3530,5 +3060,5 @@
       }
     }
   },
-  "elapsed_sec": 212.0
+  "elapsed_sec": 198.0
 }
