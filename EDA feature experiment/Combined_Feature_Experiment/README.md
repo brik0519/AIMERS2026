@@ -7,7 +7,7 @@
    strike/reverse_rate`, `asof_batter_success/middle_rate`를 제거하고
    `bbeb_<name>_rate`로 교체. Prior fit 방식은 `Reliability Feature Experiment/
    cb_reg_v002_eb_experiments/cb_reg_v002_eb_replace_v001_train.py`(지금까지
-   가장 좋은 성과를 낸 변형, pooled_oof_clipped_brier=0.24716861)와 동일하게
+   가장 좋은 성과를 낸 변형, fold_2024 clipped_brier=0.24803926)와 동일하게
    **그 fold의 train 구간 전체(expanding)**로 fit한다. pitch-mix 3개(fastball/
    breaking/offspeed)는 이번 실험에서는 raw 그대로 유지한다.
 2. **신규 상황(situational) feature 5개** — `count_balance`, `full_count`,
@@ -51,27 +51,30 @@ python "EDA feature experiment/Combined_Feature_Experiment/cb_reg_v002_fe_v001_t
 
 ## 비교 방법
 
-`model/cb_reg_v002`는 재학습하지 않고 기존 `validation/cb_reg_v002/metadata.json`의
-`summary.pooled_oof_clipped_brier`를 그대로 baseline으로 재사용한다. 본 스크립트
-실행 마지막에 새 실험의 `pooled_oof_clipped_brier`와 나란히 비교해서 출력한다.
+`cb_reg_v002`(raw47)는 재학습하지 않고 기존
+`validation/cb_reg_v002/fold_2024/metadata.json`의 `clipped_brier`를 그대로
+baseline으로 재사용한다. 비교 지표는 **2024 fold(가장 최근 validation
+season) clipped Brier score**를 사용한다(낮을수록 좋음). 본 스크립트 실행
+마지막에 새 실험의 `clipped_brier`와 나란히 비교해서 출력한다.
 
 ## 결과
 
-- **pooled_oof_clipped_brier = 0.24711557** (baseline `cb_reg_v002` 0.24718539
-  대비 개선, BSS +27.9)
-- **Public LB = 838.3809069808** (baseline LB 829.22 대비 +9.16로, 내부 OOF
-  개선 방향이 실제 리더보드에서도 확인됨)
+- **fold_2024 clipped_brier = 0.24796919** (baseline `cb_reg_v002`(raw47)
+  0.24811856 대비 개선)
+- **Public LB = 838.3809069808** (baseline LB 829.22 대비 +9.16로, 내부
+  validation 개선 방향이 실제 리더보드에서도 확인됨)
 - Row/Feature QA 전부 통과(row 수·순서·target 불변, `full_count`/
   `scoring_position` 정의 검증).
 - `Reliability Feature Experiment/cb_reg_v002_eb_experiments/
-  cb_reg_v002_eb_replace_v001`(BBEB 단독, OOF 0.247169)보다도 개선.
+  cb_reg_v002_eb_replace_v001`(BBEB 단독, fold_2024 clipped_brier
+  0.24803926)보다도 개선.
 
 ### Seed 재현성 검증
 
-동일 feature로 `random_seed`만 7 / 2024로 바꿔 재학습한 결과, pooled OOF
-Brier는 각각 0.24711160 / 0.24712531(원본 seed=42: 0.24711557)이었다.
-3-seed 표준편차는 5.8e-06(BSS 환산 약 2.31)로, baseline(`cb_reg_v002`)과의
-격차(6.8e-05)가 이 seed 노이즈의 약 11.8배에 달해 baseline 대비 개선이
+동일 feature로 `random_seed`만 7 / 2024로 바꿔 재학습한 결과, fold_2024
+clipped_brier는 각각 0.24800309 / 0.24797588(원본 seed=42: 0.24796919)이었다.
+3-seed 표준편차는 약 1.51e-05로, baseline(`cb_reg_v002`, raw47)과의
+격차(0.00014937)가 이 seed 노이즈의 약 9.9배에 달해 baseline 대비 개선이
 seed 운이 아님을 확인했다.
 
 ## 산출물
@@ -79,5 +82,6 @@ seed 운이 아님을 확인했다.
 - `model/cb_reg_v002_fe_v001/` — 최종 모델, `final_metadata.json`,
   `feature_manifest.json`(raw/BBEB/situation/temporal feature 목록 및 개수),
   `bbeb_priors.json`(전체 train으로 fit한 최종 prior), `test_features_preview.csv`
-- `validation/cb_reg_v002_fe_v001/` — fold별 결과, `metadata.json`(pooled Brier 등),
-  `qa_report.json`(Row QA + Feature QA + 특수 검증 결과)
+- `validation/cb_reg_v002_fe_v001/` — fold별 결과. `fold_2024/metadata.json`의
+  `clipped_brier`를 이 문서의 비교 기준으로 사용한다. `qa_report.json`(Row QA
+  + Feature QA + 특수 검증 결과)도 함께 남는다.
