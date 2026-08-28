@@ -161,10 +161,10 @@
     "python": "3.11.15",
     "numpy": "1.26.4",
     "pandas": "2.0.3",
-    "scikit_learn": "1.9.0",
+    "scikit_learn": "1.8.0",
     "lightgbm": "4.7.0",
     "joblib": "1.5.3",
-    "scipy": "1.17.1",
+    "scipy": "1.15.3",
     "threadpoolctl": "3.6.0",
     "n_jobs": 6,
     "cpu_count": 8
@@ -175,7 +175,7 @@
       "source_year": 2019,
       "bank_prior": 0.5646700054335694,
       "bank_source_max_season": 2019,
-      "sec_features": 8.66,
+      "sec_features": 8.73,
       "blocks": {
         "self_state": {
           "block": "self_state",
@@ -847,7 +847,7 @@
       "source_year": 2020,
       "bank_prior": 0.5327116970588356,
       "bank_source_max_season": 2020,
-      "sec_features": 10.13,
+      "sec_features": 9.77,
       "blocks": {
         "self_state": {
           "block": "self_state",
@@ -1519,7 +1519,7 @@
       "source_year": 2021,
       "bank_prior": 0.5327616072006734,
       "bank_source_max_season": 2021,
-      "sec_features": 10.87,
+      "sec_features": 10.53,
       "blocks": {
         "self_state": {
           "block": "self_state",
@@ -2191,7 +2191,7 @@
       "source_year": 2022,
       "bank_prior": 0.5289204435249241,
       "bank_source_max_season": 2022,
-      "sec_features": 11.39,
+      "sec_features": 10.71,
       "blocks": {
         "self_state": {
           "block": "self_state",
@@ -2863,7 +2863,7 @@
       "source_year": 2023,
       "bank_prior": 0.49995723449750534,
       "bank_source_max_season": 2023,
-      "sec_features": 12.55,
+      "sec_features": 11.27,
       "blocks": {
         "self_state": {
           "block": "self_state",
@@ -3531,10 +3531,10 @@
       }
     }
   },
-  "elapsed_sec": 1346.8,
+  "elapsed_sec": 922.5,
   "library_versions_history": [
     {
-      "at": "2026-08-27T19:37:08",
+      "at": "2026-08-28T00:17:04",
       "years": [
         "2020",
         "2021",
@@ -3546,10 +3546,10 @@
         "python": "3.11.15",
         "numpy": "1.26.4",
         "pandas": "2.0.3",
-        "scikit_learn": "1.9.0",
+        "scikit_learn": "1.8.0",
         "lightgbm": "4.7.0",
         "joblib": "1.5.3",
-        "scipy": "1.17.1",
+        "scipy": "1.15.3",
         "threadpoolctl": "3.6.0",
         "n_jobs": 6,
         "cpu_count": 8

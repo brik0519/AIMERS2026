@@ -6,7 +6,7 @@
   "anchor_team_id": 13,
   "v18_stable_enabled": true,
   "artifact_path": "model/v18_repro_v001/v18_repro_v001.pkl",
-  "artifact_mb": 25.51,
+  "artifact_mb": 25.5,
   "trend_slope": -0.012836636139525709,
   "trend_prior": {
     "R_CORE": 0.4670631003330109,
@@ -44,16 +44,7 @@
     }
   },
   "eval_server_env_check": {
-    "mismatch": {
-      "scipy": {
-        "eval_server": "1.15.3",
-        "local": "1.17.1"
-      },
-      "scikit-learn": {
-        "eval_server": "1.8.0",
-        "local": "1.9.0"
-      }
-    },
+    "mismatch": {},
     "python_local": "3.11.15",
     "python_eval_server": "3.11.15",
     "python_major_minor_ok": true,
@@ -90,7 +81,7 @@
     },
     "correction": {
       "mean": 0.00816641412858746,
-      "min": 0.005342031521249699,
+      "min": 0.0053420315212497,
       "max": 0.012630726549193219
     },
     "final_v15_direct": {
@@ -113,10 +104,10 @@
     "python": "3.11.15",
     "numpy": "1.26.4",
     "pandas": "2.0.3",
-    "scikit_learn": "1.9.0",
+    "scikit_learn": "1.8.0",
     "lightgbm": "4.7.0",
     "joblib": "1.5.3",
-    "scipy": "1.17.1",
+    "scipy": "1.15.3",
     "threadpoolctl": "3.6.0",
     "n_jobs": 6,
     "cpu_count": 8

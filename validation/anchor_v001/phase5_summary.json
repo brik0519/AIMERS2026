@@ -1,0 +1,344 @@
+{
+  "experiment_name": "anchor_v001",
+  "layer": "layer2_sensitivity_shift",
+  "regime": "strict next-year (fit on T-1 OOF residual, apply to T)",
+  "transitions": [
+    2021,
+    2022,
+    2023,
+    2024
+  ],
+  "ridge": {
+    "alpha": 1000.0,
+    "solver": "lsqr",
+    "max_iter": 200,
+    "tol": 1e-05,
+    "final_fit_intercept": false,
+    "reference_fit_intercept": true
+  },
+  "scale": 0.75,
+  "shift_segment": "CORE",
+  "sensitivity_cols": [
+    "sens__batter_hand__delta",
+    "sens__batter_hand__weighted_delta",
+    "sens__batter_hand__reliability",
+    "sens__pressure_bhand__delta",
+    "sens__pressure_bhand__weighted_delta",
+    "sens__pressure_bhand__reliability",
+    "ctx__ball_0",
+    "ctx__ball_1",
+    "ctx__ball_2",
+    "ctx__ball_3",
+    "ctx__strike_0",
+    "ctx__strike_1",
+    "ctx__strike_2",
+    "ctx__count_0_0",
+    "ctx__count_0_1",
+    "ctx__count_0_2",
+    "ctx__count_1_0",
+    "ctx__count_1_1",
+    "ctx__count_1_2",
+    "ctx__count_2_0",
+    "ctx__count_2_1",
+    "ctx__count_2_2",
+    "ctx__count_3_0",
+    "ctx__count_3_1",
+    "ctx__count_3_2"
+  ],
+  "transition_rows": [
+    {
+      "source_year": 2020,
+      "target_year": 2021,
+      "adjusted_bss": 1866.5786463076706,
+      "reference_bss": 1836.9740268449618,
+      "final_bss": 1863.8280860540867,
+      "reference_gain": -29.604619462708797,
+      "final_gain": -2.750560253583899,
+      "final_vs_reference": 26.854059209124898,
+      "reference_core_gain": -41.022728005801696,
+      "final_core_gain": -3.811414812770977,
+      "reference_intercept": -0.01031685620546341,
+      "source_resid_mean": -0.010304956466385025,
+      "target_resid_mean": 0.011569987964248152,
+      "coef_gap": 0.005303418263792992
+    },
+    {
+      "source_year": 2021,
+      "target_year": 2022,
+      "adjusted_bss": 2479.607212772417,
+      "reference_bss": 2500.652188384445,
+      "final_bss": 2495.3138068738112,
+      "reference_gain": 21.044975612027883,
+      "final_gain": 15.70659410139433,
+      "final_vs_reference": -5.338381510633553,
+      "reference_core_gain": 29.810177350186905,
+      "final_core_gain": 22.248367703570125,
+      "reference_intercept": 0.011570589616894722,
+      "source_resid_mean": 0.011569987964248152,
+      "target_resid_mean": 0.00444766226511814,
+      "coef_gap": 0.0029089548625051975
+    },
+    {
+      "source_year": 2022,
+      "target_year": 2023,
+      "adjusted_bss": 708.501067974987,
+      "reference_bss": 729.6820288603678,
+      "final_bss": 734.8261564521064,
+      "reference_gain": 21.18096088538084,
+      "final_gain": 26.32508847711938,
+      "final_vs_reference": 5.144127591738538,
+      "reference_core_gain": 29.59004758830156,
+      "final_core_gain": 36.77645339228434,
+      "reference_intercept": 0.004446954000741243,
+      "source_resid_mean": 0.00444766226511814,
+      "target_resid_mean": -0.0025927598189993285,
+      "coef_gap": 0.0013018026947975159
+    },
+    {
+      "source_year": 2023,
+      "target_year": 2024,
+      "adjusted_bss": 920.5762725757461,
+      "reference_bss": 945.2816728532598,
+      "final_bss": 944.9117602973733,
+      "reference_gain": 24.705400277513718,
+      "final_gain": 24.33548772162726,
+      "final_vs_reference": -0.369912555886458,
+      "reference_core_gain": 35.07144956108607,
+      "final_core_gain": 34.54632673772778,
+      "reference_intercept": -0.002550567267462611,
+      "source_resid_mean": -0.0025927598189993285,
+      "target_resid_mean": -0.00016572305307047713,
+      "coef_gap": 0.0008424939587712288
+    }
+  ],
+  "scale_stress": [
+    {
+      "target_year": 2021,
+      "reference_0.55": -15.059952014418059,
+      "final_0.55": 1.2382744336791802,
+      "reference_0.65": -21.727730987841596,
+      "final_0.65": -0.46020182333791126,
+      "reference_0.75": -29.604619462708797,
+      "final_0.75": -2.750560253583899,
+      "reference_0.85": -38.69061743909674,
+      "final_0.85": -5.632800857124948,
+      "reference_0.95": -48.98572491699451,
+      "final_0.95": -9.10692363392809
+    },
+    {
+      "target_year": 2022,
+      "reference_0.55": 21.546451786846774,
+      "final_0.55": 13.849554423317386,
+      "reference_0.65": 21.851483669576737,
+      "final_0.65": 14.99001839104767,
+      "reference_0.75": 21.044975612027883,
+      "final_0.75": 15.70659410139433,
+      "reference_0.85": 19.12692761427661,
+      "final_0.85": 15.999281554312802,
+      "reference_0.95": 16.097339676268348,
+      "final_0.95": 15.868080749880846
+    },
+    {
+      "target_year": 2023,
+      "reference_0.55": 19.433225755982676,
+      "final_0.55": 22.391793456821915,
+      "reference_0.65": 20.66168614857088,
+      "final_0.65": 24.63905265548408,
+      "reference_0.75": 21.18096088538084,
+      "final_0.75": 26.32508847711938,
+      "reference_0.85": 20.991049966390165,
+      "final_0.85": 27.449900921738845,
+      "reference_0.95": 20.09195339167661,
+      "final_0.95": 28.013489989342474
+    },
+    {
+      "target_year": 2024,
+      "reference_0.55": 21.466907704370442,
+      "final_0.55": 20.98313278244825,
+      "reference_0.65": 23.390664369815568,
+      "final_0.65": 22.944501929600392,
+      "reference_0.75": 24.705400277513718,
+      "final_0.75": 24.33548772162726,
+      "reference_0.85": 25.411115427453865,
+      "final_0.85": 25.15609015848463,
+      "reference_0.95": 25.507809819724685,
+      "final_0.95": 25.4063092402057
+    }
+  ],
+  "months": [
+    {
+      "month": 3,
+      "n": 12361,
+      "adjusted": 1138.184181897861,
+      "reference": 1193.2912249710937,
+      "final": 1206.1266801492443,
+      "final_gain": 67.94249825138331,
+      "final_vs_reference": 12.835455178150596
+    },
+    {
+      "month": 4,
+      "n": 42588,
+      "adjusted": 724.029181853747,
+      "reference": 731.4124678496459,
+      "final": 734.3234364409424,
+      "final_gain": 10.294254587195383,
+      "final_vs_reference": 2.9109685912965233
+    },
+    {
+      "month": 5,
+      "n": 44078,
+      "adjusted": 1229.255882473923,
+      "reference": 1278.032975524357,
+      "final": 1275.4146341729777,
+      "final_gain": 46.15875169905462,
+      "final_vs_reference": -2.6183413513792857
+    },
+    {
+      "month": 6,
+      "n": 44514,
+      "adjusted": 1130.125234859558,
+      "reference": 1161.8019614537568,
+      "final": 1163.4187782079919,
+      "final_gain": 33.293543348433786,
+      "final_vs_reference": 1.6168167542350602
+    },
+    {
+      "month": 7,
+      "n": 33070,
+      "adjusted": 1042.588698900604,
+      "reference": 1048.7759094397586,
+      "final": 1042.1647352914842,
+      "final_gain": -0.42396360911970987,
+      "final_vs_reference": -6.611174148274358
+    },
+    {
+      "month": 8,
+      "n": 41920,
+      "adjusted": 736.476413660625,
+      "reference": 737.4339915160233,
+      "final": 738.4676211591668,
+      "final_gain": 1.9912074985418258,
+      "final_vs_reference": 1.033629643143513
+    },
+    {
+      "month": 9,
+      "n": 33305,
+      "adjusted": 415.65390743407704,
+      "reference": 458.7597655148157,
+      "final": 453.4850519744227,
+      "final_gain": 37.83114454034563,
+      "final_vs_reference": -5.274713540393009
+    },
+    {
+      "month": 10,
+      "n": 1671,
+      "adjusted": 275.5557986055646,
+      "reference": 292.36866469912746,
+      "final": 302.7633332724711,
+      "final_gain": 27.207534666906497,
+      "final_vs_reference": 10.394668573343608
+    }
+  ],
+  "segments": [
+    {
+      "segment": "CORE",
+      "n": 178729,
+      "adjusted": 728.3601937661199,
+      "reference": 763.431643327206,
+      "final": 762.9065205038477,
+      "final_gain": 34.54632673772778,
+      "final_vs_reference": -0.5251228233582879
+    },
+    {
+      "segment": "ANCHOR_TEAM",
+      "n": 44768,
+      "adjusted": 893.027635608179,
+      "reference": 893.027635608179,
+      "final": 893.027635608179,
+      "final_gain": 0.0,
+      "final_vs_reference": 0.0
+    },
+    {
+      "segment": "FUTURES",
+      "n": 30010,
+      "adjusted": 645.8427667560995,
+      "reference": 645.8427667560995,
+      "final": 645.8427667560995,
+      "final_gain": 0.0,
+      "final_vs_reference": 0.0
+    }
+  ],
+  "gate": {
+    "protocol": "ANCHOR_RESIDUAL_SENSITIVITY_SHIFT_V1",
+    "layer2_mode_if_adopted": "shift (fit_intercept=False)",
+    "layer2_mode_if_rejected": "reference (fit_intercept=True)",
+    "transition_2022_to_2023_gain": 26.32508847711938,
+    "transition_2023_to_2024_gain": 24.33548772162726,
+    "core_2024_gain": 34.54632673772778,
+    "sum_gain_reference": 37.326717312213646,
+    "sum_gain_final": 63.61661004655707,
+    "worst_gain_reference": -29.604619462708797,
+    "worst_gain_final": -2.750560253583899,
+    "n_transitions_final_not_worse": 2,
+    "bootstrap_final_vs_adjusted": {
+      "mean": 24.63269387026549,
+      "median": 24.400011654161553,
+      "p05": 11.194090020647588,
+      "p10": 14.190565910078364,
+      "p95": 39.377082173855,
+      "prob_positive": 0.9986666666666667
+    },
+    "bootstrap_final_vs_reference": {
+      "mean": -0.33899237962146606,
+      "median": -0.3029083390658909,
+      "p05": -3.0756421959952265,
+      "p10": -2.4916021506962025,
+      "p95": 2.3142386565603057,
+      "prob_positive": 0.41933333333333334
+    },
+    "bootstrap_reference_vs_adjusted": {
+      "mean": 24.971686249886954,
+      "median": 24.921901543855075,
+      "p05": 11.104137974287791,
+      "p10": 13.895843861397475,
+      "p95": 40.30251741828685,
+      "prob_positive": 0.9986666666666667
+    },
+    "early_gain": 33.40104316673637,
+    "late_gain": 12.493840102079048,
+    "scale": 0.75,
+    "shift_segment": "CORE",
+    "stress_ok": true,
+    "layer_gate": {
+      "g23>=8.0": true,
+      "g24>=10.0": true,
+      "core24>=15.0": true,
+      "boot_vs_adjusted_p05>=3.0": true,
+      "boot_vs_adjusted_prob>=0.97": true,
+      "late_gain>=0.0": true,
+      "stress_ok": true
+    },
+    "layer_gate_ok": true,
+    "relative_gate": {
+      "sum_gain_final>sum_gain_reference": true,
+      "worst_transition_final>worst_transition_reference": true,
+      "boot_2024_final_vs_reference_p05>=-5.0": true,
+      "transitions_final>=reference_count>=2": true
+    },
+    "relative_gate_ok": true,
+    "adopt": true,
+    "submit_recommended": true,
+    "warning": "2023/2024 are development-exposed. Validation BSS is not an LB estimate. Deploy Layer 2 is trained on 2024 residual whose mean is small; the value of intercept removal is robustness to next-season base-rate shift, not a large LB gain."
+  },
+  "library_versions": {
+    "python": "3.11.15",
+    "numpy": "1.26.4",
+    "pandas": "2.0.3",
+    "scikit_learn": "1.8.0",
+    "lightgbm": "4.7.0",
+    "joblib": "1.5.3",
+    "scipy": "1.15.3",
+    "n_jobs": 6,
+    "cpu_count": 8
+  }
+}

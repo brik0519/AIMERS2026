@@ -154,7 +154,7 @@ def deploy_transition(screen: pd.DataFrame, segment_means: T.SegmentMeans,
     Br = np.clip((Br - ridge_mu) / ridge_sd, -8, 8)
     m2 = Ridge(alpha=T.BASE_CFG["ridge_alpha"], solver="lsqr", max_iter=100, tol=1e-3)
     m2.fit(Ar, y_src)
-    p2 = np.clip(m2.predict(Br), 0.001, 0.999)
+    p2 = np.clip(T.ridge_predict_rowwise(m2, Br), 0.001, 0.999)
     del Ar, Br, A0, B0, ss, gs
     gc.collect()
 
@@ -232,7 +232,7 @@ def deploy_transition(screen: pd.DataFrame, segment_means: T.SegmentMeans,
     sd = np.where(sd > 1e-6, sd, 1.0).astype(np.float32)
     Az = np.clip((A - mu) / sd, -8, 8)
     Bz = np.clip((B - mu) / sd, -8, 8)
-    ref_model, shift_model, corr_ref, corr_shift = T._fit_shift_pair(Az, Bz, y_src - adjusted_oof_src)
+    ref_model, shift_model, corr_ref, corr_shift = T._fit_shift_pair(Az, Bz, y_src - adjusted_oof_src, rowwise=True)
     core = test.route_segment.eq(T.SHIFT_SEGMENT).to_numpy()
 
     return {
