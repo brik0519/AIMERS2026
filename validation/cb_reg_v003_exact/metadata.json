@@ -1,0 +1,178 @@
+{
+  "experiment_name": "cb_reg_v003_exact",
+  "validation_method": "expanding_window",
+  "folds": [
+    {
+      "fold": 1,
+      "train_seasons": [
+        2019,
+        2020
+      ],
+      "validation_season": 2021,
+      "n_train": 481500,
+      "n_validation": 247088,
+      "brier": 0.245534012897015,
+      "bss_raw": 1362.917079127557,
+      "bss": 1362.917079127557,
+      "best_iteration_zero_based": 55,
+      "best_tree_count": 56,
+      "elapsed_seconds": 17.341833353042603
+    },
+    {
+      "fold": 2,
+      "train_seasons": [
+        2019,
+        2020,
+        2021
+      ],
+      "validation_season": 2022,
+      "n_train": 728588,
+      "n_validation": 247472,
+      "brier": 0.24321694388759005,
+      "bss_raw": 2386.6503249594716,
+      "bss": 2386.6503249594716,
+      "best_iteration_zero_based": 146,
+      "best_tree_count": 147,
+      "elapsed_seconds": 42.190545082092285
+    },
+    {
+      "fold": 3,
+      "train_seasons": [
+        2019,
+        2020,
+        2021,
+        2022
+      ],
+      "validation_season": 2023,
+      "n_train": 976060,
+      "n_validation": 245525,
+      "brier": 0.2510592769320989,
+      "bss_raw": -423.71150749453966,
+      "bss": 0.0,
+      "best_iteration_zero_based": 4,
+      "best_tree_count": 5,
+      "elapsed_seconds": 23.07106900215149
+    },
+    {
+      "fold": 4,
+      "train_seasons": [
+        2019,
+        2020,
+        2021,
+        2022,
+        2023
+      ],
+      "validation_season": 2024,
+      "n_train": 1221585,
+      "n_validation": 253507,
+      "brier": 0.2478470647701315,
+      "bss_raw": 784.5506976532301,
+      "bss": 784.5506976532301,
+      "best_iteration_zero_based": 215,
+      "best_tree_count": 216,
+      "elapsed_seconds": 91.99402046203613
+    }
+  ],
+  "pooled": {
+    "brier": 0.24691240120077718,
+    "positive_rate": 0.511794579666503,
+    "baseline_brier": 0.24986088789049052,
+    "bss_raw": 1180.051313595587,
+    "bss": 1180.051313595587
+  },
+  "final_features": [
+    "season",
+    "game_month",
+    "game_dayofweek",
+    "inning",
+    "top_bottom",
+    "game_type",
+    "balls_before",
+    "strikes_before",
+    "outs_before",
+    "run_top_before",
+    "run_bot_before",
+    "run_total_before",
+    "score_diff_home",
+    "score_diff_pitcher_team",
+    "runner_on_1b",
+    "runner_on_2b",
+    "runner_on_3b",
+    "num_runners_on",
+    "base_state",
+    "home_win_expectancy",
+    "away_win_expectancy",
+    "li",
+    "pitcher_id",
+    "batter_id",
+    "pitcher_hand",
+    "batter_hand",
+    "pitcher_team_id",
+    "batter_team_id",
+    "asof_pitcher_n",
+    "asof_pitcher_reverse_rate",
+    "asof_pitcher_middle_rate",
+    "asof_pitcher_ball_rate",
+    "asof_pitcher_strike_rate",
+    "asof_pitcher_prev1_game_success_rate",
+    "asof_pitcher_prev3_game_success_rate",
+    "asof_pitcher_prev5_game_success_rate",
+    "asof_pitcher_prev1_game_middle_rate",
+    "asof_pitcher_prev3_game_middle_rate",
+    "asof_pitcher_prev5_game_middle_rate",
+    "asof_batter_n",
+    "asof_batter_middle_rate",
+    "asof_pitcher_pitchmix_n",
+    "asof_pitcher_fastball_rate",
+    "asof_pitcher_breaking_rate",
+    "asof_pitcher_offspeed_rate",
+    "exact_pitcher_season_n",
+    "exact_pitcher_season_logn",
+    "exact_pitcher_season_success_rate",
+    "exact_pitcher_past_success_rate",
+    "exact_pitcher_season_minus_past",
+    "hbeb_pitcher_success_rate",
+    "hbeb_batter_success_rate"
+  ],
+  "n_final_features": 52,
+  "exact_cols": [
+    "exact_pitcher_season_n",
+    "exact_pitcher_season_logn",
+    "exact_pitcher_season_success_rate",
+    "exact_pitcher_past_success_rate",
+    "exact_pitcher_season_minus_past"
+  ],
+  "hbeb_configs": [
+    {
+      "group_cols": [
+        "pitcher_hand"
+      ],
+      "n_col": "asof_pitcher_n",
+      "rate_col": "asof_pitcher_success_rate",
+      "new_col": "hbeb_pitcher_success_rate"
+    },
+    {
+      "group_cols": [
+        "batter_hand"
+      ],
+      "n_col": "asof_batter_n",
+      "rate_col": "asof_batter_success_rate",
+      "new_col": "hbeb_batter_success_rate"
+    }
+  ],
+  "model_params": {
+    "iterations": 800,
+    "learning_rate": 0.07,
+    "depth": 8,
+    "loss_function": "RMSE",
+    "l2_leaf_reg": 10.0,
+    "random_strength": 1.0,
+    "random_seed": 42,
+    "max_ctr_complexity": 1,
+    "thread_count": -1,
+    "verbose": 100,
+    "allow_writing_files": false
+  },
+  "early_stopping_rounds": 80,
+  "final_iteration_strategy": "latest_fold"
+}

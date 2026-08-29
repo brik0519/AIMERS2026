@@ -1,0 +1,65 @@
+{
+  "asof_pitcher_n*asof_pitcher_success_rate": {
+    "n_rows": 1474300,
+    "dev_mean": 0.0006655831549213886,
+    "dev_p99": 0.004125000000385626,
+    "dev_max": 0.007588000000396278
+  },
+  "asof_pitcher_n*asof_pitcher_reverse_rate": {
+    "n_rows": 1474300,
+    "dev_mean": 0.0006576671651631144,
+    "dev_p99": 0.004109999999855063,
+    "dev_max": 0.007642000000032567
+  },
+  "asof_pitcher_n*asof_pitcher_middle_rate": {
+    "n_rows": 1474300,
+    "dev_mean": 0.0006552675986365816,
+    "dev_p99": 0.0041180000000622385,
+    "dev_max": 0.007650000000012369
+  },
+  "asof_pitcher_n*asof_pitcher_ball_rate": {
+    "n_rows": 1474300,
+    "dev_mean": 0.0006661191832056351,
+    "dev_p99": 0.004124999999930878,
+    "dev_max": 0.007620999999744527
+  },
+  "asof_pitcher_n*asof_pitcher_strike_rate": {
+    "n_rows": 1474300,
+    "dev_mean": 0.0006660748882183423,
+    "dev_p99": 0.00412400000004709,
+    "dev_max": 0.007599999999911233
+  },
+  "asof_pitcher_n*asof_pitcher_fastball_rate": {
+    "n_rows": 1474300,
+    "dev_mean": 0.0006658694051417203,
+    "dev_p99": 0.004121010000835677,
+    "dev_max": 0.007594000000608503
+  },
+  "asof_pitcher_n*asof_pitcher_breaking_rate": {
+    "n_rows": 1474300,
+    "dev_mean": 0.000642671528861219,
+    "dev_p99": 0.004114999999728752,
+    "dev_max": 0.007671999999729451
+  },
+  "asof_pitcher_n*asof_pitcher_offspeed_rate": {
+    "n_rows": 1474300,
+    "dev_mean": 0.0005149966248471033,
+    "dev_p99": 0.003967999999986205,
+    "dev_max": 0.007642999999916356
+  },
+  "asof_batter_n*asof_batter_success_rate": {
+    "n_rows": 1474262,
+    "dev_mean": 0.0008173659823019746,
+    "dev_p99": 0.004456000000573113,
+    "dev_max": 0.006919999999809079
+  },
+  "asof_batter_n*asof_batter_middle_rate": {
+    "n_rows": 1474262,
+    "dev_mean": 0.0008132659039979491,
+    "dev_p99": 0.004456000000118365,
+    "dev_max": 0.006891999999879772
+  },
+  "_worst_dev_max": 0.007671999999729451,
+  "_warn_threshold": 0.35,
+  "_pass": true
+}

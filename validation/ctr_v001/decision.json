@@ -1,0 +1,59 @@
+{
+  "experiment_name": "ctr_v001",
+  "transition": "2023 full-fit -> 2024",
+  "smoke_mode": false,
+  "model_params": {
+    "iterations": 1000,
+    "learning_rate": 0.05,
+    "depth": 6,
+    "loss_function": "Logloss",
+    "l2_leaf_reg": 6.0,
+    "max_ctr_complexity": 2,
+    "boosting_type": "Ordered",
+    "random_seed": 918,
+    "allow_writing_files": false
+  },
+  "fit_info": {
+    "inner_split": "pitcher_half_42 (0=train, 1=eval)",
+    "inner_best_tree_count_raw": 214,
+    "fixed_tree_count": 214,
+    "boosting_type": "Ordered"
+  },
+  "elapsed_seconds": 186.01723432540894,
+  "n_2024": 253507,
+  "anchor_bp": 84.8354399784368,
+  "m4_bp": 74.62590065184239,
+  "err_corr_vs_anchor": 0.9995131880574033,
+  "mean4_bp": 84.817041443227,
+  "delta_mean4_vs_anchor_bp": -0.01839853520979773,
+  "w_best_inyear": 0.12,
+  "blend_best_inyear_bp": 85.03743634139637,
+  "note_blend": "in-year w* 는 상한 참고치. 게이트는 보수적인 4-멤버 등평균만 사용.",
+  "per_segment": {
+    "CORE": {
+      "n": 178729,
+      "anchor_bp": 69.2203360928989,
+      "m4_bp": 57.96132004786125,
+      "mean4_bp": 68.32509140839437
+    },
+    "ANCHOR_TEAM": {
+      "n": 44768,
+      "anchor_bp": 72.63415465227352,
+      "m4_bp": 69.72454379257087,
+      "mean4_bp": 74.326510861632
+    },
+    "FUTURES": {
+      "n": 30010,
+      "anchor_bp": 49.806364911023635,
+      "m4_bp": 34.8015912953592,
+      "mean4_bp": 52.4757204946702
+    }
+  },
+  "gate": {
+    "err_corr < 0.995": false,
+    "delta_mean4 >= +2.0bp": false
+  },
+  "decision_pass": false,
+  "next_step_if_pass": "m4 를 4번째 anchor 멤버로 full run (Phase 2~6) + selfcheck + LB 1회",
+  "next_step_if_fail": "CTR complexity/구성 1회 조정 재판정, 재미달 시 방향 폐기"
+}

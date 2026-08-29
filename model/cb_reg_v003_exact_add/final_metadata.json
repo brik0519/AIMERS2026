@@ -1,0 +1,54 @@
+{
+  "experiment_name": "cb_reg_v003_exact_add",
+  "base_model": "cb_reg_v003",
+  "training_seasons": [
+    2019,
+    2020,
+    2021,
+    2022,
+    2023,
+    2024
+  ],
+  "n_train": 1475092,
+  "base_feature_count": 47,
+  "final_feature_count": 61,
+  "exact_features": [
+    "exact_pitcher_season_n",
+    "exact_pitcher_season_logn",
+    "exact_pitcher_season_success_rate",
+    "exact_pitcher_past_success_rate",
+    "exact_pitcher_season_minus_past"
+  ],
+  "self_interaction_version": "SELF_INTERACTION_V1",
+  "self_interaction_features": [
+    "self_recent_success_blend",
+    "self_recent_success_minus_career",
+    "self_recent_middle_blend",
+    "self_recent_middle_trend",
+    "self_count_pressure",
+    "self_career_x_pressure",
+    "self_recent_x_pressure",
+    "self_offspeed_x_same_hand",
+    "self_win_uncertainty"
+  ],
+  "final_iterations": 133,
+  "pooled_oof_brier": 0.24690651828452467,
+  "pooled_oof_bss": 1182.4057902414474,
+  "residual_source_validation_season": 2024,
+  "parent_groups": 402,
+  "detail_groups": 425,
+  "residual_config": {
+    "min_n_parent": 200,
+    "min_n_detail": 200,
+    "shrink_parent": 300.0,
+    "shrink_detail": 100.0,
+    "parent_only_scale": 0.5,
+    "parent_weight": 0.5,
+    "detail_weight": 0.5,
+    "alpha": 0.25,
+    "cap": 0.02
+  },
+  "uses_test_distribution": false,
+  "row_independent_inference": true,
+  "model_path": "model/cb_reg_v003_exact_add/cb_reg_v003_exact_add.pkl"
+}

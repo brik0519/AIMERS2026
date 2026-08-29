@@ -1,0 +1,64 @@
+{
+  "experiment_name": "wl_v001",
+  "transition": "2023 full-fit -> 2024",
+  "smoke_mode": false,
+  "half_life_months": 3.0,
+  "anchor_bp_cached_lgb": 84.8354399784368,
+  "control_arm": "A_uniform_logloss",
+  "arms": {
+    "A_uniform_logloss": {
+      "recency": false,
+      "loss": "Logloss",
+      "fixed_tree_count": 240,
+      "inner_best_raw": 240,
+      "standalone_bp": 82.10689921418934,
+      "anchor_substituted_bp": 85.40591447076973,
+      "core_substituted_bp": 69.83950375774705,
+      "elapsed_seconds": 30.511727571487427
+    },
+    "B_recency_logloss": {
+      "recency": true,
+      "loss": "Logloss",
+      "fixed_tree_count": 233,
+      "inner_best_raw": 233,
+      "standalone_bp": 81.2633154972564,
+      "anchor_substituted_bp": 85.3541313609052,
+      "core_substituted_bp": 69.12316830521515,
+      "elapsed_seconds": 31.179827451705933
+    },
+    "C_uniform_rmse": {
+      "recency": false,
+      "loss": "RMSE",
+      "fixed_tree_count": 271,
+      "inner_best_raw": 271,
+      "standalone_bp": 82.24962753312748,
+      "anchor_substituted_bp": 85.3198107889297,
+      "core_substituted_bp": 69.5958006087971,
+      "elapsed_seconds": 33.23666453361511
+    },
+    "D_recency_rmse": {
+      "recency": true,
+      "loss": "RMSE",
+      "fixed_tree_count": 204,
+      "inner_best_raw": 204,
+      "standalone_bp": 82.11560258818973,
+      "anchor_substituted_bp": 85.6120687218076,
+      "core_substituted_bp": 69.40858163874242,
+      "elapsed_seconds": 26.66689419746399
+    }
+  },
+  "delta_vs_control_bp": {
+    "B_recency_logloss": -0.051783109864530275,
+    "C_uniform_rmse": -0.08610368184002937,
+    "D_recency_rmse": 0.20615425103787288
+  },
+  "best_arm": "D_recency_rmse",
+  "best_delta_bp": 0.20615425103787288,
+  "gate": {
+    "best delta >= +2.0bp": false
+  },
+  "decision_pass": false,
+  "note": "엔진 차이는 대조군 A 와의 차분으로 소거. cached anchor(lgb) 대비 수치는 참고용 — 판정은 A 대비 delta 만 사용.",
+  "next_step_if_pass": "통과 arm 의 가중/loss 를 m1(및 m3) 학습에 반영하는 full run + selfcheck + LB 1회",
+  "next_step_if_fail": "학습측 개입 폐기 -> 남은 트랙은 shift 곡선 완성 + L2 deviation form 뿐"
+}

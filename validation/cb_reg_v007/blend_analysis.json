@@ -1,0 +1,70 @@
+{
+  "reference": "validation/shift_v004a/matrices anchor p_base",
+  "per_year": [
+    {
+      "year": 2021,
+      "n": 247088,
+      "match_ratio": 1.0,
+      "anchor_bp": 111.80129883869738,
+      "v007_bp": 129.6705871147663,
+      "w_best_inyear": 0.78,
+      "blend_bp_inyear": 131.1892184962471
+    },
+    {
+      "year": 2022,
+      "n": 247472,
+      "match_ratio": 1.0,
+      "anchor_bp": 230.5692231498524,
+      "v007_bp": 234.64047458177762,
+      "w_best_inyear": 0.63,
+      "blend_bp_inyear": 236.75659070489186
+    },
+    {
+      "year": 2023,
+      "n": 245525,
+      "match_ratio": 1.0,
+      "anchor_bp": -36.412536549483846,
+      "v007_bp": -97.0789700301622,
+      "w_best_inyear": 0.0,
+      "blend_bp_inyear": -36.412536549483846
+    },
+    {
+      "year": 2024,
+      "n": 253507,
+      "match_ratio": 1.0,
+      "anchor_bp": 84.89977143241289,
+      "v007_bp": 20.337492461334207,
+      "w_best_inyear": 0.0,
+      "blend_bp_inyear": 84.89977143241289
+    }
+  ],
+  "deploy_regime": [
+    {
+      "year": 2022,
+      "w_from_year": 2021,
+      "w": 0.78,
+      "anchor_bp": 230.5692231498524,
+      "blend_bp": 236.41154067662984,
+      "delta_bp": 5.842317526777435
+    },
+    {
+      "year": 2023,
+      "w_from_year": 2022,
+      "w": 0.63,
+      "anchor_bp": -36.412536549483846,
+      "blend_bp": -69.90729028401033,
+      "delta_bp": -33.49475373452648
+    },
+    {
+      "year": 2024,
+      "w_from_year": 2023,
+      "w": 0.0,
+      "anchor_bp": 84.89977143241289,
+      "blend_bp": 84.89977143241289,
+      "delta_bp": 0.0
+    }
+  ],
+  "decision_rule": "최근 전이(2023->2024) delta_bp >= +2.0 이면 2단계(feature 귀속 ablation) 진행, 아니면 방향 폐기",
+  "decision_2024_delta_bp": 0.0,
+  "decision_pass": false
+}

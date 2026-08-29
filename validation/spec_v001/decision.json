@@ -1,0 +1,53 @@
+{
+  "experiment_name": "spec_v001",
+  "transition": "2023 full-fit -> 2024",
+  "smoke_mode": false,
+  "combination_rule": "고정 등평균만 (학습 결합은 사전 실증으로 배제)",
+  "anchor_bp": 84.8354399784368,
+  "specialists": {
+    "P": {
+      "n_features": 56,
+      "fixed_tree_count": 147,
+      "inner_best_raw": 147,
+      "bp_2024": 62.039272108393995,
+      "err_corr_vs_anchor": 0.9991791124612257,
+      "elapsed_seconds": 8.486335277557373
+    },
+    "B": {
+      "n_features": 18,
+      "fixed_tree_count": 207,
+      "inner_best_raw": 207,
+      "bp_2024": 13.858540220721416,
+      "err_corr_vs_anchor": 0.9974307913824219,
+      "elapsed_seconds": 7.5610880851745605
+    },
+    "C": {
+      "n_features": 24,
+      "fixed_tree_count": 169,
+      "inner_best_raw": 169,
+      "bp_2024": 8.540662229770124,
+      "err_corr_vs_anchor": 0.9970466523176,
+      "elapsed_seconds": 6.615087509155273
+    },
+    "M": {
+      "n_features": 36,
+      "fixed_tree_count": 204,
+      "inner_best_raw": 204,
+      "bp_2024": 61.8348054377571,
+      "err_corr_vs_anchor": 0.9985662591297602,
+      "elapsed_seconds": 9.693898677825928
+    }
+  },
+  "spec_avg_bp": 56.62002574137182,
+  "spec_avg_err_corr_vs_anchor": 0.9990504397334147,
+  "C1_7member_equal_bp": 74.14556223441559,
+  "C2_anchor_specavg_half_bp": 76.2741409678358,
+  "best_delta_vs_anchor_bp": -8.56129901060099,
+  "gate": {
+    "spec_avg corr < 0.995": false,
+    "max(C1,C2) >= anchor + 2.0bp": false
+  },
+  "decision_pass": false,
+  "next_step_if_pass": "통과 결합을 anchor 구조로 승격하는 full run 설계 + selfcheck + LB 1회",
+  "next_step_if_fail": "역할 분리 구조 폐기 (view 재구성 재시도는 1회로 제한)"
+}

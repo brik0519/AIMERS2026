@@ -1,2854 +1,1042 @@
-"""V18 Reproduction — Phase 2 (Feature) + Phase 3 (Anchor / Residual Target).
+#train.py
+#Baseline: cb_reg_v003 + Exact-ASOF 5 features
 
-원본        : kaggle_kbo_v18_RECOVERED_FROM_V20_exact.ipynb
-             (= kaggle_kbo_v20_TEMPORAL_ROLE_USAGE_ONE_SHOT_submit.ipynb 의
-               cell 1~15 + cell 19, byte 단위 동일)
-목표        : V18 의 Feature pipeline 과 Layer 0 Anchor 를 numerical 수준에서 재현한다.
-범위        : Phase 2 + Phase 3 까지만. Layer 1 crossfit / Layer 2 / artifact /
-             script.py / submission 은 이 파일에서 구현하지 않는다.
-
-최우선 규칙 : 평가 데이터 독립 추론.
-             모든 통계 / lookup 은 공식 train.csv 만으로 생성한다.
-             test row 는 자기 자신의 입력값 + frozen artifact 로만 예측된다.
-             predict(test.iloc[[i]])[0] == predict(test)[i]
-
-재현 원칙   : reproduction accuracy > code cleanliness.
-             vectorization / fillna / dtype / categorical encoding / sorting /
-             clip 위치 / smoothing 을 원본에서 바꾸지 않는다.
-             이상해 보이는 구현도 prediction path 에 있으면 그대로 유지한다.
-"""
 
 from __future__ import annotations
 
-import gc
 import json
-import math
-import os
-import pickle
-import platform
-import sys
+import shutil
 import time
 from pathlib import Path
 
+import joblib
 import numpy as np
 import pandas as pd
-
-# lightgbm / scikit-learn 은 Phase 3 에서만 필요하다.
-# Phase 2 만 실행하는 환경에서도 import 실패로 죽지 않도록 지연 import 한다.
-lgb = None
-Ridge = None
+from catboost import CatBoostRegressor
 
 
-ExtraTreesRegressor = None
+# ============================================================
+# Config
+# ============================================================
 
-
-def _import_phase3_libs():
-    global lgb, Ridge
-    if lgb is not None and Ridge is not None:
-        return
-    import lightgbm as _lgb
-    from sklearn.linear_model import Ridge as _Ridge
-
-    lgb = _lgb
-    Ridge = _Ridge
-
-
-def _import_phase4_libs():
-    global ExtraTreesRegressor
-    if ExtraTreesRegressor is not None:
-        return
-    from sklearn.ensemble import ExtraTreesRegressor as _ET
-
-    ExtraTreesRegressor = _ET
-
-
-# =========================================================
-# 경로
-# =========================================================
-
-EXPERIMENT_NAME = "v18_repro_v001"
+EXPERIMENT_NAME = "cb_reg_v003_exact"
 
 DATA_DIR = Path("./data")
-
-MODEL_ROOT = Path("./model")
-MODEL_DIR = MODEL_ROOT / EXPERIMENT_NAME
-MODEL_PATH = MODEL_DIR / f"{EXPERIMENT_NAME}.pkl"
-
-VALIDATION_ROOT = Path("./validation")
-VALIDATION_DIR = VALIDATION_ROOT / EXPERIMENT_NAME
-
-OUTPUT_DIR = Path("./output")
-
 TRAIN_PATH = DATA_DIR / "train.csv"
 TEST_PATH = DATA_DIR / "test.csv"
-SAMPLE_SUB_PATH = DATA_DIR / "sample_submission.csv"
-OUTPUT_PATH = OUTPUT_DIR / "submission.csv"
 
-REFERENCE_DIR = VALIDATION_DIR / "reference"
-FEATURE_PARITY_DIR = VALIDATION_DIR / "feature_parity"
+MODEL_DIR = Path("./model") / EXPERIMENT_NAME
+MODEL_PATH = MODEL_DIR / f"{EXPERIMENT_NAME}.pkl"
 
+VALIDATION_DIR = Path("./validation") / EXPERIMENT_NAME
 
-# =========================================================
-# 실행 제어
-# =========================================================
-
-# 2 = Feature, 3 = +Anchor/Residual, 4 = +Layer 1 V15 OOF crossfit,
-# 5 = +Layer 2 temporal-stable Ridge (PASS 2), 6 = +deploy artifact (2024->2025)
-# (3 이상은 lightgbm + scikit-learn 필요)
-#
-# 기본값 6 — `python train.py` 만으로 학습 전 과정이 끝나고
-# MODEL_PATH(단일 pkl) 와 OUTPUT_PATH(submission.csv) 까지 생성된다.
-# 중간 단계만 보려면 V18_REPRO_PHASE=2|3|4|5 로 낮춘다.
-PHASE = int(os.environ.get("V18_REPRO_PHASE", "6"))
-
-# Phase 4 는 ExtraTrees 90회 적합(5년 × 3seed × 2fold × 3domain)이라 매우 비싸다.
-# 이미 v15_oof_{year}.npz 가 있으면 그 연도를 건너뛴다.
-RESUME = os.environ.get("V18_REPRO_RESUME", "0") == "1"
-
-# 미투입 3블록(CROSS_DOMAIN_PROFILE / BATTER_CONDITIONAL / ROLE_DEPLOYMENT)을
-# 계산은 하되 모델 입력에는 포함하지 않는다. Phase 2~8 동안 True 를 유지하고,
-# 모든 gate 통과 후 False 로 전환한 뒤 R7 parity gate 를 수행한다.
-REPRO_BUILD_UNUSED_BLOCKS = os.environ.get("V18_REPRO_UNUSED", "1") == "1"
-
-# 원본은 screen 에 train.csv 전체 컬럼을 싣는다.
-# 아래 8개 컬럼은 prediction path 어디에서도 참조되지 않음이 감사로 확인되었다.
-#   run_top_before / run_bot_before / run_total_before / score_diff_home /
-#   runner_on_1b / runner_on_2b / runner_on_3b / asof_pitcher_pitchmix_n
-# 메모리 절감을 위해 참조 컬럼만 적재하며, 이 선택이 값에 영향을 주지 않는다는 것은
-# reference(전 컬럼 적재) 대비 R2 gate 로 실증한다.
-LOAD_ONLY_REFERENCED_COLUMNS = os.environ.get("V18_REPRO_SUBSET_COLS", "1") == "1"
-
-# 처리 대상 연도. 환경변수로 1개 연도만 지정해 subprocess 단위 실행이 가능하다.
-_YEARS_ENV = os.environ.get("V18_REPRO_YEARS", "")
-TARGET_YEARS = (
-    [int(y) for y in _YEARS_ENV.split(",") if y.strip()]
-    if _YEARS_ENV
-    else [2020, 2021, 2022, 2023, 2024]
-)
-
-# Phase 2 산출물 저장 여부 (대용량). npz(float32) 로 저장한다.
-DUMP_FEATURE_MATRICES = os.environ.get("V18_REPRO_DUMP", "1") == "1"
-FEATURE_DUMP_DIR = Path(os.environ.get("V18_REPRO_DUMP_DIR", str(VALIDATION_DIR / "matrices")))
-
-# ---------------------------------------------------------------------------
-# 규칙 준수 조치 (재현 이탈, 의도적) — Phase 8 진단 결과에 따른 것
-# ---------------------------------------------------------------------------
-# V18 은 Ridge 를 float32 행렬로 적합하므로 coef_/intercept_ 가 float32 가 되고,
-# sklearn predict 가 float32 BLAS 로 돌아 **batch 크기에 따라 결과가 1 float32 ulp 흔들린다.**
-#   실측: p2 차이 2.980e-08 = 2^-25 (float32 ulp)  ->  base = (p1+p2+p3)/3 -> 9.934e-09
-#         batch 1·8 에서만 어긋나고 64 이상은 전체 배치와 동일
-# 대회 공지 §3 "행 1개일 때와 전체일 때 예측값이 동일해야 한다" 에 걸린다.
-# 정보 누출은 아니지만(섭동이 행 수에만 의존) 규칙 준수를 우선해 계수를 float64 로 올린다.
-# 예측 변화는 ~1e-8 로 점수 영향이 없다.
-#
-# verbatim 예측은 R6(재현) 대조용으로 별도 저장하므로 재현 입증은 유지된다.
-RULE_SAFE_FLOAT64_RIDGE = os.environ.get("V18_REPRO_F64_RIDGE", "1") == "1"
-
-_SCREEN_CACHE_ENV = os.environ.get("V18_REPRO_SCREEN_CACHE", "").strip()
-SEED_CACHE_PATH = Path(_SCREEN_CACHE_ENV) if _SCREEN_CACHE_ENV else None  # 선택적 pickle 캐시
-
-
-# =========================================================
-# V18 원본 상수 (notebook cell 1 그대로)
-# =========================================================
-
-PROTOCOL_VERSION = "V18_TEMPORAL_STABLE_HAND_PRESSURE_COUNT_RIDGE"
-SOURCE_PROTOCOL = "V20_TEMPORAL_ROLE_USAGE_V1"
-
-TARGET = "control_success"
 ID = "row_id"
+TARGET = "control_success"
 SEASON_COL = "season"
 
-ANCHOR_DISCOVERY_MAX_SEASON = 2022
-BASE_SOURCE_YEAR = 2023
-VALID_YEAR = 2024
+CAT_COLS = [
+    "top_bottom",
+    "game_type",
+    "base_state",
+    "pitcher_id",
+    "batter_id",
+    "pitcher_team_id",
+    "batter_team_id",
+    "pitcher_hand",
+    "batter_hand",
+]
 
-SMOKE_MODE = os.environ.get("V20_SMOKE", "0") == "1"
-N_JOBS = max(1, min(6, os.cpu_count() or 1))
+EXACT_COLS = [
+    "exact_pitcher_season_n",
+    "exact_pitcher_season_logn",
+    "exact_pitcher_season_success_rate",
+    "exact_pitcher_past_success_rate",
+    "exact_pitcher_season_minus_past",
+]
 
-BASE_CFG = {
-    "exact_lgb": dict(
-        n_estimators=120 if not SMOKE_MODE else 20,
-        learning_rate=0.035,
-        num_leaves=7,
-        min_child_samples=350 if not SMOKE_MODE else 40,
-        subsample=0.9,
-        colsample_bytree=0.9,
-        reg_alpha=1.0,
-        reg_lambda=6.0,
-        max_bin=127,
-        random_state=918,
-    ),
-    "ridge_alpha": 10000.0,
-    "trend_lgb": dict(
-        n_estimators=180 if not SMOKE_MODE else 25,
-        learning_rate=0.04,
-        num_leaves=7,
-        min_child_samples=300 if not SMOKE_MODE else 40,
-        subsample=0.85,
-        colsample_bytree=0.9,
-        reg_alpha=1.0,
-        reg_lambda=5.0,
-        max_bin=127,
-        random_state=77,
-    ),
+HBEB_CONFIGS = [
+    {
+        "group_cols": ["pitcher_hand"],
+        "n_col": "asof_pitcher_n",
+        "rate_col": "asof_pitcher_success_rate",
+        "new_col": "hbeb_pitcher_success_rate",
+    },
+    {
+        "group_cols": ["batter_hand"],
+        "n_col": "asof_batter_n",
+        "rate_col": "asof_batter_success_rate",
+        "new_col": "hbeb_batter_success_rate",
+    },
+]
+
+EXPANDING_FOLDS = [
+    {
+        "fold": 1,
+        "train_seasons": [2019, 2020],
+        "validation_season": 2021,
+    },
+    {
+        "fold": 2,
+        "train_seasons": [2019, 2020, 2021],
+        "validation_season": 2022,
+    },
+    {
+        "fold": 3,
+        "train_seasons": [2019, 2020, 2021, 2022],
+        "validation_season": 2023,
+    },
+    {
+        "fold": 4,
+        "train_seasons": [2019, 2020, 2021, 2022, 2023],
+        "validation_season": 2024,
+    },
+]
+
+MODEL_PARAMS = {
+    "iterations": 800,
+    "learning_rate": 0.07,
+    "depth": 8,
+    "loss_function": "RMSE",
+    "l2_leaf_reg": 10.0,
+    "random_strength": 1.0,
+    "random_seed": 42,
+    "max_ctr_complexity": 1,
+    "thread_count": -1,
+    "verbose": 100,
+    "allow_writing_files": False,
 }
 
-V15_CF_CFG = dict(
-    n_estimators=100 if not SMOKE_MODE else 12,
-    max_depth=10,
-    min_samples_leaf=200 if not SMOKE_MODE else 25,
-    max_features=0.7,
-)
-FINAL_ADAPTER_CFG = dict(
-    n_estimators=120 if not SMOKE_MODE else 15,
-    max_depth=10,
-    min_samples_leaf=200 if not SMOKE_MODE else 25,
-    max_features=0.7,
-)
-ADAPTER_SHRINK = 0.50
-CF_SEEDS = (42, 2026, 314)
-
-V18_HISTORY_YEARS = 3
-V18_DECAY = 0.65
-V18_PARENT_STRENGTH = 100.0
-V18_HAND_STRENGTH = 35.0
-V18_PRESSURE_HAND_STRENGTH = 45.0
-V18_RIDGE_ALPHA = 1000.0
-V18_GAMMA = 0.75
-V18_GAMMA_STRESS = (0.55, 0.65, 0.75, 0.85, 0.95)
-V18_ROUTE_DOMAIN = "R_CORE"
-
-MIN_GAIN_2023 = 8.0
-MIN_GAIN_2024 = 10.0
-MIN_CORE_GAIN_2024 = 15.0
-MIN_BOOT_P05 = 3.0
-MIN_BOOT_PROB = 0.97
-MIN_LATE_GAIN = 0.0
-
-# V20 전용 상수는 이식하지 않는다. prediction path 참조 0회로 감사되었다.
-OMITTED_V20_CONSTANTS = [
-    "V20_HISTORY_YEARS", "V20_DECAY", "V20_VOLUME_K", "V20_ROLE_K",
-    "V20_ALPHA_GRID", "V20_GAMMA_GRID", "V20_ROUTE_DOMAIN",
-    "V20_DISCOVERY_TARGETS", "V20_STRESS_TARGET", "V20_MIN_DISCOVERY_GAIN",
-    "V20_MIN_STRESS_GAIN", "V20_MIN_CORE_STRESS_GAIN", "V20_MIN_BOOT_P05",
-    "V20_MIN_BOOT_PROB", "V20_MIN_LATE_GAIN", "V20_WORST_MONTH_GAIN",
-]
-
-# 호출 0회 + 미정의 dependency 를 가진 dead function. 구현하지 않는다.
-OMITTED_DEAD_CODE = [
-    "global_season_features_for_training",
-    "exact_numeric_pair",
-    "one_adapter_crossfit",       # V14_ADAPTER_CFG 미정의
-    "build_disagreement_block",
-    "score_prediction",
-    "assemble_blocks",            # X_V14 미정의
-]
-
-# 계산은 되지만 모델 입력에서 제외된 executable block
-UNUSED_BLOCK_NAMES = {
-    "CROSS_DOMAIN_PROFILE",
-    "BATTER_CONDITIONAL",
-    "ROLE_DEPLOYMENT",
-}
-DEPLOY_SELECTED_BLOCKS = ["PITCHER_CONDITIONAL", "EXACT_ASOF_STATE"]
-assert UNUSED_BLOCK_NAMES.isdisjoint(DEPLOY_SELECTED_BLOCKS)
-
-# 기대 차원 (Audit 확정치)
-EXPECTED_DIMS = {
-    "self_state": 34,
-    "gseason": 28,
-    "exact_asof_state": 62,
-    "pitcher_conditional": 21,
-    "adapter_base": 45,
-    "adapter_matrix": 128,
-    "v18_stable": 25,
-    "exact_lgb_features": 98,
-    "ridge_features": 89,
-    "trend_features": 42,
-}
+EARLY_STOPPING_ROUNDS = 80
+FINAL_ITERATION_STRATEGY = "latest_fold"
 
 
-# =========================================================
-# 컬럼 정의 (notebook cell 2 / cell 4)
-# =========================================================
+# ============================================================
+# Common
+# ============================================================
 
-P_COMPONENT_RATES = [
-    "asof_pitcher_reverse_rate",
-    "asof_pitcher_middle_rate",
-    "asof_pitcher_ball_rate",
-    "asof_pitcher_strike_rate",
-    "asof_pitcher_fastball_rate",
-    "asof_pitcher_breaking_rate",
-    "asof_pitcher_offspeed_rate",
-]
-B_COMPONENT_RATES = ["asof_batter_middle_rate"]
-
-RAWNUM_SPEC = [
-    "game_month", "inning", "balls_before", "strikes_before", "outs_before",
-    "score_diff_pitcher_team", "num_runners_on", "home_win_expectancy", "li",
-    "asof_pitcher_n", "asof_pitcher_success_rate", "asof_pitcher_reverse_rate",
-    "asof_pitcher_middle_rate", "asof_pitcher_ball_rate", "asof_pitcher_strike_rate",
-    "asof_pitcher_prev1_game_success_rate", "asof_pitcher_prev3_game_success_rate",
-    "asof_pitcher_prev5_game_success_rate", "asof_pitcher_prev1_game_middle_rate",
-    "asof_pitcher_prev3_game_middle_rate", "asof_pitcher_prev5_game_middle_rate",
-    "asof_batter_n", "asof_batter_success_rate", "asof_batter_middle_rate",
-    "asof_pitcher_fastball_rate", "asof_pitcher_breaking_rate",
-    "asof_pitcher_offspeed_rate",
-]
-CAT_SMALL_SPEC = [
-    "game_dayofweek", "top_bottom", "game_type", "domain3", "base_state",
-    "pitcher_hand", "batter_hand", "pitcher_team_id", "batter_team_id",
-]
-ENG_COLS = [
-    "eng_recent35", "eng_recent_delta", "eng_sb", "eng_same", "eng_close", "eng_late",
-]
-
-# build_self_state 가 추가로 읽는 컬럼
-_SELF_STATE_EXTRA = ["top_bottom", "pitcher_hand", "batter_hand", "away_win_expectancy"]
-
-# screen 에 반드시 있어야 하는 컬럼 (LOAD_ONLY_REFERENCED_COLUMNS 시 적재 목록)
-REFERENCED_COLUMNS = list(
-    dict.fromkeys(
-        [ID, SEASON_COL, TARGET, "pitcher_id", "batter_id", "game_type",
-         "pitcher_team_id", "batter_team_id"]
-        + RAWNUM_SPEC
-        + [c for c in CAT_SMALL_SPEC if c != "domain3"]
-        + _SELF_STATE_EXTRA
-    )
-)
-
-PC_CONTEXTS = [
-    ("v15_count", 28.0),
-    ("batter_hand", 35.0),
-    ("v15_inning_phase", 35.0),
-    ("base_state", 35.0),
-    ("v15_pressure", 28.0),
-    ("v15_runners", 35.0),
-    ("v15_li_bucket", 35.0),
-]
-
-# 런타임에 확정 (screen 컬럼 존재 여부 필터)
-RAWNUM: list[str] = []
-CAT_SMALL: list[str] = []
-ADAPTER_RAWNUM: list[str] = []
-BANK_COLS: list[str] = []
+def prepare_features(df: pd.DataFrame, cat_cols: list[str]) -> pd.DataFrame:
+    out = df.copy()
+    for col in cat_cols:
+        if col in out.columns:
+            out[col] = out[col].fillna("__MISSING__").astype(str)
+    return out
 
 
-# =========================================================
-# 공통 유틸
-# =========================================================
+def calculate_metrics(y_true, y_pred):
+    y_true = np.asarray(y_true, dtype=np.float64)
+    y_pred = np.asarray(y_pred, dtype=np.float64)
 
+    brier = float(np.mean((y_pred - y_true) ** 2))
+    positive_rate = float(np.mean(y_true))
+    baseline_brier = float(positive_rate * (1.0 - positive_rate))
 
-def _n(frame, c, default=np.nan):
-    """notebook cell 2 원본."""
-    if c in frame:
-        return pd.to_numeric(frame[c], errors="coerce").to_numpy(np.float64)
-    return np.full(len(frame), default, np.float64)
+    if baseline_brier <= 0:
+        bss_raw = 0.0
+    else:
+        bss_raw = float(
+            100000.0 * (1.0 - brier / baseline_brier)
+        )
 
-
-def raw_bss(y, p):
-    """notebook cell 4 원본. max(0, ·) 를 적용하지 않는 V18 정의."""
-    y = np.asarray(y, dtype=np.float64)
-    p = np.clip(np.asarray(p, dtype=np.float64), 0, 1)
-    ref = max(float(y.mean() * (1 - y.mean())), 1e-12)
-    return float(100000.0 * (1.0 - np.mean((p - y) ** 2) / ref))
-
-
-def pitcher_cluster_bootstrap_gain(frame, y, p_new, p_base, draws=1000, seed=979):
-    """notebook cell 4 원본. 투수 단위 cluster bootstrap."""
-    pid = frame.pitcher_id.astype(str).to_numpy()
-    y = np.asarray(y, float)
-    p_new = np.asarray(p_new, float)
-    p_base = np.asarray(p_base, float)
-    codes, uniq = pd.factorize(pid, sort=False)
-    G = len(uniq)
-    n = np.bincount(codes, minlength=G).astype(float)
-    sy = np.bincount(codes, weights=y, minlength=G)
-    en = np.bincount(codes, weights=(p_new - y) ** 2, minlength=G)
-    eb = np.bincount(codes, weights=(p_base - y) ** 2, minlength=G)
-    rng = np.random.default_rng(seed)
-    g = []
-    for _ in range(int(draws)):
-        draw = rng.integers(0, G, size=G)
-        w = np.bincount(draw, minlength=G).astype(float)
-        N = float(w @ n)
-        if N < 100:
-            continue
-        ym = float(w @ sy / N)
-        ref = max(ym * (1 - ym), 1e-12)
-        g.append(float(100000.0 * ((w @ eb - w @ en) / N) / ref))
-    a = np.asarray(g, float)
     return {
-        "mean": float(a.mean()), "median": float(np.median(a)),
-        "p05": float(np.quantile(a, 0.05)), "p10": float(np.quantile(a, 0.10)),
-        "p95": float(np.quantile(a, 0.95)), "prob_positive": float((a > 0).mean()),
+        "brier": brier,
+        "positive_rate": positive_rate,
+        "baseline_brier": baseline_brier,
+        "bss_raw": bss_raw,
+        "bss": max(0.0, bss_raw),
     }
 
 
-# 평가 서버 기본 설치 패키지 (Phase2 공지). lightgbm 은 목록에 없어 직접 설치해야 한다.
-# 공지: "버전이 명시된 아래 패키지에 한해 다른 버전을 쓰면 설치 에러가 발생할 수 있으므로
-#        가급적 기본 설치 패키지를 활용하고 requirements.txt 에는 포함하지 않기를 권장"
-EVAL_SERVER_PRESET = {
-    "pandas": "2.0.3", "numpy": "1.26.4", "scipy": "1.15.3",
-    "scikit-learn": "1.8.0", "joblib": "1.5.3", "threadpoolctl": "3.6.0",
-}
-EVAL_SERVER_PYTHON = "3.11.15"
-_VER_KEY = {"pandas": "pandas", "numpy": "numpy", "scipy": "scipy",
-            "scikit-learn": "scikit_learn", "joblib": "joblib",
-            "threadpoolctl": "threadpoolctl"}
+# ============================================================
+# Exact-ASOF
+# ============================================================
 
-
-def check_eval_server_env() -> dict:
-    """artifact 를 만든 환경이 평가 서버와 맞는지 확인한다.
-
-    artifact 는 pickle 이므로 **scikit-learn 버전이 다르면 서버에서 복원이 깨질 수 있다.**
-    (sklearn 은 버전 간 pickle 호환을 보장하지 않는다)
+def build_pitcher_season_stats(history: pd.DataFrame) -> pd.DataFrame:
     """
-    lv = library_versions()
-    mism = {}
-    for pkg, want in EVAL_SERVER_PRESET.items():
-        have = lv.get(_VER_KEY[pkg])
-        if have and have != want:
-            mism[pkg] = {"eval_server": want, "local": have}
-    py_ok = str(lv.get("python", "")).startswith(EVAL_SERVER_PYTHON.rsplit(".", 1)[0])
-    return {"mismatch": mism, "python_local": lv.get("python"),
-            "python_eval_server": EVAL_SERVER_PYTHON, "python_major_minor_ok": py_ok,
-            "lightgbm_local": lv.get("lightgbm")}
+    완료 시즌 train label만 저장한다.
 
+    각 pitcher_id x season에 대해:
+      n       = 공식 train 행 수
+      success = target 합
 
-def upcast_linear_to_float64(model, label: str = "") -> dict:
-    """선형 모델의 coef_ / intercept_ 를 float64 로 올린다.
-
-    입력 X 가 float32 여도 계수가 float64 면 numpy 가 X 를 float64 로 **정확히** 승격한 뒤
-    float64 BLAS 로 계산하므로 batch 크기 의존성이 ~1e-16 으로 떨어진다.
-    계수 값 자체는 float32 -> float64 변환이라 손실이 없다 (표현만 넓어진다).
+    이후 어떤 행의 Exact-ASOF를 만들 때도
+    반드시 row의 season보다 과거 시즌만 사용한다.
     """
-    info = {"label": label}
-    for attr in ("coef_", "intercept_"):
-        v = getattr(model, attr, None)
-        if v is None:
-            continue
-        arr = np.asarray(v)
-        info[attr + "_before"] = str(arr.dtype)
-        if arr.dtype != np.float64:
-            setattr(model, attr, arr.astype(np.float64))
-        info[attr + "_after"] = str(np.asarray(getattr(model, attr)).dtype)
-    return info
-
-
-def official_score(y, p, base_rate=None):
-    """대회 공식 정의. r 은 전체 평가셋 제구율로 고정하고 max(0, ·) 를 적용한다."""
-    y = np.asarray(y, dtype=np.float64)
-    p = np.clip(np.asarray(p, dtype=np.float64), 0, 1)
-    r = float(y.mean()) if base_rate is None else float(base_rate)
-    ref = max(r * (1 - r), 1e-12)
-    return float(max(0.0, 100000.0 * (1.0 - np.mean((p - y) ** 2) / ref)))
-
-
-def json_default(x):
-    if isinstance(x, (np.integer,)):
-        return int(x)
-    if isinstance(x, (np.floating,)):
-        v = float(x)
-        return v if math.isfinite(v) else None
-    if isinstance(x, (np.bool_,)):
-        return bool(x)
-    if isinstance(x, np.ndarray):
-        return x.tolist()
-    if isinstance(x, (Path,)):
-        return str(x)
-    if isinstance(x, (set, frozenset)):
-        return sorted(x)
-    raise TypeError(f"not JSON serializable: {type(x)}")
-
-
-def write_json(path: Path, obj) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(obj, indent=2, ensure_ascii=False, default=json_default),
-        encoding="utf-8",
-    )
-
-
-def merge_years_json(path: Path, obj: dict) -> None:
-    """연도별 subprocess 실행(`V18_REPRO_YEARS`)을 지원하기 위해 years 를 병합 저장한다.
-
-    통짜로 덮어쓰면 마지막 연도만 남아 gate 가 나머지 연도를 SKIP 한다.
-    top-level 키는 최신 실행 값으로 갱신하고 `years` 만 누적한다.
-    """
-    merged = dict(obj)
-    if path.exists():
-        try:
-            old = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            old = {}
-        years = dict(old.get("years", {}))
-        years.update(obj.get("years", {}))
-        merged["years"] = years
-        # library_versions 를 통째로 덮어쓰면 "이 산출물을 만든 버전" 이력이 사라진다.
-        # 실행마다 다른 버전을 썼는지 사후에 알 수 있도록 이력을 누적한다.
-        hist = list(old.get("library_versions_history", []))
-        cur = obj.get("library_versions")
-        if cur and (not hist or hist[-1].get("versions") != cur):
-            hist.append({"at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                         "years": sorted(obj.get("years", {})), "versions": cur})
-        if hist:
-            merged["library_versions_history"] = hist
-    elif obj.get("library_versions"):
-        merged["library_versions_history"] = [
-            {"at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-             "years": sorted(obj.get("years", {})), "versions": obj["library_versions"]}
-        ]
-    write_json(path, merged)
-
-
-def library_versions() -> dict:
-    out = {
-        "python": platform.python_version(),
-        "numpy": np.__version__,
-        "pandas": pd.__version__,
+    required = {
+        "pitcher_id",
+        SEASON_COL,
+        TARGET,
     }
-    for name, mod in [("scikit_learn", "sklearn"), ("lightgbm", "lightgbm"),
-                      ("joblib", "joblib"), ("scipy", "scipy"),
-                      ("threadpoolctl", "threadpoolctl")]:
-        try:
-            m = __import__(mod)
-            out[name] = getattr(m, "__version__", "?")
-        except Exception:
-            out[name] = None
-    out["n_jobs"] = N_JOBS
-    out["cpu_count"] = os.cpu_count()
-    return out
-
-
-def save_matrix(path: Path, df: pd.DataFrame) -> None:
-    """float32 행렬 + 컬럼명을 npz 로 저장한다 (pyarrow 비의존)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(
-        path,
-        values=df.to_numpy(np.float32),
-        columns=np.array(list(df.columns), dtype=object),
-        dtypes=np.array([str(t) for t in df.dtypes], dtype=object),
-    )
-
-
-# =========================================================
-# 데이터 적재 / 스키마 / 라우터
-# =========================================================
-
-
-def load_train() -> pd.DataFrame:
-    """notebook cell 3 의 screen 적재를 재현한다.
-
-    원본은 discover_csv 로 파일을 찾지만, 프로젝트 표준 경로를 사용한다.
-    파일 탐색 방식만 다르고 읽는 파일과 dtype 처리는 동일하다.
-    """
-    if SEED_CACHE_PATH and SEED_CACHE_PATH.exists():
-        with open(SEED_CACHE_PATH, "rb") as f:
-            screen = pickle.load(f)
-    else:
-        usecols = REFERENCED_COLUMNS if LOAD_ONLY_REFERENCED_COLUMNS else None
-        screen = pd.read_csv(
-            TRAIN_PATH, encoding="utf-8-sig", low_memory=False, usecols=usecols
+    missing = sorted(required - set(history.columns))
+    if missing:
+        raise KeyError(
+            f"pitcher season stats 필수 컬럼 없음: {missing}"
         )
-        if usecols is not None:
-            # usecols 는 파일 순서를 유지하므로 컬럼 순서를 명시적으로 고정한다.
-            screen = screen[[c for c in REFERENCED_COLUMNS if c in screen.columns]]
 
-    screen[SEASON_COL] = pd.to_numeric(screen[SEASON_COL], errors="raise").astype(int)
-    screen["game_type"] = screen["game_type"].astype("string").fillna("<NA>").astype(str)
-    return screen
-
-
-def validate_schema(screen: pd.DataFrame) -> None:
-    """notebook cell 3 의 assert + 프로젝트 test.csv 스키마 대조."""
-    assert screen[ID].is_unique, "row_id is not unique"
-    assert TARGET in screen, "target missing"
-    assert set(screen.game_type.unique()) == {"R", "F"}, "unexpected game_type"
-
-    missing = [c for c in REFERENCED_COLUMNS if c not in screen.columns]
-    assert not missing, f"referenced columns missing from train.csv: {missing}"
-
-    if TEST_PATH.exists():
-        test_head = pd.read_csv(TEST_PATH, encoding="utf-8-sig", nrows=0)
-        test_cols = set(test_head.columns)
-        need = set(REFERENCED_COLUMNS) - {TARGET}
-        missing_in_test = sorted(need - test_cols)
-        assert not missing_in_test, (
-            "test.csv 에 없는 참조 컬럼: " + str(missing_in_test)
-        )
-        assert TARGET not in test_cols, "test.csv 에 target 이 있다"
-
-        # §15 context 문자열 dtype 안전성: train/test dtype 이 같아야
-        # v15_count 같은 문자열 키가 어긋나지 않는다.
-        test_sample = pd.read_csv(TEST_PATH, encoding="utf-8-sig", nrows=5000)
-        ctx_int_cols = ["balls_before", "strikes_before", "inning", "num_runners_on"]
-        for c in ctx_int_cols:
-            if c in test_sample.columns:
-                a, b = str(screen[c].dtype), str(test_sample[c].dtype)
-                assert a == b, f"context dtype mismatch {c}: train={a} test={b}"
-
-        # base_state 는 `_lookup` 의 MultiIndex 키다. 값이 '___','1__',…,'123' 인데
-        # **'123' 만 들어있는 파일**을 읽으면 pandas 가 int64 로 추론하고,
-        # object "123" 로 만들어진 EB 표와 키가 어긋나 pc__base_state__* 가
-        # 조용히 0.0 이 된다 (T2 검사 D 에서 실측: 0.489 -> 0.0).
-        # 계산은 바꾸지 않고, 그 조건이 되면 시끄럽게 실패시킨다.
-        for name, frame in [("train", screen), ("test", test_sample)]:
-            if "base_state" in frame.columns:
-                dt = str(frame["base_state"].dtype)
-                assert dt == "object", (
-                    f"{name}.base_state dtype={dt} (object 여야 한다). "
-                    "숫자로 추론되면 pitcher_conditional 의 base_state 조회가 "
-                    "조용히 실패한다. 입력 파일의 base_state 값 구성을 확인할 것."
-                )
-
-
-def fit_router(screen: pd.DataFrame) -> int:
-    """notebook cell 3. ANCHOR_TEAM_ID 는 F ∧ season<=2022 의 구조에서만 학습한다."""
-    f_hist = screen.loc[
-        screen.game_type.eq("F") & screen[SEASON_COL].le(ANCHOR_DISCOVERY_MAX_SEASON)
-    ]
-    teams = sorted(
-        set(f_hist.pitcher_team_id.unique()) | set(f_hist.batter_team_id.unique())
-    )
-    involvement = {
-        int(t): float(((f_hist.pitcher_team_id == t) | (f_hist.batter_team_id == t)).mean())
-        for t in teams
-    }
-    anchors = [t for t, v in involvement.items() if v > 0.999999]
-    assert len(anchors) == 1, ("expected one persistent F anchor", involvement)
-    return int(anchors[0])
-
-
-def attach_domain3(frame: pd.DataFrame, anchor_team_id: int) -> pd.DataFrame:
-    """row-local 3-way router. train / test 공통."""
-    frame["domain3"] = np.where(
-        frame.game_type.eq("F"),
-        "F",
-        np.where(
-            (frame.pitcher_team_id == anchor_team_id)
-            | (frame.batter_team_id == anchor_team_id),
-            "R_ANCHOR",
-            "R_CORE",
-        ),
-    )
-    return frame
-
-
-def finalize_column_lists(screen: pd.DataFrame) -> None:
-    """notebook cell 4 의 `if c in screen` 필터를 재현한다."""
-    global RAWNUM, CAT_SMALL, ADAPTER_RAWNUM, BANK_COLS
-    RAWNUM = [c for c in RAWNUM_SPEC if c in screen]
-    CAT_SMALL = [c for c in CAT_SMALL_SPEC if c in screen]
-    ADAPTER_RAWNUM = list(
-        dict.fromkeys(
-            RAWNUM + [c for c in ["pitcher_team_id", "batter_team_id"] if c in screen]
-        )
-    )
-    BANK_COLS = list(
-        dict.fromkeys(
-            [SEASON_COL, "pitcher_id", "batter_id", TARGET,
-             "asof_pitcher_n", "asof_batter_n"]
-            + P_COMPONENT_RATES + B_COMPONENT_RATES
-        )
-    )
-    assert len(RAWNUM) == 27, len(RAWNUM)
-    assert len(CAT_SMALL) == 9, len(CAT_SMALL)
-    assert len(ADAPTER_RAWNUM) == 29, len(ADAPTER_RAWNUM)
-
-
-# =========================================================
-# Phase 2 — Self State (notebook cell 2, 34열)
-# =========================================================
-
-
-def build_self_state(frame: pd.DataFrame) -> pd.DataFrame:
-    """완전 row-local. 다른 행을 전혀 참조하지 않는다."""
-    n = len(frame)
-    z = pd.DataFrame(index=np.arange(n))
-    pn = np.maximum(np.nan_to_num(_n(frame, "asof_pitcher_n", 0), nan=0.0), 0)
-    bn = np.maximum(np.nan_to_num(_n(frame, "asof_batter_n", 0), nan=0.0), 0)
-    career = _n(frame, "asof_pitcher_success_rate", 0.5)
-    career = np.where(np.isfinite(career), career, 0.5)
-    p1 = _n(frame, "asof_pitcher_prev1_game_success_rate")
-    p3 = _n(frame, "asof_pitcher_prev3_game_success_rate")
-    p5 = _n(frame, "asof_pitcher_prev5_game_success_rate")
-    p1 = np.where(np.isfinite(p1), p1, career)
-    p3 = np.where(np.isfinite(p3), p3, p1)
-    p5 = np.where(np.isfinite(p5), p5, p3)
-    bsucc = _n(frame, "asof_batter_success_rate", 0.5)
-    bsucc = np.where(np.isfinite(bsucc), bsucc, 0.5)
-    middle = _n(frame, "asof_pitcher_middle_rate", 0)
-    reverse = _n(frame, "asof_pitcher_reverse_rate", 0)
-    ball = _n(frame, "asof_pitcher_ball_rate", 0)
-    strike = _n(frame, "asof_pitcher_strike_rate", 0)
-    fast = _n(frame, "asof_pitcher_fastball_rate", 1 / 3)
-    brk = _n(frame, "asof_pitcher_breaking_rate", 1 / 3)
-    off = _n(frame, "asof_pitcher_offspeed_rate", 1 / 3)
-    fast = np.where(np.isfinite(fast), fast, 1 / 3)
-    brk = np.where(np.isfinite(brk), brk, 1 / 3)
-    off = np.where(np.isfinite(off), off, 1 / 3)
-    sm = np.maximum(fast + brk + off, 1e-6)
-    fast /= sm
-    brk /= sm
-    off /= sm
-    balls = np.nan_to_num(_n(frame, "balls_before", 0))
-    strikes = np.nan_to_num(_n(frame, "strikes_before", 0))
-    inning = np.nan_to_num(_n(frame, "inning", 1))
-    score = np.nan_to_num(_n(frame, "score_diff_pitcher_team", 0))
-    li = np.maximum(np.nan_to_num(_n(frame, "li", 0)), 0)
-    top = frame["top_bottom"].astype(str).to_numpy()
-    hwe = np.nan_to_num(_n(frame, "home_win_expectancy", 50), nan=50) / 100.0
-    awe = np.nan_to_num(_n(frame, "away_win_expectancy", 50), nan=50) / 100.0
-    pwe = np.where(top == "T", hwe, awe)
-    ph = frame["pitcher_hand"].astype(str).to_numpy()
-    bh = frame["batter_hand"].astype(str).to_numpy()
-
-    z["self__log_pitcher_n"] = np.log1p(pn).astype(np.float32)
-    z["self__pitcher_reliability"] = (pn / (pn + 120)).astype(np.float32)
-    z["self__career_success"] = career.astype(np.float32)
-    z["self__prev1_success"] = p1.astype(np.float32)
-    z["self__prev3_success"] = p3.astype(np.float32)
-    z["self__prev5_success"] = p5.astype(np.float32)
-    z["self__recent_blend"] = (0.50 * p1 + 0.30 * p3 + 0.20 * p5).astype(np.float32)
-    z["self__prev1_minus_prev5"] = (p1 - p5).astype(np.float32)
-    z["self__recent_minus_career"] = (
-        0.5 * p1 + 0.3 * p3 + 0.2 * p5 - career
-    ).astype(np.float32)
-
-    middle_safe = np.nan_to_num(middle, nan=0.0)
-    m1 = _n(frame, "asof_pitcher_prev1_game_middle_rate")
-    m3 = _n(frame, "asof_pitcher_prev3_game_middle_rate")
-    m5 = _n(frame, "asof_pitcher_prev5_game_middle_rate")
-    m1 = np.where(np.isfinite(m1), m1, middle_safe)
-    m3 = np.where(np.isfinite(m3), m3, m1)
-    m5 = np.where(np.isfinite(m5), m5, m3)
-    z["self__recent_middle_blend"] = (0.50 * m1 + 0.30 * m3 + 0.20 * m5).astype(np.float32)
-    z["self__recent_middle_delta"] = (m1 - m5).astype(np.float32)
-
-    z["self__log_batter_n"] = np.log1p(bn).astype(np.float32)
-    z["self__batter_reliability"] = (bn / (bn + 120)).astype(np.float32)
-    z["self__batter_success"] = bsucc.astype(np.float32)
-    z["self__pitcher_minus_batter"] = (career - bsucc).astype(np.float32)
-
-    z["self__middle"] = np.nan_to_num(middle, nan=0).astype(np.float32)
-    z["self__reverse"] = np.nan_to_num(reverse, nan=0).astype(np.float32)
-    z["self__strike_ball_margin"] = np.nan_to_num(strike - ball, nan=0).astype(np.float32)
-
-    entropy = -(
-        fast * np.log(np.clip(fast, 1e-6, 1))
-        + brk * np.log(np.clip(brk, 1e-6, 1))
-        + off * np.log(np.clip(off, 1e-6, 1))
-    )
-    z["self__pitchmix_entropy"] = entropy.astype(np.float32)
-    z["self__offspeed"] = off.astype(np.float32)
-    z["self__fast_off_logratio"] = np.log(
-        np.clip(fast, 1e-6, 1) / np.clip(off, 1e-6, 1)
-    ).astype(np.float32)
-    z["self__break_off_logratio"] = np.log(
-        np.clip(brk, 1e-6, 1) / np.clip(off, 1e-6, 1)
-    ).astype(np.float32)
-
-    z["self__count_pressure"] = (
-        0.7 * (balls == 3) + 1.1 * ((balls == 3) & (strikes == 2)) + 0.25 * (strikes == 2)
-    ).astype(np.float32)
-    z["self__full_count"] = ((balls == 3) & (strikes == 2)).astype(np.float32)
-    z["self__inning"] = inning.astype(np.float32)
-    z["self__late"] = (inning >= 7).astype(np.float32)
-    z["self__score_abs"] = np.abs(score).astype(np.float32)
-    z["self__li_log1p"] = np.log1p(li).astype(np.float32)
-    z["self__pitcher_we"] = np.clip(pwe, 0, 1).astype(np.float32)
-    z["self__win_uncertainty"] = (1 - 2 * np.abs(np.clip(pwe, 0, 1) - 0.5)).astype(np.float32)
-    z["self__same_hand"] = (ph == bh).astype(np.float32)
-
-    pressure = z["self__count_pressure"].to_numpy(np.float64)
-    z["self__career_x_pressure"] = (career * pressure).astype(np.float32)
-    z["self__recent_x_pressure"] = (
-        (0.5 * p1 + 0.3 * p3 + 0.2 * p5) * pressure
-    ).astype(np.float32)
-    z["self__offspeed_x_same_hand"] = (off * (ph == bh)).astype(np.float32)
-
-    assert z.shape[1] == EXPECTED_DIMS["self_state"], z.shape
-    return z
-
-
-# =========================================================
-# Phase 2 — Global season decomposition (notebook cell 2, 28열)
-# =========================================================
-
-
-def _rounded_cumulative_count(n, rate):
-    n = np.asarray(n, np.float64)
-    rate = np.asarray(rate, np.float64)
-    out = np.zeros(len(n), np.float64)
-    ok = (n > 0) & np.isfinite(rate)
-    out[ok] = np.rint(n[ok] * rate[ok])
-    return out
-
-
-def fit_global_season_bank(history: pd.DataFrame, cutoff: int) -> dict:
-    """원본명 build_global_season_bank.
-
-    history 는 공식 train 만. cutoff 미만 시즌만 사용한다.
-    산출물은 frozen lookup 이며 inference 시 test 를 전혀 보지 않는다.
-    """
-    h = history.loc[history[SEASON_COL].astype(int) < int(cutoff)].copy()
-    prior = float(h.loc[h[SEASON_COL].eq(h[SEASON_COL].max()), TARGET].mean()) if len(h) else 0.5
-    pg = (
-        h.groupby("pitcher_id", sort=False)[TARGET].agg(["size", "sum"])
-        if len(h) else pd.DataFrame(columns=["size", "sum"])
-    )
-    bg = (
-        h.groupby("batter_id", sort=False)[TARGET].agg(["size", "sum"])
-        if len(h) else pd.DataFrame(columns=["size", "sum"])
-    )
-    bank = {
-        "cutoff": int(cutoff),
-        "prior": prior,
-        "pitcher_n": pg["size"].to_dict(),
-        "pitcher_s": pg["sum"].to_dict(),
-        "batter_n": bg["size"].to_dict(),
-        "batter_s": bg["sum"].to_dict(),
-        "source_max_season": int(h[SEASON_COL].max()) if len(h) else None,
-    }
-
-    prev = h.loc[h[SEASON_COL].eq(h[SEASON_COL].max())] if len(h) else h
-    bank["component_priors"] = {
-        c: (
-            float(pd.to_numeric(prev[c], errors="coerce").mean())
-            if c in prev and pd.to_numeric(prev[c], errors="coerce").notna().any()
-            else 0.5
-        )
-        for c in P_COMPONENT_RATES + B_COMPONENT_RATES
-    }
-    if len(h):
-        pidx = h.groupby("pitcher_id", sort=False)["asof_pitcher_n"].idxmax()
-        plast = h.loc[pidx, ["pitcher_id", "asof_pitcher_n"] + P_COMPONENT_RATES].set_index(
-            "pitcher_id"
-        )
-        pbase_n = pd.to_numeric(plast["asof_pitcher_n"], errors="coerce").fillna(0).astype(np.float64)
-        bank["pitcher_component_base_n"] = pbase_n.to_dict()
-        bank["pitcher_component_base"] = {}
-        for c in P_COMPONENT_RATES:
-            rr = pd.to_numeric(plast[c], errors="coerce")
-            cnt = np.rint(pbase_n * rr)
-            bank["pitcher_component_base"][c] = cnt.to_dict()
-        bidx = h.groupby("batter_id", sort=False)["asof_batter_n"].idxmax()
-        blast = h.loc[bidx, ["batter_id", "asof_batter_n"] + B_COMPONENT_RATES].set_index(
-            "batter_id"
-        )
-        bbase_n = pd.to_numeric(blast["asof_batter_n"], errors="coerce").fillna(0).astype(np.float64)
-        bank["batter_component_base_n"] = bbase_n.to_dict()
-        bank["batter_component_base"] = {}
-        for c in B_COMPONENT_RATES:
-            rr = pd.to_numeric(blast[c], errors="coerce")
-            cnt = np.rint(bbase_n * rr)
-            bank["batter_component_base"][c] = cnt.to_dict()
-    else:
-        bank["pitcher_component_base_n"] = {}
-        bank["pitcher_component_base"] = {c: {} for c in P_COMPONENT_RATES}
-        bank["batter_component_base_n"] = {}
-        bank["batter_component_base"] = {c: {} for c in B_COMPONENT_RATES}
-    return bank
-
-
-def transform_global_season(bank: dict, rows: pd.DataFrame) -> pd.DataFrame:
-    """row-local + frozen bank. 다른 행을 참조하지 않는다."""
-    r = rows.reset_index(drop=True)
-    z = pd.DataFrame(index=np.arange(len(r)))
-    prior = float(bank["prior"])
-
-    def one(ent, ncol, rcol, prefix, kn=80.0):
-        ids = r[ent]
-        hn = ids.map(bank[prefix + "_n"]).fillna(0).to_numpy(np.float64)
-        hs = ids.map(bank[prefix + "_s"]).fillna(0).to_numpy(np.float64)
-        an = np.maximum(np.nan_to_num(_n(r, ncol, 0), nan=0), 0)
-        ar = _n(r, rcol, prior)
-        ar = np.where(np.isfinite(ar), ar, prior)
-        cumulative_success = _rounded_cumulative_count(an, ar)
-        sn = np.maximum(an - hn, 0.0)
-        ss = np.clip(cumulative_success - hs, 0.0, sn)
-        raw = np.divide(ss, sn, out=np.full(len(r), prior, np.float64), where=sn > 0)
-        for k in [40.0, 80.0, 160.0]:
-            z[f"gseason__{prefix}_rate_k{int(k)}"] = ((ss + k * prior) / (sn + k)).astype(np.float32)
-        z[f"gseason__{prefix}_raw"] = raw.astype(np.float32)
-        z[f"gseason__{prefix}_log_n"] = np.log1p(sn).astype(np.float32)
-        z[f"gseason__{prefix}_reliability"] = (sn / (sn + kn)).astype(np.float32)
-        z[f"gseason__{prefix}_minus_career"] = (raw - ar).astype(np.float32)
-
-    one("pitcher_id", "asof_pitcher_n", "asof_pitcher_success_rate", "pitcher", 80.0)
-    one("batter_id", "asof_batter_n", "asof_batter_success_rate", "batter", 100.0)
-    z["gseason__pitcher_minus_batter_k80"] = (
-        z["gseason__pitcher_rate_k80"] - z["gseason__batter_rate_k80"]
-    ).astype(np.float32)
-
-    ids = r["pitcher_id"]
-    an = np.maximum(np.nan_to_num(_n(r, "asof_pitcher_n", 0), nan=0), 0)
-    base_n = ids.map(bank["pitcher_component_base_n"]).fillna(0).to_numpy(np.float64)
-    win_n = np.maximum(an - base_n, 0.0)
-    comp = {}
-    for c in P_COMPONENT_RATES:
-        pr = float(bank["component_priors"].get(c, 0.5))
-        rr = _n(r, c, pr)
-        rr = np.where(np.isfinite(rr), rr, pr)
-        cum = _rounded_cumulative_count(an, rr)
-        base = ids.map(bank["pitcher_component_base"].get(c, {})).fillna(0).to_numpy(np.float64)
-        wc = np.clip(cum - base, 0.0, win_n)
-        comp[c] = ((wc + 60.0 * pr) / (win_n + 60.0)).astype(np.float32)
-    z["gseason__pitcher_component_log_n"] = np.log1p(win_n).astype(np.float32)
-    z["gseason__pitcher_component_reliability"] = (win_n / (win_n + 60.0)).astype(np.float32)
-    z["gseason__pitcher_strike_rate"] = comp["asof_pitcher_strike_rate"]
-    z["gseason__pitcher_ball_rate"] = comp["asof_pitcher_ball_rate"]
-    z["gseason__pitcher_strike_ball_margin"] = (
-        comp["asof_pitcher_strike_rate"] - comp["asof_pitcher_ball_rate"]
-    ).astype(np.float32)
-    z["gseason__pitcher_middle_rate"] = comp["asof_pitcher_middle_rate"]
-    z["gseason__pitcher_reverse_rate"] = comp["asof_pitcher_reverse_rate"]
-    fast = np.clip(comp["asof_pitcher_fastball_rate"], 1e-6, 1)
-    brk = np.clip(comp["asof_pitcher_breaking_rate"], 1e-6, 1)
-    off = np.clip(comp["asof_pitcher_offspeed_rate"], 1e-6, 1)
-    sm = np.maximum(fast + brk + off, 1e-6)
-    fast = fast / sm
-    brk = brk / sm
-    off = off / sm
-    z["gseason__pitcher_fastball_rate"] = fast.astype(np.float32)
-    z["gseason__pitcher_breaking_rate"] = brk.astype(np.float32)
-    z["gseason__pitcher_offspeed_rate"] = off.astype(np.float32)
-    z["gseason__pitcher_pitchmix_entropy"] = (
-        -(fast * np.log(fast) + brk * np.log(brk) + off * np.log(off))
-    ).astype(np.float32)
-
-    bids = r["batter_id"]
-    ban = np.maximum(np.nan_to_num(_n(r, "asof_batter_n", 0), nan=0), 0)
-    bbase_n = bids.map(bank["batter_component_base_n"]).fillna(0).to_numpy(np.float64)
-    bwin = np.maximum(ban - bbase_n, 0.0)
-    c = "asof_batter_middle_rate"
-    pr = float(bank["component_priors"].get(c, 0.5))
-    rr = _n(r, c, pr)
-    rr = np.where(np.isfinite(rr), rr, pr)
-    cum = _rounded_cumulative_count(ban, rr)
-    base = bids.map(bank["batter_component_base"].get(c, {})).fillna(0).to_numpy(np.float64)
-    wc = np.clip(cum - base, 0.0, bwin)
-    bmid = ((wc + 80.0 * pr) / (bwin + 80.0)).astype(np.float32)
-    z["gseason__batter_middle_rate"] = bmid
-    z["gseason__batter_middle_minus_pitcher_middle"] = (
-        bmid - z["gseason__pitcher_middle_rate"]
-    ).astype(np.float32)
-
-    assert z.shape[1] == EXPECTED_DIMS["gseason"], z.shape
-    return z
-
-
-def year_state(screen: pd.DataFrame, rows: pd.DataFrame, year: int):
-    """notebook cell 4 year_state. bank 는 season < year 의 공식 train 만 사용한다."""
-    selfx = build_self_state(rows.drop(columns=[TARGET], errors="ignore"))
-    hist = screen.loc[screen[SEASON_COL].lt(int(year)), BANK_COLS]
-    bank = fit_global_season_bank(hist, int(year))
-    gx = transform_global_season(bank, rows.drop(columns=[TARGET], errors="ignore"))
-    assert len(selfx) == len(gx) == len(rows)
-    del hist
-    return selfx.reset_index(drop=True), gx.reset_index(drop=True), bank
-
-
-def build_exact_asof_state(screen: pd.DataFrame, rows: pd.DataFrame, year: int) -> pd.DataFrame:
-    """EXACT_ASOF_STATE (62열). notebook cell 7 / cell 16 exact_adapter_block."""
-    sx, gx, _ = year_state(screen, rows, year)
-    out = pd.concat([sx.add_prefix("exact__"), gx.add_prefix("exact__")], axis=1)
-    out = out.replace([np.inf, -np.inf], np.nan).fillna(0).astype(np.float32)
-    assert out.shape[1] == EXPECTED_DIMS["exact_asof_state"], out.shape
-    return out
-
-
-# =========================================================
-# Phase 2 — engineered / categorical (notebook cell 4)
-# =========================================================
-
-
-def add_eng(frame: pd.DataFrame) -> pd.DataFrame:
-    x = frame.copy()
-    x["eng_recent35"] = (
-        0.5 * pd.to_numeric(x.asof_pitcher_prev1_game_success_rate, errors="coerce")
-        + 0.3 * pd.to_numeric(x.asof_pitcher_prev3_game_success_rate, errors="coerce")
-        + 0.2 * pd.to_numeric(x.asof_pitcher_prev5_game_success_rate, errors="coerce")
-    )
-    x["eng_recent_delta"] = x.eng_recent35 - pd.to_numeric(
-        x.asof_pitcher_success_rate, errors="coerce"
-    )
-    x["eng_sb"] = pd.to_numeric(x.asof_pitcher_strike_rate, errors="coerce") - pd.to_numeric(
-        x.asof_pitcher_ball_rate, errors="coerce"
-    )
-    x["eng_same"] = (x.pitcher_hand.astype(str) == x.batter_hand.astype(str)).astype(np.float32)
-    x["eng_close"] = (
-        pd.to_numeric(x.score_diff_pitcher_team, errors="coerce").abs() <= 1
-    ).astype(np.float32)
-    x["eng_late"] = (pd.to_numeric(x.inning, errors="coerce") >= 7).astype(np.float32)
-    return x
-
-
-def encode_cats(source, target, cats=None, prefix="code_"):
-    """범주 level 은 source(공식 train) 에서만 만든다. 미등장은 -1."""
-    cats = CAT_SMALL if cats is None else cats
-    A = pd.DataFrame(index=np.arange(len(source)))
-    B = pd.DataFrame(index=np.arange(len(target)))
-    maps = {}
-    for c in cats:
-        s = source[c].astype("string").fillna("<NA>").astype(str)
-        levels = pd.Index(s.unique())
-        mp = {v: i for i, v in enumerate(levels)}
-        maps[c] = mp
-        A[prefix + c] = s.map(mp).astype(np.float32)
-        B[prefix + c] = (
-            target[c].astype("string").fillna("<NA>").astype(str).map(mp).fillna(-1).astype(np.float32)
-        )
-    return A, B, maps
-
-
-def simple_pair(source, target):
-    s = add_eng(source)
-    t = add_eng(target)
-    cols = RAWNUM + ENG_COLS
-    A = s[cols].apply(pd.to_numeric, errors="coerce").reset_index(drop=True)
-    B = t[cols].apply(pd.to_numeric, errors="coerce").reset_index(drop=True)
-    ca, cb, _ = encode_cats(s, t)
-    return (
-        pd.concat([A, ca], axis=1).astype(np.float32),
-        pd.concat([B, cb], axis=1).astype(np.float32),
-    )
-
-
-# =========================================================
-# Phase 2 — EB lookup helpers (notebook cell 7)
-# =========================================================
-
-
-def _ctx_frame(frame: pd.DataFrame) -> pd.DataFrame:
-    x = frame.copy()
-    x["v15_count"] = x["balls_before"].astype(str) + "_" + x["strikes_before"].astype(str)
-    x["v15_inning_phase"] = (
-        pd.cut(
-            pd.to_numeric(x["inning"], errors="coerce"),
-            [-np.inf, 3, 6, 9, np.inf],
-            labels=["early", "middle", "late", "extra"],
-        ).astype(str)
-    )
-    x["v15_pressure"] = np.where(
-        (x["balls_before"] == 3) & (x["strikes_before"] == 2),
-        "full",
-        np.where(
-            x["balls_before"] == 3,
-            "three_ball",
-            np.where(x["strikes_before"] == 2, "two_strike", "normal"),
-        ),
-    )
-    x["v15_runners"] = np.where(
-        pd.to_numeric(x["num_runners_on"], errors="coerce").fillna(0) > 0, "on", "empty"
-    )
-    x["v15_li_bucket"] = (
-        pd.cut(
-            pd.to_numeric(x["li"], errors="coerce"),
-            [-np.inf, 0.7, 1.5, np.inf],
-            labels=["low", "mid", "high"],
-        ).astype(str)
-    )
-    return x
-
-
-def _lookup(table, rows, keys, field, default=0.0):
-    if len(keys) == 1:
-        s = table.set_index(keys[0])[field]
-        return rows[keys[0]].map(s).fillna(default).to_numpy(np.float32)
-    idx = pd.MultiIndex.from_frame(rows[keys])
-    s = table.set_index(keys)[field]
-    return s.reindex(idx).fillna(default).to_numpy(np.float32)
-
-
-def _eb_table(history, keys, parent_keys=None, strength=40.0, parent_strength=80.0):
-    h = history
-    league = float(h[TARGET].mean())
-    g = h.groupby(keys, sort=False)[TARGET].agg(["sum", "size"]).reset_index()
-    if parent_keys is None:
-        g["parent"] = league
-    else:
-        pg = h.groupby(parent_keys, sort=False)[TARGET].agg(["sum", "size"]).reset_index()
-        pg["parent_rate"] = (pg["sum"] + parent_strength * league) / (pg["size"] + parent_strength)
-        g = g.merge(pg[parent_keys + ["parent_rate"]], on=parent_keys, how="left")
-        g["parent"] = g["parent_rate"].fillna(league)
-    g["rate"] = (g["sum"] + strength * g["parent"]) / (g["size"] + strength)
-    g["reliability"] = g["size"] / (g["size"] + strength)
-    g["delta"] = g["rate"] - g["parent"]
-    g["log_n"] = np.log1p(g["size"])
-    return g[keys + ["rate", "reliability", "delta", "log_n"]]
-
-
-def _table_features(table, rows, keys, prefix, fields=("rate", "reliability", "delta", "log_n")):
-    z = pd.DataFrame(index=np.arange(len(rows)))
-    for f in fields:
-        z[prefix + "__" + f] = _lookup(table, rows, keys, f, 0.0)
-    return z
-
-
-# =========================================================
-# Phase 2 — PITCHER_CONDITIONAL (21열)
-# =========================================================
-
-
-def make_pc_specs(screen: pd.DataFrame, source_year: int) -> list:
-    """직전 1시즌(source_year) 의 공식 train 라벨로만 EB 표를 만든다."""
-    h = _ctx_frame(screen.loc[screen[SEASON_COL].eq(int(source_year))].reset_index(drop=True))
-    specs = []
-    for ctx, strength in PC_CONTEXTS:
-        table = _eb_table(h, ["pitcher_id", ctx], ["pitcher_id"], strength)
-        specs.append({"ctx": ctx, "prefix": "pc__" + ctx, "table": table})
-    del h
-    gc.collect()
-    return specs
-
-
-def transform_pc_specs(specs: list, rows: pd.DataFrame) -> pd.DataFrame:
-    r = _ctx_frame(rows.reset_index(drop=True))
-    parts = []
-    for spec in specs:
-        z = _table_features(
-            spec["table"], r, ["pitcher_id", spec["ctx"]], spec["prefix"],
-            ("rate", "reliability", "delta"),
-        )
-        parts.append(z)
-    out = pd.concat(parts, axis=1).astype(np.float32)
-    del r
-    assert out.shape[1] == EXPECTED_DIMS["pitcher_conditional"], out.shape
-    return out
-
-
-def build_pitcher_conditional(screen: pd.DataFrame, source_year: int, target_rows: pd.DataFrame):
-    specs = make_pc_specs(screen, source_year)
-    return transform_pc_specs(specs, target_rows), specs
-
-
-# =========================================================
-# Phase 2 — 미투입 블록 (계산만 수행, 모델 입력 제외)
-# =========================================================
-
-
-def build_unused_blocks_for_audit(screen: pd.DataFrame, source_year: int,
-                                  target_rows: pd.DataFrame) -> dict:
-    """notebook cell 7 build_latest_history_blocks 중 선택되지 않은 3블록.
-
-    V18 원본은 이 3개를 계산하지만 DEPLOY_SELECTED_BLOCKS 에 포함하지 않는다.
-    reproduction 완전성을 위해 계산은 하되, 모델 입력에는 절대 넣지 않는다.
-    """
-    if not REPRO_BUILD_UNUSED_BLOCKS:
-        return {}
-
-    h = _ctx_frame(screen.loc[screen[SEASON_COL].eq(int(source_year))].reset_index(drop=True))
-    r = _ctx_frame(target_rows.reset_index(drop=True))
-    out = {}
-
-    # CROSS_DOMAIN_PROFILE
-    xd = []
-    for ent, tag in [("pitcher_id", "p"), ("batter_id", "b")]:
-        tg = _eb_table(h, [ent], None, 80.0)
-        td = _eb_table(h, [ent, "domain3"], ["domain3"], 60.0)
-        a = _table_features(tg, r, [ent], f"xd__{tag}_global")
-        b = _table_features(td, r, [ent, "domain3"], f"xd__{tag}_domain")
-        b[f"xd__{tag}_domain_minus_global"] = (
-            b[f"xd__{tag}_domain__rate"].to_numpy() - a[f"xd__{tag}_global__rate"].to_numpy()
-        )
-        b[f"xd__{tag}_transfer_confidence"] = (
-            b[f"xd__{tag}_domain_minus_global"].to_numpy()
-            * b[f"xd__{tag}_domain__reliability"].to_numpy()
-        )
-        xd += [a, b]
-    out["CROSS_DOMAIN_PROFILE"] = pd.concat(xd, axis=1).astype(np.float32)
-
-    # BATTER_CONDITIONAL
-    bc = []
-    for ctx, strength in [("pitcher_hand", 35.0), ("v15_count", 35.0), ("domain3", 45.0)]:
-        t = _eb_table(h, ["batter_id", ctx], ["batter_id"], strength)
-        bc.append(_table_features(t, r, ["batter_id", ctx], f"bc__{ctx}",
-                                  ("rate", "reliability", "delta")))
-    out["BATTER_CONDITIONAL"] = pd.concat(bc, axis=1).astype(np.float32)
-
-    # ROLE_DEPLOYMENT
-    rg = (
-        h.groupby("pitcher_id", sort=False)
-        .agg(
-            role_n=("inning", "size"),
-            role_inning_mean=("inning", "mean"),
-            role_inning_std=("inning", "std"),
-            role_li_mean=("li", "mean"),
-            role_li_std=("li", "std"),
-            role_late_share=("inning", lambda s: float((s >= 7).mean())),
-            role_highli_share=("li", lambda s: float((s >= 1.5).mean())),
-        )
+    stats = (
+        history
+        .groupby(
+            ["pitcher_id", SEASON_COL],
+            sort=False,
+            dropna=False,
+        )[TARGET]
+        .agg(["size", "sum"])
         .reset_index()
-    )
-    rd = (
-        h.groupby(["pitcher_id", "domain3"], sort=False)
-        .agg(
-            drole_n=("inning", "size"),
-            drole_inning_mean=("inning", "mean"),
-            drole_inning_std=("inning", "std"),
-            drole_late_share=("inning", lambda s: float((s >= 7).mean())),
-        )
-        .reset_index()
-    )
-    t = r[["pitcher_id", "domain3", "inning", "li"]].copy()
-    t["_i"] = np.arange(len(t))
-    t = t.merge(rg, on="pitcher_id", how="left").merge(
-        rd, on=["pitcher_id", "domain3"], how="left"
-    ).sort_values("_i")
-    role = pd.DataFrame(index=np.arange(len(r)))
-    im = t.role_inning_mean.fillna(float(h.inning.mean()))
-    isd = t.role_inning_std.fillna(2.0).clip(lower=0.5)
-    lm = t.role_li_mean.fillna(float(h.li.mean()))
-    ls = t.role_li_std.fillna(1.0).clip(lower=0.2)
-    role["role__log_n"] = np.log1p(t.role_n.fillna(0))
-    role["role__inning_z"] = (t.inning - im) / isd
-    role["role__inning_abs_z"] = np.abs(role["role__inning_z"])
-    role["role__li_z"] = (t.li - lm) / ls
-    role["role__li_abs_z"] = np.abs(role["role__li_z"])
-    role["role__late_surprise"] = (t.inning >= 7).astype(float) - t.role_late_share.fillna(0.3)
-    role["role__highli_surprise"] = (t.li >= 1.5).astype(float) - t.role_highli_share.fillna(0.2)
-    dim = t.drole_inning_mean.fillna(im)
-    disd = t.drole_inning_std.fillna(isd).clip(lower=0.5)
-    role["role__domain_log_n"] = np.log1p(t.drole_n.fillna(0))
-    role["role__domain_inning_abs_z"] = np.abs((t.inning - dim) / disd)
-    role["role__domain_late_surprise"] = (t.inning >= 7).astype(float) - t.drole_late_share.fillna(
-        t.role_late_share
-    ).fillna(0.3)
-    out["ROLE_DEPLOYMENT"] = role.replace([np.inf, -np.inf], np.nan).fillna(0).astype(np.float32)
-
-    for k, v in out.items():
-        assert len(v) == len(target_rows) and not v.columns.duplicated().any()
-        assert np.isfinite(v.to_numpy(float)).all(), k
-    assert set(out) == UNUSED_BLOCK_NAMES, set(out)
-    del h, r
-    gc.collect()
-    return out
-
-
-# =========================================================
-# Phase 2 — adapter matrix (128열)
-# =========================================================
-
-
-def fit_adapter_prep(map_rows: pd.DataFrame) -> dict:
-    m = add_eng(map_rows.reset_index(drop=True))
-    cols = ADAPTER_RAWNUM + ENG_COLS
-    med = m[cols].apply(pd.to_numeric, errors="coerce").median().fillna(0.0).to_dict()
-    maps = {}
-    for c in CAT_SMALL:
-        s = m[c].astype("string").fillna("<NA>").astype(str)
-        maps[c] = {v: i for i, v in enumerate(pd.Index(s.unique()))}
-    del m
-    return {"cols": cols, "med": med, "maps": maps}
-
-
-def transform_adapter(prep: dict, rows: pd.DataFrame, base_pred) -> pd.DataFrame:
-    r = add_eng(rows.reset_index(drop=True))
-    A = r[prep["cols"]].apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan)
-    for c in prep["cols"]:
-        A[c] = A[c].fillna(float(prep["med"].get(c, 0.0))).astype(np.float32)
-    for c, mp in prep["maps"].items():
-        A["code_" + c] = (
-            r[c].astype("string").fillna("<NA>").astype(str).map(mp).fillna(-1).astype(np.float32)
-        )
-    A["base_pred"] = np.asarray(base_pred, dtype=np.float32)
-    assert len(A) == len(rows) and np.isfinite(A.to_numpy(float)).all()
-    assert A.shape[1] == EXPECTED_DIMS["adapter_base"], A.shape
-    del r
-    return A
-
-
-def build_adapter_matrix(adapter_base: pd.DataFrame, pitcher_conditional: pd.DataFrame,
-                         exact_asof: pd.DataFrame,
-                         unused_blocks: dict | None = None) -> pd.DataFrame:
-    """V18 원본 결합 순서: adapter_base | PITCHER_CONDITIONAL | EXACT_ASOF_STATE."""
-    X = pd.concat(
-        [
-            adapter_base.reset_index(drop=True),
-            pitcher_conditional.reset_index(drop=True),
-            exact_asof.reset_index(drop=True),
-        ],
-        axis=1,
-    )
-    assert not X.columns.duplicated().any()
-    assert np.isfinite(X.to_numpy(float)).all()
-    assert X.shape[1] == EXPECTED_DIMS["adapter_matrix"], X.shape
-
-    # 미투입 3블록이 실제 모델 입력에 절대 포함되지 않음을 검증한다.
-    if unused_blocks:
-        cols = set(X.columns)
-        for name, blk in unused_blocks.items():
-            leaked = cols & set(blk.columns)
-            assert not leaked, f"unused block {name} leaked into adapter matrix: {sorted(leaked)}"
-    return X
-
-
-# =========================================================
-# Phase 2 — V18 STABLE (25열)
-# =========================================================
-
-
-def _v18_pressure_frame(frame: pd.DataFrame) -> pd.DataFrame:
-    r = frame.copy()
-    balls = pd.to_numeric(r["balls_before"], errors="coerce").fillna(0).astype(int)
-    strikes = pd.to_numeric(r["strikes_before"], errors="coerce").fillna(0).astype(int)
-    r["v18_pressure"] = np.where(
-        (balls == 3) & (strikes == 2),
-        "full",
-        np.where(balls == 3, "3ball", np.where(strikes == 2, "2strike", "normal")),
-    )
-    r["v18_pressure_bhand"] = r["v18_pressure"].astype(str) + "|" + r["batter_hand"].astype(str)
-    return r
-
-
-def _v18_weighted_conditional_table(history, ctx, strength, cutoff_year):
-    h = _v18_pressure_frame(history.reset_index(drop=True))
-    h["_w"] = np.power(
-        V18_DECAY, np.maximum(int(cutoff_year) - 1 - h[SEASON_COL].astype(int), 0)
-    ).astype(np.float64)
-    h["_wy"] = h["_w"] * pd.to_numeric(h[TARGET], errors="coerce").to_numpy(np.float64)
-    mu = float(np.average(h[TARGET].to_numpy(np.float64), weights=h["_w"]))
-    pg = h.groupby("pitcher_id", sort=False).agg(sw=("_w", "sum"), sy=("_wy", "sum")).reset_index()
-    pg["parent_rate"] = (pg["sy"] + V18_PARENT_STRENGTH * mu) / (pg["sw"] + V18_PARENT_STRENGTH)
-    g = (
-        h.groupby(["pitcher_id", ctx], sort=False)
-        .agg(sw=("_w", "sum"), sy=("_wy", "sum"))
-        .reset_index()
-        .merge(pg[["pitcher_id", "parent_rate"]], on="pitcher_id", how="left")
-    )
-    g["rate"] = (g["sy"] + float(strength) * g["parent_rate"]) / (g["sw"] + float(strength))
-    g["delta"] = g["rate"] - g["parent_rate"]
-    g["reliability"] = g["sw"] / (g["sw"] + float(strength))
-    del h
-    return g[["pitcher_id", ctx, "delta", "reliability"]]
-
-
-def build_v18_stable_specs(screen: pd.DataFrame, cutoff_year: int) -> list:
-    """cutoff_year 직전 최대 3시즌의 공식 train 만 사용한다."""
-    lo = max(int(screen[SEASON_COL].min()), int(cutoff_year) - V18_HISTORY_YEARS)
-    h = screen.loc[
-        screen[SEASON_COL].lt(int(cutoff_year)) & screen[SEASON_COL].ge(lo)
-    ].reset_index(drop=True)
-    if h.empty:
-        raise RuntimeError(f"no stable history for cutoff {cutoff_year}")
-    specs = []
-    for ctx, strength, prefix in [
-        ("batter_hand", V18_HAND_STRENGTH, "stable__batter_hand"),
-        ("v18_pressure_bhand", V18_PRESSURE_HAND_STRENGTH, "stable__pressure_bhand"),
-    ]:
-        specs.append(
-            {
-                "ctx": ctx,
-                "prefix": prefix,
-                "table": _v18_weighted_conditional_table(h, ctx, strength, cutoff_year),
+        .rename(
+            columns={
+                "size": "n",
+                "sum": "success",
             }
         )
-    del h
-    gc.collect()
-    return specs
+    )
+
+    stats[SEASON_COL] = pd.to_numeric(
+        stats[SEASON_COL],
+        errors="raise",
+    ).astype(int)
+    stats["n"] = stats["n"].astype(np.float64)
+    stats["success"] = stats["success"].astype(np.float64)
+
+    return stats
 
 
-def transform_v18_stable_specs(specs: list, rows: pd.DataFrame) -> pd.DataFrame:
-    r = _v18_pressure_frame(rows.reset_index(drop=True))
-    z = pd.DataFrame(index=np.arange(len(r)))
-    for spec in specs:
-        de = _lookup(spec["table"], r, ["pitcher_id", spec["ctx"]], "delta", 0.0).astype(np.float32)
-        re = _lookup(spec["table"], r, ["pitcher_id", spec["ctx"]], "reliability", 0.0).astype(
-            np.float32
-        )
-        z[spec["prefix"] + "__delta"] = de
-        z[spec["prefix"] + "__weighted_delta"] = (de * re).astype(np.float32)
-        z[spec["prefix"] + "__reliability"] = re
-    balls = pd.to_numeric(r["balls_before"], errors="coerce").fillna(0).astype(int).to_numpy()
-    strikes = pd.to_numeric(r["strikes_before"], errors="coerce").fillna(0).astype(int).to_numpy()
-    for b in range(4):
-        z[f"ctx__ball_{b}"] = (balls == b).astype(np.float32)
-    for s in range(3):
-        z[f"ctx__strike_{s}"] = (strikes == s).astype(np.float32)
-    for b in range(4):
-        for s in range(3):
-            z[f"ctx__count_{b}_{s}"] = ((balls == b) & (strikes == s)).astype(np.float32)
-    z = z.replace([np.inf, -np.inf], np.nan).fillna(0).astype(np.float32)
-    assert len(z) == len(rows) and not z.columns.duplicated().any()
-    assert np.isfinite(z.to_numpy(float)).all()
-    assert z.shape[1] == EXPECTED_DIMS["v18_stable"], z.shape
-    del r
-    return z
-
-
-# =========================================================
-# Phase 3 — temporal / domain drift (notebook cell 5)
-# =========================================================
-
-
-class DomainMeans:
-    """V18 원본은 전 시즌 groupby 로 DOMAIN_MEANS 를 만든 뒤 source_year 이하만 읽는다.
-
-    §14 정책에 따라 계산 방식은 바꾸지 않고, 읽기 시점에 season <= source_year 인지
-    assert 한다. 접근 이력을 남겨 미래 시즌 참조 0건임을 산출물로 증명한다.
+def add_pitcher_exact_asof_features(
+    rows: pd.DataFrame,
+    pitcher_season_stats: pd.DataFrame,
+) -> pd.DataFrame:
     """
+    각 row를 독립적으로 변환한다.
 
-    def __init__(self, screen: pd.DataFrame):
-        self.table = screen.groupby([SEASON_COL, "domain3"])[TARGET].mean().unstack()
-        self.access_log: list[tuple[int, str, int]] = []
+    official cumulative ASOF에서
+    'row season보다 과거인 완료 시즌 train 통계'를 빼서
+    현재 시즌 누적 상태를 복원한다.
 
-    def value(self, season: int, domain: str, source_year: int) -> float:
-        assert int(season) <= int(source_year), (
-            f"DOMAIN_MEANS future access: season={season} > source_year={source_year}"
-        )
-        self.access_log.append((int(season), str(domain), int(source_year)))
-        return float(self.table.loc[int(season), domain])
-
-    def trailing_core_slope(self, source_year: int) -> float:
-        s = self.table.loc[self.table.index <= int(source_year), "R_CORE"].dropna().tail(4)
-        assert len(s) == 0 or int(s.index.max()) <= int(source_year)
-        for yr in s.index:
-            self.access_log.append((int(yr), "R_CORE", int(source_year)))
-        if len(s) < 2:
-            return 0.0
-        return float(np.polyfit(s.index.to_numpy(float), s.to_numpy(float), 1)[0])
-
-    def max_accessed_season(self) -> int | None:
-        return max((a[0] for a in self.access_log), default=None)
-
-    def future_access_count(self) -> int:
-        return sum(1 for season, _, src in self.access_log if season > src)
-
-
-# =========================================================
-# Phase 3 — Layer 0 Anchor (notebook cell 5 fit_recent_base)
-# =========================================================
-
-
-def build_anchor(screen: pd.DataFrame, domain_means: DomainMeans, source_year: int,
-                 target_rows: pd.DataFrame, target_year: int, verbose: bool = True):
-    """3-모델 등가중 anchor. 가중치 최적화를 추가하지 않는다."""
-    _import_phase3_libs()
-
-    source = screen.loc[screen[SEASON_COL].eq(int(source_year))].reset_index(drop=True)
-    target = target_rows.reset_index(drop=True)
-    y = source[TARGET].to_numpy(np.float64)
-
-    ss, gs, _ = year_state(screen, source, source_year)
-    st, gt, _ = year_state(screen, target, target_year)
-    A0 = pd.concat(
-        [source[RAWNUM].apply(pd.to_numeric, errors="coerce").reset_index(drop=True), ss, gs],
-        axis=1,
-    )
-    B0 = pd.concat(
-        [target[RAWNUM].apply(pd.to_numeric, errors="coerce").reset_index(drop=True), st, gt],
-        axis=1,
-    )
-    ca, cb, exact_maps = encode_cats(source, target)
-    A = pd.concat([A0, ca], axis=1)
-    B = pd.concat([B0, cb], axis=1)
-    assert A.shape[1] == EXPECTED_DIMS["exact_lgb_features"], A.shape
-    exact_feature_cols = list(A.columns)
-
-    # 1) exact-ASOF binary LightGBM
-    cfg = BASE_CFG["exact_lgb"]
-    m1 = lgb.LGBMClassifier(objective="binary", verbosity=-1, n_jobs=N_JOBS, **cfg)
-    m1.fit(A, y)
-    p1 = m1.predict_proba(B)[:, 1]
-    del m1, A, B
-    gc.collect()
-
-    # 2) exact-ASOF Ridge — 범주 코드 의도적 제외
-    A = A0.copy()
-    B = B0.copy()
-    ridge_feature_cols = list(A0.columns)
-    assert A.shape[1] == EXPECTED_DIMS["ridge_features"], A.shape
-    del A0, B0, ss, gs, st, gt
-    gc.collect()
-    A = A.replace([np.inf, -np.inf], np.nan)
-    B = B.replace([np.inf, -np.inf], np.nan)
-    med = A.median().fillna(0.0)
-    A = A.fillna(med).to_numpy(np.float32)
-    B = B.fillna(med).to_numpy(np.float32)
-    mu = A.mean(0)
-    sd = A.std(0)
-    sd = np.where(sd > 1e-6, sd, 1.0)
-    A = np.clip((A - mu) / sd, -8, 8)
-    B = np.clip((B - mu) / sd, -8, 8)
-    m2 = Ridge(alpha=BASE_CFG["ridge_alpha"], solver="lsqr", max_iter=100, tol=1e-3)
-    m2.fit(A, y)
-    p2 = np.clip(m2.predict(B), 0.001, 0.999)
-    del m2, A, B
-    gc.collect()
-
-    # 3) domain-level trend-centered LightGBM
-    A, B = simple_pair(source, target)
-    assert A.shape[1] == EXPECTED_DIMS["trend_features"], A.shape
-    trend_feature_cols = list(A.columns)
-    source_dom = source.domain3.to_numpy()
-    target_dom = target.domain3.to_numpy()
-    slope = domain_means.trailing_core_slope(source_year)
-    base = np.array(
-        [domain_means.value(int(source_year), d, source_year) for d in source_dom],
-        dtype=np.float64,
-    )
-    prior = {
-        d: domain_means.value(int(source_year), d, source_year) + slope
-        for d in ["R_CORE", "R_ANCHOR", "F"]
+    다른 평가 row는 절대 사용하지 않는다.
+    """
+    required = {
+        SEASON_COL,
+        "pitcher_id",
+        "asof_pitcher_n",
+        "asof_pitcher_success_rate",
     }
-    bt = np.array([prior[d] for d in target_dom], dtype=np.float64)
-    cfg = BASE_CFG["trend_lgb"]
-    m3 = lgb.LGBMRegressor(objective="regression_l2", verbosity=-1, n_jobs=N_JOBS, **cfg)
-    m3.fit(A, y - base)
-    p3 = np.clip(bt + m3.predict(B), 0.001, 0.999)
-    del m3, A, B
-    gc.collect()
+    missing = sorted(required - set(rows.columns))
+    if missing:
+        raise KeyError(
+            f"Exact-ASOF 필수 컬럼 없음: {missing}"
+        )
 
-    p = (np.asarray(p1, float) + np.asarray(p2, float) + np.asarray(p3, float)) / 3.0
-    meta = {
-        "source_year": int(source_year),
-        "target_year": int(target_year),
-        "trend_slope": slope,
-        "trend_prior": prior,
-        "n_source": int(len(source)),
-        "n_target": int(len(target)),
-        "exact_feature_cols": exact_feature_cols,
-        "ridge_feature_cols": ridge_feature_cols,
-        "trend_feature_cols": trend_feature_cols,
-        "exact_cat_levels": {c: len(v) for c, v in exact_maps.items()},
-    }
-    if verbose:
-        print("  base meta", {k: meta[k] for k in
-                              ("source_year", "target_year", "trend_slope", "trend_prior")})
-    del source, target
-    gc.collect()
-    return (
-        np.clip(p, 0, 1),
-        {"exact_lgb": p1, "exact_ridge": p2, "trend_center_lgb": p3},
-        meta,
+    out = rows.copy()
+
+    for col in EXACT_COLS:
+        out[col] = np.nan
+
+    row_season = pd.to_numeric(
+        out[SEASON_COL],
+        errors="raise",
+    ).astype(int)
+
+    stats = pitcher_season_stats.copy()
+    stats[SEASON_COL] = pd.to_numeric(
+        stats[SEASON_COL],
+        errors="raise",
+    ).astype(int)
+
+    for target_year in sorted(row_season.unique()):
+        mask = row_season == int(target_year)
+        part = out.loc[mask]
+
+        hist = stats.loc[
+            stats[SEASON_COL] < int(target_year)
+        ]
+
+        if len(hist):
+            hist_agg = (
+                hist
+                .groupby(
+                    "pitcher_id",
+                    sort=False,
+                    dropna=False,
+                )[["n", "success"]]
+                .sum()
+            )
+            hist_n = (
+                part["pitcher_id"]
+                .map(hist_agg["n"])
+                .fillna(0.0)
+                .to_numpy(dtype=np.float64)
+            )
+            hist_success = (
+                part["pitcher_id"]
+                .map(hist_agg["success"])
+                .fillna(0.0)
+                .to_numpy(dtype=np.float64)
+            )
+        else:
+            hist_n = np.zeros(len(part), dtype=np.float64)
+            hist_success = np.zeros(len(part), dtype=np.float64)
+
+        asof_n = (
+            pd.to_numeric(
+                part["asof_pitcher_n"],
+                errors="coerce",
+            )
+            .fillna(0.0)
+            .clip(lower=0.0)
+            .to_numpy(dtype=np.float64)
+        )
+
+        asof_rate = (
+            pd.to_numeric(
+                part["asof_pitcher_success_rate"],
+                errors="coerce",
+            )
+            .to_numpy(dtype=np.float64)
+        )
+
+        asof_success = asof_n * asof_rate
+
+        current_n = np.maximum(asof_n - hist_n, 0.0)
+        current_success = asof_success - hist_success
+
+        current_success = np.where(
+            np.isfinite(current_success),
+            np.clip(current_success, 0.0, current_n),
+            np.nan,
+        )
+
+        current_rate = np.full(
+            len(part),
+            np.nan,
+            dtype=np.float64,
+        )
+        valid_current = (
+            (current_n > 0.0)
+            & np.isfinite(current_success)
+        )
+        current_rate[valid_current] = (
+            current_success[valid_current]
+            / current_n[valid_current]
+        )
+
+        past_rate = np.full(
+            len(part),
+            np.nan,
+            dtype=np.float64,
+        )
+        valid_past = hist_n > 0.0
+        past_rate[valid_past] = (
+            hist_success[valid_past]
+            / hist_n[valid_past]
+        )
+
+        idx = part.index
+        out.loc[idx, "exact_pitcher_season_n"] = current_n
+        out.loc[idx, "exact_pitcher_season_logn"] = np.log1p(current_n)
+        out.loc[
+            idx,
+            "exact_pitcher_season_success_rate",
+        ] = current_rate
+        out.loc[
+            idx,
+            "exact_pitcher_past_success_rate",
+        ] = past_rate
+        out.loc[
+            idx,
+            "exact_pitcher_season_minus_past",
+        ] = current_rate - past_rate
+
+    return out
+
+
+# ============================================================
+# HB-EB
+# ============================================================
+
+def compute_hbeb_priors(
+    df_train: pd.DataFrame,
+    group_cols: list[str],
+    rate_col: str,
+):
+    """
+    canonical v003 HB-EB prior.
+    반드시 fold-train / final full-train에서만 추정한다.
+    """
+    rate = pd.to_numeric(
+        df_train[rate_col],
+        errors="coerce",
+    )
+
+    g_mu = float(rate.mean())
+    g_var = float(rate.var())
+
+    max_bernoulli_var = g_mu * (1.0 - g_mu)
+
+    if (
+        not np.isfinite(g_var)
+        or g_var <= 0.0
+        or g_var >= max_bernoulli_var
+    ):
+        g_var = max_bernoulli_var * 0.5
+
+    g_m = (max_bernoulli_var / g_var) - 1.0
+    g_alpha = g_mu * g_m
+    g_beta = (1.0 - g_mu) * g_m
+
+    tmp = df_train[group_cols].copy()
+    tmp["_rate_"] = rate
+
+    stats = (
+        tmp
+        .groupby(
+            group_cols,
+            dropna=False,
+        )["_rate_"]
+        .agg(["mean", "var", "count"])
+        .reset_index()
+    )
+
+    group_max_var = stats["mean"] * (1.0 - stats["mean"])
+
+    valid = (
+        stats["var"].notna()
+        & np.isfinite(stats["var"])
+        & (stats["var"] > 0.0)
+        & (stats["var"] < group_max_var)
+        & (stats["count"] >= 30)
+    )
+
+    stats["alpha"] = g_alpha
+    stats["beta"] = g_beta
+
+    if valid.any():
+        mu = stats.loc[valid, "mean"]
+        var = stats.loc[valid, "var"]
+        m = (mu * (1.0 - mu) / var) - 1.0
+
+        stats.loc[valid, "alpha"] = mu * m
+        stats.loc[valid, "beta"] = (1.0 - mu) * m
+
+    prior_df = stats[
+        group_cols + ["alpha", "beta"]
+    ].copy()
+
+    return prior_df, (float(g_alpha), float(g_beta))
+
+
+def apply_hbeb(
+    df: pd.DataFrame,
+    group_cols: list[str],
+    n_col: str,
+    rate_col: str,
+    prior_df: pd.DataFrame,
+    global_prior,
+):
+    """
+    저장된 prior lookup + 해당 row의 n/rate만 사용.
+    """
+    lookup = (
+        df[group_cols]
+        .reset_index(drop=True)
+        .merge(
+            prior_df,
+            on=group_cols,
+            how="left",
+            sort=False,
+        )
+    )
+
+    alpha = (
+        lookup["alpha"]
+        .fillna(global_prior[0])
+        .to_numpy(dtype=np.float64)
+    )
+    beta = (
+        lookup["beta"]
+        .fillna(global_prior[1])
+        .to_numpy(dtype=np.float64)
+    )
+
+    n = (
+        pd.to_numeric(
+            df[n_col],
+            errors="coerce",
+        )
+        .fillna(0.0)
+        .clip(lower=0.0)
+        .to_numpy(dtype=np.float64)
+    )
+    rate = (
+        pd.to_numeric(
+            df[rate_col],
+            errors="coerce",
+        )
+        .fillna(0.0)
+        .clip(lower=0.0, upper=1.0)
+        .to_numpy(dtype=np.float64)
+    )
+
+    success_count = n * rate
+    denominator = n + alpha + beta
+
+    return np.divide(
+        success_count + alpha,
+        denominator,
+        out=np.full(len(df), np.nan, dtype=np.float64),
+        where=denominator > 0.0,
     )
 
 
-def build_training_target(y, p_base):
-    """Layer 1 residual target. logit 변환 없음, 확률공간 순수 차이."""
-    return np.asarray(y, np.float64) - np.asarray(p_base, np.float64)
+def add_hbeb_features(
+    df_train_for_prior: pd.DataFrame,
+    df_apply: pd.DataFrame,
+    features: list[str],
+):
+    out = df_apply.copy()
+    final_features = list(features)
+    priors = {}
+
+    for cfg in HBEB_CONFIGS:
+        prior_df, global_prior = compute_hbeb_priors(
+            df_train=df_train_for_prior,
+            group_cols=cfg["group_cols"],
+            rate_col=cfg["rate_col"],
+        )
+
+        out[cfg["new_col"]] = apply_hbeb(
+            df=out,
+            group_cols=cfg["group_cols"],
+            n_col=cfg["n_col"],
+            rate_col=cfg["rate_col"],
+            prior_df=prior_df,
+            global_prior=global_prior,
+        )
+
+        if cfg["rate_col"] in final_features:
+            final_features.remove(cfg["rate_col"])
+
+        if cfg["new_col"] not in final_features:
+            final_features.append(cfg["new_col"])
+
+        priors[cfg["new_col"]] = {
+            "prior_df": prior_df,
+            "global_prior": global_prior,
+            "group_cols": list(cfg["group_cols"]),
+            "n_col": cfg["n_col"],
+            "rate_col": cfg["rate_col"],
+        }
+
+    return out, final_features, priors
 
 
-# =========================================================
-# 교차적합 분할 (notebook cell 6) — Phase 4 에서 사용, R1 gate 용으로 미리 검증
-# =========================================================
+def apply_existing_hbeb_priors(
+    df_apply: pd.DataFrame,
+    features: list[str],
+    priors: dict,
+):
+    out = df_apply.copy()
+    final_features = list(features)
+
+    for cfg in HBEB_CONFIGS:
+        info = priors[cfg["new_col"]]
+
+        out[cfg["new_col"]] = apply_hbeb(
+            df=out,
+            group_cols=info["group_cols"],
+            n_col=info["n_col"],
+            rate_col=info["rate_col"],
+            prior_df=info["prior_df"],
+            global_prior=info["global_prior"],
+        )
+
+        if cfg["rate_col"] in final_features:
+            final_features.remove(cfg["rate_col"])
+
+        if cfg["new_col"] not in final_features:
+            final_features.append(cfg["new_col"])
+
+    return out, final_features
 
 
-def pitcher_half(frame: pd.DataFrame, seed: int) -> np.ndarray:
-    pids = np.array(sorted(frame.pitcher_id.astype(str).unique()))
-    rng = np.random.default_rng(int(seed))
-    rng.shuffle(pids)
-    A = set(pids[: len(pids) // 2])
-    return np.where(frame.pitcher_id.astype(str).isin(A).to_numpy(), 0, 1).astype(np.int8)
+# ============================================================
+# Validation
+# ============================================================
 
-
-def surrogate_base_pred(n: int) -> np.ndarray:
-    """Phase 2 단독 실행용 결정적 base_pred 대체값.
-
-    lightgbm 없이도 adapter matrix 의 열 이름 / 열 순서 / dtype / 행 정렬을
-    reference 와 비교할 수 있게 한다. 행마다 값이 다르므로 정렬 버그를 잡아낸다.
-    Phase 3 에서는 실제 p_base 로 다시 만든다.
-    """
-    return (((np.arange(n) % 997) / 997.0) * 0.98 + 0.01).astype(np.float64)
-
-
-# =========================================================
-# Phase 4 — Layer 1 : V15 residual adapter (notebook cell 12 / 13)
-# =========================================================
-
-
-def one_adapter_crossfit_cfg(seed, X, y, base, frame, cfg):
-    """notebook cell 12 원본.
-
-    · 같은 seed 안에서 6개 모델(2 fold × 3 domain)이 동일한 random_state 를 공유한다.
-    · corr 은 (fold × domain) 조합으로 모든 행이 정확히 1회 채워진다.
-    · 반환값은 seed 단위로 clip 된 예측이다. 평균은 호출부에서 한다.
-    """
-    _import_phase4_libs()
-    fold = pitcher_half(frame, seed)
-    corr = np.zeros(len(frame), dtype=np.float64)
-    filled = np.zeros(len(frame), dtype=np.int8)  # 재현 무관 감사용
+def run_expanding_validation(
+    train: pd.DataFrame,
+    base_features: list[str],
+    cat_cols: list[str],
+):
     fold_rows = []
-    for target_fold in [0, 1]:
-        src = fold != target_fold
-        tgt = fold == target_fold
-        for d in ["R_CORE", "R_ANCHOR", "F"]:
-            tr = src & frame.domain3.eq(d).to_numpy()
-            te = tgt & frame.domain3.eq(d).to_numpy()
-            min_tr = 1000 if not SMOKE_MODE else 80
-            min_te = 500 if not SMOKE_MODE else 40
-            assert tr.sum() > min_tr and te.sum() > min_te, (d, tr.sum(), te.sum())
-            m = ExtraTreesRegressor(
-                n_jobs=N_JOBS, random_state=16200 + int(seed), **cfg
-            )
-            m.fit(X.loc[tr], (y - base)[tr])
-            corr[te] = m.predict(X.loc[te])
-            filled[te] += 1
-            del m
-            gc.collect()
-        pp = np.clip(base[tgt] + ADAPTER_SHRINK * corr[tgt], 0, 1)
-        fold_rows.append(
-            {
-                "seed": int(seed),
-                "target_fold": int(target_fold),
-                "n": int(tgt.sum()),
-                "base_bss": raw_bss(y[tgt], base[tgt]),
-                "adapted_bss": raw_bss(y[tgt], pp),
-                "gain": raw_bss(y[tgt], pp) - raw_bss(y[tgt], base[tgt]),
-            }
+    oof_frames = []
+    latest_final_features = None
+
+    base_plus_exact = list(base_features) + [
+        c for c in EXACT_COLS
+        if c not in base_features
+    ]
+
+    for cfg in EXPANDING_FOLDS:
+        fold = cfg["fold"]
+        train_seasons = cfg["train_seasons"]
+        val_year = cfg["validation_season"]
+
+        df_tr_raw = train.loc[
+            train[SEASON_COL].isin(train_seasons)
+        ].copy()
+
+        df_va_raw = train.loc[
+            train[SEASON_COL] == val_year
+        ].copy()
+
+        # ----------------------------------------------------
+        # Exact-ASOF
+        # fold-train label로 만든 완료 시즌 통계만 사용
+        # ----------------------------------------------------
+        pitcher_stats = build_pitcher_season_stats(df_tr_raw)
+
+        df_tr = add_pitcher_exact_asof_features(
+            df_tr_raw,
+            pitcher_stats,
         )
-    # 모든 행이 정확히 한 번씩 예측되었는가 (fold × domain 이 완전 분할인가)
-    assert filled.min() == 1 and filled.max() == 1, (
-        "corr coverage broken",
-        int(filled.min()), int(filled.max()),
-    )
-    return np.clip(base + ADAPTER_SHRINK * corr, 0, 1), fold_rows, corr
-
-
-def run_v15_oof(year, X, y, base, frame, verbose=True):
-    """notebook cell 13 v15_oof_year 원본.
-
-    seed 별로 clip 한 뒤 평균한다. 평균 후 clip 이 아니다.
-    """
-    preds = []
-    corrs = {}
-    seed_rows = []
-    all_fold_rows = []
-    for seed in CF_SEEDS:
-        t0 = time.time()
-        p, fold_rows, corr = one_adapter_crossfit_cfg(seed, X, y, base, frame, V15_CF_CFG)
-        preds.append(p)
-        corrs[int(seed)] = corr
-        all_fold_rows.extend(fold_rows)
-        row = {
-            "year": int(year),
-            "seed": int(seed),
-            "bss": raw_bss(y, p),
-            "gain_vs_base": raw_bss(y, p) - raw_bss(y, base),
-            "sec": round(time.time() - t0, 1),
-        }
-        seed_rows.append(row)
-        if verbose:
-            print(f"    {row}")
-        gc.collect()
-    consensus = np.mean(np.column_stack(preds), axis=1)
-    if verbose:
-        print(f"    V15 OOF CONSENSUS {year} {raw_bss(y, consensus):.2f}")
-    return consensus, preds, corrs, seed_rows, all_fold_rows
-
-
-# =========================================================
-# Phase 5 — Layer 2 : V18 temporal-stable conditional Ridge
-#                     (notebook cell 14 = PASS 2, cell 15 = 승격 gate)
-# =========================================================
-
-PHASE5_SOURCE_YEARS = [2020, 2021, 2022, 2023, 2024]
-PHASE5_TRANSITIONS = [2021, 2022, 2023, 2024]
-
-# Layer 2 는 v18_stable / bootstrap / month 집계에만 쓰이는 소수 컬럼만 필요하다.
-# 전체 rows 를 5개 연도치 들고 있지 않기 위한 슬림 프레임이며,
-# 값 동일성은 reference(전체 컬럼) 대비 R5 gate 로 실증한다.
-PHASE5_SLIM_COLS = ["pitcher_id", "batter_hand", "balls_before", "strikes_before",
-                    "domain3", "game_month"]
-
-
-def run_phase5(screen: pd.DataFrame, feature_dump_dir: Path, validation_dir: Path) -> dict:
-    """PASS 2. V15_OOF 는 Phase 4 산출물(npz)에서 읽는다.
-
-    fold 가 독립이 아니므로 연도별 subprocess 로 나눌 수 없다.
-    2021~2024 전이 각각이 직전 연도의 OOF 잔차를 필요로 한다.
-    """
-    _import_phase3_libs()
-
-    # ---------- 입력 적재 ----------
-    ROWS, Y, V15_OOF = {}, {}, {}
-    for y in PHASE5_SOURCE_YEARS:
-        rows = screen.loc[screen[SEASON_COL].eq(int(y))].reset_index(drop=True)
-        Y[y] = rows[TARGET].to_numpy(np.float64)
-        oof_path = feature_dump_dir / f"v15_oof_{y}.npz"
-        if not oof_path.exists():
-            raise FileNotFoundError(
-                f"Phase 5 는 Phase 4 산출물이 전부 필요하다. 없음: {oof_path}\n"
-                f"  V18_REPRO_PHASE=4 로 {PHASE5_SOURCE_YEARS} 를 모두 먼저 실행할 것."
-            )
-        z = np.load(oof_path)
-        V15_OOF[y] = z["v15_oof"].astype(np.float64)
-        assert len(V15_OOF[y]) == len(rows), (y, len(V15_OOF[y]), len(rows))
-        # guard: Phase 4 가 같은 행 집합을 봤는가
-        assert np.array_equal(z["target"].astype(np.float64), Y[y]), f"target mismatch {y}"
-        ROWS[y] = rows  # STABLE 생성 후 슬림으로 교체한다
-        del z
-
-    # ---------- STABLE 행렬 (notebook cell 14 앞부분) ----------
-    STABLE, STABLE_SPECS = {}, {}
-    for y in PHASE5_SOURCE_YEARS:
-        STABLE_SPECS[y] = build_v18_stable_specs(screen, y)
-        STABLE[y] = transform_v18_stable_specs(STABLE_SPECS[y], ROWS[y])
-        print(f"    stable matrix {y} {list(STABLE[y].shape)}")
-        ROWS[y] = ROWS[y][PHASE5_SLIM_COLS].copy()
-        gc.collect()
-
-    # ---------- PASS 2 : 전이별 Layer 2 (notebook cell 14) ----------
-    TEMPORAL_MODELS, TEMPORAL_ROWS, P18, CORR = {}, [], {}, {}
-    gamma_stress_rows = []
-    for target_year in PHASE5_TRANSITIONS:
-        source_year = target_year - 1
-        model = Ridge(alpha=V18_RIDGE_ALPHA, solver="lsqr", max_iter=200, tol=1e-5)
-        A = STABLE[source_year].to_numpy(np.float32)
-        B = STABLE[target_year].to_numpy(np.float32)
-        mu = A.mean(0)
-        sd = A.std(0)
-        sd = np.where(sd > 1e-6, sd, 1.0).astype(np.float32)
-        Az = np.clip((A - mu) / sd, -8, 8)
-        Bz = np.clip((B - mu) / sd, -8, 8)
-        resid = Y[source_year] - V15_OOF[source_year]
-        model.fit(Az, resid)
-        corr = np.asarray(model.predict(Bz), np.float64)
-        CORR[target_year] = corr
-        TEMPORAL_MODELS[target_year] = {
-            "model": model, "mu": mu.astype(np.float32), "sd": sd,
-            "source_year": source_year,
-        }
-        base = V15_OOF[target_year]
-        frame = ROWS[target_year]
-        core = frame.domain3.eq(V18_ROUTE_DOMAIN).to_numpy()
-        p = base.copy()
-        p[core] = np.clip(p[core] + V18_GAMMA * corr[core], 0, 1)
-        P18[target_year] = p
-        row = {
-            "source_year": source_year,
-            "target_year": target_year,
-            "v15_bss": raw_bss(Y[target_year], base),
-            "v18_bss": raw_bss(Y[target_year], p),
-            "gain": raw_bss(Y[target_year], p) - raw_bss(Y[target_year], base),
-            "core_gain": (raw_bss(Y[target_year][core], p[core])
-                          - raw_bss(Y[target_year][core], base[core])),
-        }
-        TEMPORAL_ROWS.append(row)
-        print(f"    {row}")
-        stress = {
-            g: raw_bss(Y[target_year],
-                       np.where(core, np.clip(base + g * corr, 0, 1), base))
-               - raw_bss(Y[target_year], base)
-            for g in V18_GAMMA_STRESS
-        }
-        print(f"    gamma stress {target_year} {stress}")
-        gamma_stress_rows.append({"target_year": target_year,
-                                  **{f"gamma_{g}": v for g, v in stress.items()}})
-        del A, B, Az, Bz
-        gc.collect()
-
-    temporal_df = pd.DataFrame(TEMPORAL_ROWS)
-    temporal_df.to_csv(validation_dir / "v18_strict_temporal_transfer.csv", index=False)
-    pd.DataFrame(gamma_stress_rows).to_csv(validation_dir / "gamma_stress.csv", index=False)
-
-    # ---------- 승격 gate (notebook cell 15) ----------
-    p15 = V15_OOF[VALID_YEAR]
-    p18 = P18[VALID_YEAR]
-    frame = ROWS[VALID_YEAR]
-    yy = Y[VALID_YEAR]
-    boot = pitcher_cluster_bootstrap_gain(
-        frame, yy, p18, p15, draws=3000 if not SMOKE_MODE else 200, seed=18018
-    )
-    print(f"    bootstrap V18 vs V15: {boot}")
-
-    month_rows = []
-    for mo in sorted(frame.game_month.unique()):
-        z = frame.game_month.eq(mo).to_numpy()
-        month_rows.append({
-            "month": int(mo), "n": int(z.sum()),
-            "v15": raw_bss(yy[z], p15[z]), "v18": raw_bss(yy[z], p18[z]),
-            "gain": raw_bss(yy[z], p18[z]) - raw_bss(yy[z], p15[z]),
-        })
-    month_df = pd.DataFrame(month_rows)
-    month_df.to_csv(validation_dir / "v18_months.csv", index=False)
-
-    early = frame.game_month.le(6).to_numpy()
-    late = frame.game_month.ge(7).to_numpy()
-    early_gain = raw_bss(yy[early], p18[early]) - raw_bss(yy[early], p15[early])
-    late_gain = raw_bss(yy[late], p18[late]) - raw_bss(yy[late], p15[late])
-    print(f"    early_gain {early_gain}  late_gain {late_gain}")
-
-    domain_rows = []
-    for d in ["R_CORE", "R_ANCHOR", "F"]:
-        z = frame.domain3.eq(d).to_numpy()
-        domain_rows.append({
-            "domain": d, "v15": raw_bss(yy[z], p15[z]), "v18": raw_bss(yy[z], p18[z]),
-            "gain": raw_bss(yy[z], p18[z]) - raw_bss(yy[z], p15[z]),
-        })
-    domain_df = pd.DataFrame(domain_rows)
-    domain_df.to_csv(validation_dir / "v18_domains.csv", index=False)
-
-    g23 = float(temporal_df.loc[temporal_df.target_year.eq(2023), "gain"].iloc[0])
-    g24 = float(temporal_df.loc[temporal_df.target_year.eq(2024), "gain"].iloc[0])
-    core24 = float(domain_df.loc[domain_df.domain.eq("R_CORE"), "gain"].iloc[0])
-    stress_ok = True
-    for ty in [2023, 2024]:
-        base = V15_OOF[ty]
-        corr = CORR[ty]
-        core = ROWS[ty].domain3.eq(V18_ROUTE_DOMAIN).to_numpy()
-        for g in (0.65, 0.75, 0.85):
-            pp = base.copy()
-            pp[core] = np.clip(pp[core] + g * corr[core], 0, 1)
-            stress_ok &= (raw_bss(Y[ty], pp) - raw_bss(Y[ty], base) > 0)
-
-    v18_submit_recommended = bool(
-        g23 >= MIN_GAIN_2023 and g24 >= MIN_GAIN_2024 and core24 >= MIN_CORE_GAIN_2024
-        and boot["p05"] >= MIN_BOOT_P05 and boot["prob_positive"] >= MIN_BOOT_PROB
-        and late_gain >= MIN_LATE_GAIN and stress_ok
-    )
-    summary = {
-        "protocol": PROTOCOL_VERSION,
-        "current_lb": 1081.6824647538,
-        "temporal_2022_to_2023_gain": g23,
-        "temporal_2023_to_2024_gain": g24,
-        "core_2024_gain": core24,
-        "bootstrap": boot,
-        "early_gain": float(early_gain),
-        "late_gain": float(late_gain),
-        "gamma": V18_GAMMA,
-        "route_domain": V18_ROUTE_DOMAIN,
-        "stress_ok": bool(stress_ok),
-        "submit_recommended": v18_submit_recommended,
-        "gate_conditions": {
-            "g23>=8.0": g23 >= MIN_GAIN_2023,
-            "g24>=10.0": g24 >= MIN_GAIN_2024,
-            "core24>=15.0": core24 >= MIN_CORE_GAIN_2024,
-            "boot_p05>=3.0": boot["p05"] >= MIN_BOOT_P05,
-            "boot_prob>=0.97": boot["prob_positive"] >= MIN_BOOT_PROB,
-            "late_gain>=0.0": late_gain >= MIN_LATE_GAIN,
-            "stress_ok": bool(stress_ok),
-        },
-        "warning": "2023/2024 are development-exposed. Validation BSS is not an LB estimate.",
-    }
-    print(f"    V18_SUBMIT_RECOMMENDED: {v18_submit_recommended}")
-    write_json(validation_dir / "gate.json", summary)
-
-    # ---------- 산출물 ----------
-    oof_parts = []
-    for ty in PHASE5_TRANSITIONS:
-        rows = ROWS[ty]
-        fold = pd.DataFrame({
-            "season": int(ty),
-            "domain3": rows.domain3.to_numpy(),
-            "target": Y[ty],
-            "anchor": V15_OOF[ty],
-            "correction_prediction": CORR[ty],
-            "final_prediction": P18[ty],
-            "anchor_residual": Y[ty] - V15_OOF[ty],
-            "final_residual": Y[ty] - P18[ty],
-        })
-        fold.to_csv(validation_dir / f"fold_{ty}.csv", index=False, float_format="%.17g")
-        oof_parts.append(fold)
-        np.savez_compressed(
-            feature_dump_dir / f"p18_{ty}.npz",
-            p18=P18[ty], v15_oof=V15_OOF[ty], corr=CORR[ty], target=Y[ty],
-            core=ROWS[ty].domain3.eq(V18_ROUTE_DOMAIN).to_numpy(),
+        df_va = add_pitcher_exact_asof_features(
+            df_va_raw,
+            pitcher_stats,
         )
-    pd.concat(oof_parts, ignore_index=True).to_csv(
-        validation_dir / "oof.csv", index=False, float_format="%.17g"
-    )
 
-    phase5 = {
-        "experiment_name": EXPERIMENT_NAME,
-        "layer": "layer2_v18_temporal_stable_ridge",
-        "regime": "strict next-year (fit on T-1 OOF residual, apply to T)",
-        "transitions": PHASE5_TRANSITIONS,
-        "ridge": {"alpha": V18_RIDGE_ALPHA, "solver": "lsqr",
-                  "max_iter": 200, "tol": 1e-5},
-        "gamma": V18_GAMMA, "route_domain": V18_ROUTE_DOMAIN,
-        "stable_cols": list(STABLE[VALID_YEAR].columns),
-        "temporal_rows": TEMPORAL_ROWS,
-        "gamma_stress": gamma_stress_rows,
-        "months": month_rows,
-        "domains": domain_rows,
-        "promotion_gate": summary,
-        "library_versions": library_versions(),
-    }
-    write_json(validation_dir / "phase5_summary.json", phase5)
-    return phase5
+        # ----------------------------------------------------
+        # HB-EB
+        # prior는 fold train에서만 fit
+        # ----------------------------------------------------
+        (
+            df_tr,
+            final_features,
+            hbeb_priors,
+        ) = add_hbeb_features(
+            df_train_for_prior=df_tr_raw,
+            df_apply=df_tr,
+            features=base_plus_exact,
+        )
 
+        (
+            df_va,
+            final_features_check,
+        ) = apply_existing_hbeb_priors(
+            df_apply=df_va,
+            features=base_plus_exact,
+            priors=hbeb_priors,
+        )
 
-# =========================================================
-# Phase 6 — Final artifact (deploy regime, 2024 -> 2025)
-#           notebook cell 16 의 모델 구축부. zip / subprocess smoke 는 Phase 7.
-# =========================================================
+        if final_features_check != final_features:
+            raise RuntimeError(
+                "train/validation feature 목록 불일치"
+            )
 
-DEPLOY_SOURCE_YEAR = VALID_YEAR          # 2024
-DEPLOY_PC_TRAIN_SOURCE = BASE_SOURCE_YEAR  # 2023 — 학습 feature 는 2023 EB
+        if "asof_pitcher_pitchmix_n" not in final_features:
+            raise RuntimeError(
+                "canonical v003 feature "
+                "'asof_pitcher_pitchmix_n'이 사라졌습니다."
+            )
 
-
-def run_phase6(screen: pd.DataFrame, domain_means: DomainMeans,
-               feature_dump_dir: Path, validation_dir: Path) -> dict:
-    """배포 regime. validation 과 5가지가 다르다 — 그대로 재현한다.
-
-      1) Layer 1 은 2024 **전체**로 학습한다 (crossfit 없음)
-      2) `FINAL_ADAPTER_CFG` (n_estimators=120). `V15_CF_CFG`(100) 가 아니다
-      3) `fit_adapter_prep` 소스가 **raw24** 다 (학습 시즌과 동일)
-      4) 학습 PC EB 는 2023, 추론 PC EB 는 2024
-      5) Layer 2 는 **in-sample adapter 출력**이 아니라 p_base25 기반 direct 예측을 보정한다
-    """
-    _import_phase3_libs()
-    _import_phase4_libs()
-
-    expected_year = int(screen[SEASON_COL].max()) + 1
-    raw24 = screen.loc[screen[SEASON_COL].eq(DEPLOY_SOURCE_YEAR)].reset_index(drop=True)
-    y24 = raw24[TARGET].to_numpy(np.float64)
-
-    # ---- Phase 3 / 4 / 5 산출물 ----
-    za = np.load(feature_dump_dir / f"anchor_{DEPLOY_SOURCE_YEAR}.npz")
-    p_base24 = za["p_base"].astype(np.float64)
-    zo = np.load(feature_dump_dir / f"v15_oof_{DEPLOY_SOURCE_YEAR}.npz")
-    v15_oof24 = zo["v15_oof"].astype(np.float64)
-    assert np.array_equal(zo["target"].astype(np.float64), y24), "v15_oof target mismatch"
-    assert float(np.abs(zo["p_base"].astype(np.float64) - p_base24).max()) == 0.0, (
-        "anchor_2024 와 v15_oof_2024 의 p_base 가 다르다 — R0 Artifact Chain 확인"
-    )
-    gate_path = validation_dir / "gate.json"
-    assert gate_path.exists(), f"Phase 5 의 {gate_path} 가 필요하다"
-    v18_submit_recommended = bool(
-        json.loads(gate_path.read_text(encoding="utf-8"))["submit_recommended"]
-    )
-    print(f"    V18_SUBMIT_RECOMMENDED (Phase 5) : {v18_submit_recommended}")
-
-    # ---- test 적재 / 검증 ----
-    test = pd.read_csv(TEST_PATH, encoding="utf-8-sig", low_memory=False)
-    test[SEASON_COL] = pd.to_numeric(test[SEASON_COL], errors="raise").astype(int)
-    test["game_type"] = test["game_type"].astype("string").fillna("<NA>").astype(str)
-    assert TARGET not in test, "test.csv 에 target 이 있다"
-    if bool((test[SEASON_COL] != expected_year).any()):
-        raise RuntimeError(f"evaluation season differs from expected {expected_year}")
-    if bool((~test.game_type.isin(["R", "F"])).any()):
-        raise RuntimeError("unexpected game_type")
-    anchor_team_id = fit_router(screen)
-    test = attach_domain3(test, anchor_team_id)
-    assert str(test["base_state"].dtype) == "object", (
-        f"test.base_state dtype={test['base_state'].dtype} — object 여야 한다 (L-3 참조)"
-    )
-    print(f"    expected_year={expected_year}  test rows={len(test)}  "
-          f"domain3={test.domain3.value_counts().to_dict()}")
-
-    # ---- 1) 2024 -> 2025 shared base ----
-    source = raw24
-    ss = build_self_state(source.drop(columns=[TARGET], errors="ignore"))
-    source_bank = fit_global_season_bank(
-        screen.loc[screen[SEASON_COL].lt(DEPLOY_SOURCE_YEAR), BANK_COLS], DEPLOY_SOURCE_YEAR
-    )
-    gs = transform_global_season(source_bank, source.drop(columns=[TARGET], errors="ignore"))
-    target_bank = fit_global_season_bank(
-        screen.loc[screen[SEASON_COL].lt(expected_year), BANK_COLS], expected_year
-    )
-    st = build_self_state(test)
-    gt = transform_global_season(target_bank, test)
-    A0 = pd.concat(
-        [source[RAWNUM].apply(pd.to_numeric, errors="coerce").reset_index(drop=True),
-         ss.reset_index(drop=True), gs.reset_index(drop=True)], axis=1)
-    B0 = pd.concat(
-        [test[RAWNUM].apply(pd.to_numeric, errors="coerce").reset_index(drop=True),
-         st.reset_index(drop=True), gt.reset_index(drop=True)], axis=1)
-
-    ca, cb, exact_maps = encode_cats(source, test)
-    A_exact = pd.concat([A0, ca], axis=1)
-    B_exact = pd.concat([B0, cb], axis=1)
-    exact_feature_cols = list(A_exact.columns)
-    assert len(exact_feature_cols) == EXPECTED_DIMS["exact_lgb_features"]
-    m1 = lgb.LGBMClassifier(objective="binary", verbosity=-1, n_jobs=N_JOBS,
-                            **BASE_CFG["exact_lgb"])
-    m1.fit(A_exact, y24)
-    p1 = m1.predict_proba(B_exact)[:, 1]
-    del A_exact, B_exact, ca, cb
-    gc.collect()
-
-    Ar = A0.replace([np.inf, -np.inf], np.nan)
-    Br = B0.replace([np.inf, -np.inf], np.nan)
-    ridge_feature_cols = list(A0.columns)
-    ridge_med = Ar.median().fillna(0.0)
-    Ar = Ar.fillna(ridge_med).to_numpy(np.float32)
-    Br = Br.fillna(ridge_med).to_numpy(np.float32)
-    ridge_mu = Ar.mean(0)
-    ridge_sd = Ar.std(0)
-    ridge_sd = np.where(ridge_sd > 1e-6, ridge_sd, 1.0)
-    Ar = np.clip((Ar - ridge_mu) / ridge_sd, -8, 8)
-    Br = np.clip((Br - ridge_mu) / ridge_sd, -8, 8)
-    m2 = Ridge(alpha=BASE_CFG["ridge_alpha"], solver="lsqr", max_iter=100, tol=1e-3)
-    m2.fit(Ar, y24)
-    p2 = np.clip(m2.predict(Br), 0.001, 0.999)
-    Br_saved = Br  # 규칙 준수 조치(4b)에서 float64 계수로 재계산할 때 쓴다
-    del Ar, A0, B0, ss, gs
-    gc.collect()
-
-    s = add_eng(source)
-    t = add_eng(test)
-    trend_num_cols = RAWNUM + ENG_COLS
-    An = s[trend_num_cols].apply(pd.to_numeric, errors="coerce").reset_index(drop=True)
-    Bn = t[trend_num_cols].apply(pd.to_numeric, errors="coerce").reset_index(drop=True)
-    cta, ctb, trend_maps = encode_cats(s, t)
-    At = pd.concat([An, cta], axis=1).astype(np.float32)
-    Bt = pd.concat([Bn, ctb], axis=1).astype(np.float32)
-    trend_feature_cols = list(At.columns)
-    slope = domain_means.trailing_core_slope(DEPLOY_SOURCE_YEAR)
-    base_dom = np.array(
-        [domain_means.value(DEPLOY_SOURCE_YEAR, d, DEPLOY_SOURCE_YEAR)
-         for d in source.domain3.to_numpy()], dtype=np.float64)
-    trend_prior = {d: domain_means.value(DEPLOY_SOURCE_YEAR, d, DEPLOY_SOURCE_YEAR) + slope
-                   for d in ["R_CORE", "R_ANCHOR", "F"]}
-    bt = np.array([trend_prior[d] for d in test.domain3.to_numpy()], dtype=np.float64)
-    m3 = lgb.LGBMRegressor(objective="regression_l2", verbosity=-1, n_jobs=N_JOBS,
-                           **BASE_CFG["trend_lgb"])
-    m3.fit(At, y24 - base_dom)
-    p3 = np.clip(bt + m3.predict(Bt), 0.001, 0.999)
-    del At, Bt, An, Bn, cta, ctb, s, t
-    gc.collect()
-
-    p_base25 = np.clip(
-        (np.asarray(p1, float) + np.asarray(p2, float) + np.asarray(p3, float)) / 3.0, 0, 1)
-    print(f"    p_base25 mean={float(p_base25.mean()):.6f}  slope={slope:.10f}")
-
-    # ---- 2) V15 블록 : 학습은 2023 EB, 추론은 2024 EB ----
-    pc23 = make_pc_specs(screen, DEPLOY_PC_TRAIN_SOURCE)
-    pc24 = make_pc_specs(screen, DEPLOY_SOURCE_YEAR)
-    pc24_train = transform_pc_specs(pc23, raw24)
-    pc25 = transform_pc_specs(pc24, test)
-    ex24 = build_exact_asof_state(screen, raw24, DEPLOY_SOURCE_YEAR)
-    ex25 = pd.concat([st.add_prefix("exact__"), gt.add_prefix("exact__")], axis=1) \
-        .replace([np.inf, -np.inf], np.nan).fillna(0).astype(np.float32)
-
-    # notebook cell 16 line 94~97 의 자기검증: 배포 학습 feature 가
-    # validation 에서 이미 gate 통과한 블록과 같은가
-    parity = {}
-    for name, built in [("pitcher_conditional", pc24_train), ("exact_asof_state", ex24)]:
-        ref = feature_dump_dir / f"{name}_{DEPLOY_SOURCE_YEAR}.npz"
-        if ref.exists():
-            z = np.load(ref, allow_pickle=True)
-            assert list(built.columns) == [str(c) for c in z["columns"]], name
-            d = float(np.abs(built.to_numpy(np.float32).astype(np.float64)
-                             - z["values"].astype(np.float64)).max())
-            parity[name] = d
-            assert d < 1e-7, (name, d)
-    print(f"    deploy 학습 feature parity vs Phase2 산출물: {parity}")
-
-    prep24 = fit_adapter_prep(raw24)
-    X24_base = transform_adapter(prep24, raw24, p_base24)
-    X25_base = transform_adapter(prep24, test, p_base25)
-    adapter_base_feature_cols = list(X24_base.columns)
-    X24_final = pd.concat([X24_base.reset_index(drop=True), pc24_train.reset_index(drop=True),
-                           ex24.reset_index(drop=True)], axis=1)
-    X25 = pd.concat([X25_base.reset_index(drop=True), pc25.reset_index(drop=True),
-                     ex25.reset_index(drop=True)], axis=1)
-    assert list(X24_final.columns) == list(X25.columns)
-    assert not X24_final.columns.duplicated().any()
-    assert np.isfinite(X24_final.to_numpy(float)).all() and np.isfinite(X25.to_numpy(float)).all()
-    assert X24_final.shape[1] == EXPECTED_DIMS["adapter_matrix"] == 128
-    adapter_feature_cols = list(X24_final.columns)
-    print(f"    deploy adapter {list(X24_final.shape)} -> test {list(X25.shape)}")
-
-    # ---- 3) 최종 residual adapter : 2024 전체 학습, crossfit 없음 ----
-    res24 = y24 - p_base24
-    adapter_models = {}
-    corrections = []
-    for seed in CF_SEEDS:
-        c = np.zeros(len(test), dtype=np.float64)
-        for d in ["R_CORE", "R_ANCHOR", "F"]:
-            tr = raw24.domain3.eq(d).to_numpy()
-            te = test.domain3.eq(d).to_numpy()
-            t0 = time.time()
-            m = ExtraTreesRegressor(n_jobs=N_JOBS, random_state=16200 + int(seed),
-                                    **FINAL_ADAPTER_CFG)
-            m.fit(X24_final.loc[tr], res24[tr])
-            adapter_models[(int(seed), d)] = m
-            if te.any():
-                c[te] = m.predict(X25.loc[te])
-            print(f"      adapter seed={seed} domain={d:<8} n_tr={int(tr.sum()):>7} "
-                  f"n_te={int(te.sum()):>4} sec={time.time() - t0:.1f}")
-            gc.collect()
-        corrections.append(c)
-    correction = np.mean(np.column_stack(corrections), axis=1)
-    final_v15_direct = np.clip(p_base25 + ADAPTER_SHRINK * correction, 0, 1)
-    final_direct = final_v15_direct.copy()
-    assert np.isfinite(final_direct).all() and ((final_direct >= 0) & (final_direct <= 1)).all()
-
-    # ---- 4) Layer 2 : 2024 OOF 잔차로 학습해 2025 R_CORE 에만 적용 ----
-    stable_specs24 = build_v18_stable_specs(screen, DEPLOY_SOURCE_YEAR)
-    stable24 = transform_v18_stable_specs(stable_specs24, raw24)
-    stable_specs25 = build_v18_stable_specs(screen, expected_year)
-    stable25 = transform_v18_stable_specs(stable_specs25, test)
-    assert list(stable24.columns) == list(stable25.columns)
-    A = stable24.to_numpy(np.float32)
-    B = stable25.to_numpy(np.float32)
-    v18_mu = A.mean(0)
-    v18_sd = A.std(0)
-    v18_sd = np.where(v18_sd > 1e-6, v18_sd, 1.0).astype(np.float32)
-    Az = np.clip((A - v18_mu) / v18_sd, -8, 8)
-    Bz = np.clip((B - v18_mu) / v18_sd, -8, 8)
-    stable_model = Ridge(alpha=V18_RIDGE_ALPHA, solver="lsqr", max_iter=200, tol=1e-5)
-    stable_model.fit(Az, y24 - v15_oof24)
-    stable_corr25 = np.asarray(stable_model.predict(Bz), np.float64)
-    if v18_submit_recommended:
-        core25 = test.domain3.eq(V18_ROUTE_DOMAIN).to_numpy()
-        final_direct[core25] = np.clip(
-            final_direct[core25] + V18_GAMMA * stable_corr25[core25], 0, 1)
-    print(f"    V18 deploy correction enabled={v18_submit_recommended}  "
-          f"stable {list(stable24.shape)}  core test rows="
-          f"{int(test.domain3.eq(V18_ROUTE_DOMAIN).sum())}")
-    assert np.isfinite(final_direct).all() and ((final_direct >= 0) & (final_direct <= 1)).all()
-
-    # ---- 4b) 규칙 준수 조치 : Ridge 계수를 float64 로 올려 batch 의존성을 제거 ----
-    # 여기까지의 값(final_direct)은 notebook 과 bit 단위로 같은 **verbatim** 결과다.
-    # R6 재현 대조용으로 그대로 보존하고, artifact/submission 은 hardened 값을 쓴다.
-    verbatim = {
-        "p1": np.asarray(p1, np.float64), "p2": np.asarray(p2, np.float64),
-        "p3": np.asarray(p3, np.float64), "p_base25": p_base25.copy(),
-        "correction": correction.copy(), "final_v15_direct": final_v15_direct.copy(),
-        "stable_corr25": stable_corr25.copy(), "final_direct": final_direct.copy(),
-    }
-    hardening = {"applied": bool(RULE_SAFE_FLOAT64_RIDGE)}
-    if RULE_SAFE_FLOAT64_RIDGE:
-        hardening["models"] = [
-            upcast_linear_to_float64(m2, "base_ridge"),
-            upcast_linear_to_float64(stable_model, "v18_stable_model"),
+        fold_cat_cols = [
+            c for c in cat_cols
+            if c in final_features
         ]
-        # float64 계수로 Layer 0 · Layer 2 를 다시 계산한다 (LGBM/ExtraTrees 는 무관)
-        p2 = np.clip(m2.predict(Br_saved), 0.001, 0.999)
-        p_base25 = np.clip(
-            (np.asarray(p1, float) + np.asarray(p2, float) + np.asarray(p3, float)) / 3.0, 0, 1)
-        final_v15_direct = np.clip(p_base25 + ADAPTER_SHRINK * correction, 0, 1)
-        final_direct = final_v15_direct.copy()
-        stable_corr25 = np.asarray(stable_model.predict(Bz), np.float64)
-        if v18_submit_recommended:
-            core25 = test.domain3.eq(V18_ROUTE_DOMAIN).to_numpy()
-            final_direct[core25] = np.clip(
-                final_direct[core25] + V18_GAMMA * stable_corr25[core25], 0, 1)
-        assert np.isfinite(final_direct).all() and ((final_direct >= 0) & (final_direct <= 1)).all()
-        delta = {k: float(np.abs(verbatim[k] - v).max()) for k, v in
-                 [("p2", p2), ("p_base25", p_base25),
-                  ("final_v15_direct", final_v15_direct),
-                  ("stable_corr25", stable_corr25), ("final_direct", final_direct)]}
-        hardening["delta_vs_verbatim"] = delta
-        print(f"    [rule-safe] Ridge coef_ float32 -> float64 적용. "
-              f"verbatim 대비 final 변화 = {delta['final_direct']:.3e}")
-    else:
-        print("    [rule-safe] 비활성 (V18_REPRO_F64_RIDGE=0) — verbatim 그대로 저장한다")
 
-    # ---- 5) 단일 pkl artifact ----
+        X_tr = prepare_features(
+            df_tr[final_features],
+            fold_cat_cols,
+        )
+        X_va = prepare_features(
+            df_va[final_features],
+            fold_cat_cols,
+        )
+
+        y_tr = df_tr[TARGET].astype(np.float64)
+        y_va = df_va[TARGET].astype(np.float64)
+
+        model = CatBoostRegressor(**MODEL_PARAMS)
+
+        started = time.time()
+        model.fit(
+            X_tr,
+            y_tr,
+            cat_features=fold_cat_cols,
+            eval_set=(X_va, y_va),
+            early_stopping_rounds=EARLY_STOPPING_ROUNDS,
+            use_best_model=True,
+        )
+        elapsed = time.time() - started
+
+        pred_raw = np.asarray(
+            model.predict(X_va),
+            dtype=np.float64,
+        )
+        pred = np.clip(pred_raw, 0.0, 1.0)
+
+        metrics = calculate_metrics(y_va, pred)
+
+        best_iter_zero = int(model.get_best_iteration())
+        best_tree_count = (
+            best_iter_zero + 1
+            if best_iter_zero >= 0
+            else int(model.tree_count_)
+        )
+
+        fold_rows.append({
+            "fold": int(fold),
+            "train_seasons": [int(x) for x in train_seasons],
+            "validation_season": int(val_year),
+            "n_train": int(len(df_tr)),
+            "n_validation": int(len(df_va)),
+            "brier": float(metrics["brier"]),
+            "bss_raw": float(metrics["bss_raw"]),
+            "bss": float(metrics["bss"]),
+            "best_iteration_zero_based": best_iter_zero,
+            "best_tree_count": int(best_tree_count),
+            "elapsed_seconds": float(elapsed),
+        })
+
+        oof_frames.append(
+            pd.DataFrame({
+                ID: df_va[ID].to_numpy(),
+                "target": y_va.to_numpy(dtype=np.float64),
+                "prediction_raw": pred_raw,
+                "prediction": pred,
+                "validation_season": int(val_year),
+            })
+        )
+
+        latest_final_features = list(final_features)
+
+        print(
+            f"[Fold {fold}] "
+            f"{train_seasons} -> {val_year} | "
+            f"Brier={metrics['brier']:.10f} | "
+            f"BSS={metrics['bss_raw']:.2f} | "
+            f"trees={best_tree_count}"
+        )
+
+    oof = pd.concat(
+        oof_frames,
+        ignore_index=True,
+    )
+
+    pooled = calculate_metrics(
+        oof["target"],
+        oof["prediction"],
+    )
+
+    return (
+        fold_rows,
+        oof,
+        latest_final_features,
+        pooled,
+    )
+
+
+# ============================================================
+# Final training
+# ============================================================
+
+def train_final(
+    train: pd.DataFrame,
+    base_features: list[str],
+    cat_cols: list[str],
+    final_iterations: int,
+):
+    base_plus_exact = list(base_features) + [
+        c for c in EXACT_COLS
+        if c not in base_features
+    ]
+
+    # 2019~2024 완료 시즌 통계를 artifact에 저장.
+    # 각 training row 계산에서는 row season보다 과거 시즌만 사용.
+    pitcher_stats = build_pitcher_season_stats(train)
+
+    df_full = add_pitcher_exact_asof_features(
+        train,
+        pitcher_stats,
+    )
+
+    (
+        df_full,
+        final_features,
+        hbeb_priors,
+    ) = add_hbeb_features(
+        df_train_for_prior=train,
+        df_apply=df_full,
+        features=base_plus_exact,
+    )
+
+    if "asof_pitcher_pitchmix_n" not in final_features:
+        raise RuntimeError(
+            "canonical v003 feature "
+            "'asof_pitcher_pitchmix_n'이 사라졌습니다."
+        )
+
+    final_cat_cols = [
+        c for c in cat_cols
+        if c in final_features
+    ]
+
+    X_full = prepare_features(
+        df_full[final_features],
+        final_cat_cols,
+    )
+    y_full = df_full[TARGET].astype(np.float64)
+
+    final_params = {
+        **MODEL_PARAMS,
+        "iterations": int(final_iterations),
+    }
+
+    model = CatBoostRegressor(**final_params)
+
+    started = time.time()
+    model.fit(
+        X_full,
+        y_full,
+        cat_features=final_cat_cols,
+    )
+    elapsed = time.time() - started
+
     artifact = {
         "experiment_name": EXPERIMENT_NAME,
-        "protocol": PROTOCOL_VERSION,
-        "source_protocol": SOURCE_PROTOCOL,
-        "expected_year": int(expected_year),
-        "anchor_team_id": int(anchor_team_id),
-        "selected_blocks": list(DEPLOY_SELECTED_BLOCKS),
-        "rawnum": list(RAWNUM), "cat_small": list(CAT_SMALL),
-        "eng_cols": list(ENG_COLS), "adapter_rawnum": list(ADAPTER_RAWNUM),
-        # Layer 0
-        "base_exact_lgb": m1, "exact_feature_cols": exact_feature_cols,
-        "exact_cat_maps": exact_maps,
-        "base_ridge": m2, "ridge_feature_cols": ridge_feature_cols,
-        "ridge_med": ridge_med.to_dict(),
-        "ridge_mu": ridge_mu.astype(np.float32), "ridge_sd": ridge_sd.astype(np.float32),
-        "base_trend_lgb": m3, "trend_num_cols": list(trend_num_cols),
-        "trend_cat_maps": trend_maps, "trend_feature_cols": trend_feature_cols,
-        "trend_prior": trend_prior, "trend_slope": float(slope),
-        "target_global_bank": target_bank,
-        # Layer 1
-        "adapter_prep": prep24,
-        "adapter_base_feature_cols": adapter_base_feature_cols,
-        "adapter_feature_cols": adapter_feature_cols,
-        "pitcher_conditional_specs": pc24,
-        "pitcher_conditional_cols": list(pc25.columns),
-        "exact_adapter_cols": list(ex25.columns),
-        "adapter_seeds": list(CF_SEEDS), "adapter_shrink": float(ADAPTER_SHRINK),
-        "adapter_models": adapter_models,
-        # Layer 2
-        "v18_stable_enabled": bool(v18_submit_recommended),
-        "v18_stable_specs": stable_specs25,
-        "v18_stable_cols": list(stable25.columns),
-        "v18_stable_mu": v18_mu.astype(np.float32), "v18_stable_sd": v18_sd,
-        "v18_stable_model": stable_model,
-        "v18_stable_gamma": float(V18_GAMMA), "v18_route_domain": V18_ROUTE_DOMAIN,
-        "postprocess": None,
-        # 규칙 준수 조치 기록 — Phase 3 검증에서 근거를 묻는다
-        "rule_safe_float64_ridge": bool(RULE_SAFE_FLOAT64_RIDGE),
-        "eval_server_env_check": check_eval_server_env(),
-        "rule_safe_note": (
-            "V18 은 Ridge 를 float32 로 적합해 predict 가 batch 크기에 따라 1 float32 ulp "
-            "흔들린다(실측 p2 2.980e-08 = 2^-25). 대회 공지 §3 '행 1개일 때와 전체일 때 "
-            "예측값 동일' 을 만족시키기 위해 추론용 계수를 float64 로 올렸다. "
-            "정보 누출과 무관하며 예측 변화는 ~1e-8 이다."
+        "model": model,
+        "features": final_features,
+        "cat_cols": final_cat_cols,
+        "hbeb_priors": hbeb_priors,
+        "pitcher_season_stats": pitcher_stats,
+        "exact_cols": list(EXACT_COLS),
+        "final_iterations": int(final_iterations),
+        "model_params": final_params,
+        "prediction_policy": "np.clip(raw_prediction, 0.0, 1.0)",
+        "baseline_definition": (
+            "canonical cb_reg_v003 + Exact-ASOF5; "
+            "no residual, no conditional, no routing"
         ),
-        "library_versions": library_versions(),
-    }
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    with open(MODEL_PATH, "wb") as f:
-        pickle.dump(artifact, f, protocol=pickle.HIGHEST_PROTOCOL)
-    size_mb = MODEL_PATH.stat().st_size / 1e6
-    print(f"    artifact -> {MODEL_PATH}  ({size_mb:.1f} MB)")
-
-    # ---- 제출 zip 용 requirements.txt ----
-    # 공지 권고: 평가 서버 기본 설치 패키지는 requirements.txt 에 넣지 않는다
-    #            (버전을 다르게 명시하면 설치 에러가 날 수 있다)
-    # lightgbm 은 기본 목록에 없으므로 반드시 넣는다.
-    lv = library_versions()
-    env_check = check_eval_server_env()
-    req = f"lightgbm=={lv['lightgbm']}\n" if lv.get("lightgbm") else ""
-    (MODEL_DIR / "requirements.txt").write_text(req, encoding="utf-8")
-    print(f"    requirements -> {MODEL_DIR / 'requirements.txt'}  : {req.strip()}")
-    print("      (pandas/numpy/scipy/scikit-learn/joblib 는 평가 서버 기본 설치라 제외)")
-    if env_check["mismatch"]:
-        print()
-        print("!" * 78)
-        print("  평가 서버 환경 불일치 — 제출 전 반드시 해결할 것")
-        for pkg, v in env_check["mismatch"].items():
-            print(f"    {pkg:<14} 평가 서버 {v['eval_server']:<10} / 현재 {v['local']}")
-        print("  artifact 는 pickle 이다. scikit-learn 버전이 다르면 평가 서버에서")
-        print("  모델 복원이 깨지거나 예측이 달라질 수 있다 (sklearn 은 pickle 호환 미보장).")
-        print("  -> 평가 서버와 같은 버전으로 환경을 맞춘 뒤 train.py 를 다시 실행할 것.")
-        print("!" * 78)
-        print()
-
-    # ---- 6) 산출물 ----
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame({ID: test[ID].to_numpy(), TARGET: final_direct}).to_csv(
-        OUTPUT_PATH, index=False)
-    # R6(재현 대조)용 — notebook 과 bit 단위로 같아야 하는 verbatim 값
-    np.savez_compressed(
-        feature_dump_dir / "deploy_2025.npz",
-        row_id=test[ID].to_numpy().astype(str),
-        domain3=test.domain3.to_numpy().astype(str),
-        **verbatim,
-    )
-    # R7(script.py 대조)용 — artifact / submission 과 일치하는 값
-    np.savez_compressed(
-        feature_dump_dir / "deploy_2025_hardened.npz",
-        row_id=test[ID].to_numpy().astype(str),
-        domain3=test.domain3.to_numpy().astype(str),
-        p_base25=p_base25, p1=np.asarray(p1, np.float64), p2=np.asarray(p2, np.float64),
-        p3=np.asarray(p3, np.float64), correction=correction,
-        final_v15_direct=final_v15_direct, stable_corr25=stable_corr25,
-        final_direct=final_direct,
-    )
-    summary = {
-        "experiment_name": EXPERIMENT_NAME,
-        "regime": "deploy (2024 full-fit -> 2025), NOT validation crossfit",
-        "expected_year": int(expected_year),
-        "n_test_rows": int(len(test)),
-        "anchor_team_id": int(anchor_team_id),
-        "v18_stable_enabled": bool(v18_submit_recommended),
-        "artifact_path": str(MODEL_PATH), "artifact_mb": round(size_mb, 2),
-        "trend_slope": float(slope), "trend_prior": trend_prior,
-        "deploy_feature_parity_vs_phase2": parity,
-        "rule_safe_hardening": hardening,
-        "eval_server_env_check": env_check,
-        "dims": {"exact_lgb": len(exact_feature_cols), "ridge": len(ridge_feature_cols),
-                 "trend_lgb": len(trend_feature_cols),
-                 "adapter": len(adapter_feature_cols),
-                 "adapter_base": len(adapter_base_feature_cols),
-                 "pitcher_conditional": len(pc25.columns),
-                 "exact_adapter": len(ex25.columns),
-                 "v18_stable": len(stable25.columns)},
-        "adapter_cfg": FINAL_ADAPTER_CFG, "adapter_seeds": list(CF_SEEDS),
-        "adapter_shrink": ADAPTER_SHRINK,
-        "n_adapter_models": len(adapter_models),
-        "pred": {k: {"mean": float(np.mean(v)), "min": float(np.min(v)),
-                     "max": float(np.max(v))}
-                 for k, v in [("p_base25", p_base25), ("correction", correction),
-                              ("final_v15_direct", final_v15_direct),
-                              ("stable_corr25", stable_corr25),
-                              ("final_direct", final_direct)]},
-        "library_versions": library_versions(),
-    }
-    write_json(validation_dir / "phase6_summary.json", summary)
-    del X24_final, X25, raw24
-    gc.collect()
-    return summary
-
-
-# =========================================================
-# 실행
-# =========================================================
-
-
-def run_phase2_year(screen: pd.DataFrame, year: int, anchor_team_id: int) -> dict:
-    """한 연도의 Feature 블록을 모두 생성하고 검증한다."""
-    t0 = time.time()
-    source_year = int(year) - 1
-    rows = screen.loc[screen[SEASON_COL].eq(int(year))].reset_index(drop=True)
-    n = len(rows)
-
-    self_state = build_self_state(rows.drop(columns=[TARGET], errors="ignore"))
-    _, gseason, bank = year_state(screen, rows, year)
-    exact_asof = build_exact_asof_state(screen, rows, year)
-    pitcher_conditional, pc_specs = build_pitcher_conditional(screen, source_year, rows)
-
-    stable_specs = build_v18_stable_specs(screen, year)
-    stable = transform_v18_stable_specs(stable_specs, rows)
-
-    unused = build_unused_blocks_for_audit(screen, source_year, rows)
-
-    # adapter prep 은 직전 시즌(source_year) 에서 적합한다 (validation 규약).
-    prep = fit_adapter_prep(screen.loc[screen[SEASON_COL].eq(source_year)].reset_index(drop=True))
-
-    # Phase 2 단독 실행 시 결정적 surrogate base_pred 로 adapter matrix 를 만들어
-    # 열 이름 / 열 순서 / dtype / 행 정렬을 reference 와 대조한다.
-    adapter_base_surrogate = transform_adapter(prep, rows, surrogate_base_pred(n))
-    adapter_surrogate = build_adapter_matrix(
-        adapter_base_surrogate, pitcher_conditional, exact_asof, unused
-    )
-
-    out = {
-        "year": int(year),
-        "source_year": source_year,
-        "n_rows": n,
-        "row_id": rows[ID].to_numpy(),
-        "target": rows[TARGET].to_numpy(np.float64),
-        "domain3": rows["domain3"].to_numpy(),
-        "self_state": self_state,
-        "gseason": gseason,
-        "exact_asof_state": exact_asof,
-        "pitcher_conditional": pitcher_conditional,
-        "v18_stable": stable,
-        "adapter_matrix_surrogate": adapter_surrogate,
-        "unused_blocks": unused,
-        "adapter_prep": prep,
-        "pc_specs": pc_specs,
-        "stable_specs": stable_specs,
-        "bank_prior": float(bank["prior"]),
-        "bank_source_max_season": bank["source_max_season"],
-        "pitcher_half": {int(s): pitcher_half(rows, s) for s in CF_SEEDS},
-        "rows": rows,
-        "sec": time.time() - t0,
-    }
-    return out
-
-
-def summarize_block(name: str, df: pd.DataFrame) -> dict:
-    arr = df.to_numpy(np.float64)
-    return {
-        "block": name,
-        "shape": list(df.shape),
-        "n_cols": int(df.shape[1]),
-        "columns": list(df.columns),
-        "dtypes": sorted({str(t) for t in df.dtypes}),
-        "n_nan": int(np.isnan(arr).sum()),
-        "min": float(np.nanmin(arr)) if arr.size else None,
-        "max": float(np.nanmax(arr)) if arr.size else None,
-        "mean": float(np.nanmean(arr)) if arr.size else None,
-        "checksum": float(np.nansum(arr.astype(np.float32), dtype=np.float64)),
     }
 
+    return artifact, elapsed
+
+
+# ============================================================
+# Main
+# ============================================================
 
 def main():
-    global_start = time.time()
+    if not TRAIN_PATH.exists():
+        raise FileNotFoundError(TRAIN_PATH)
+    if not TEST_PATH.exists():
+        raise FileNotFoundError(TEST_PATH)
 
-    VALIDATION_DIR.mkdir(parents=True, exist_ok=True)
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    FEATURE_PARITY_DIR.mkdir(parents=True, exist_ok=True)
-    if DUMP_FEATURE_MATRICES:
-        FEATURE_DUMP_DIR.mkdir(parents=True, exist_ok=True)
+    if VALIDATION_DIR.exists():
+        raise FileExistsError(
+            f"기존 validation 보존을 위해 중단: {VALIDATION_DIR}"
+        )
+    if MODEL_DIR.exists():
+        raise FileExistsError(
+            f"기존 model 보존을 위해 중단: {MODEL_DIR}"
+        )
 
-    phase_names = {2: "Feature", 3: "+Layer 0 Anchor/Residual",
-                   4: "+Layer 1 V15 OOF crossfit", 5: "+Layer 2 stable Ridge (PASS 2)",
-                   6: "+Deploy artifact (2024->2025)"}
-    print("=" * 78)
-    print(f"Experiment                : {EXPERIMENT_NAME}")
-    print(f"Protocol                  : {PROTOCOL_VERSION}")
-    print(f"Phase                     : {PHASE}  "
-          f"({phase_names.get(PHASE, '?')})")
-    print(f"REPRO_BUILD_UNUSED_BLOCKS : {REPRO_BUILD_UNUSED_BLOCKS}")
-    print(f"LOAD_ONLY_REFERENCED_COLS : {LOAD_ONLY_REFERENCED_COLUMNS}")
-    print(f"Target years              : {TARGET_YEARS}")
-    print(f"RESUME                    : {RESUME}")
-    print(f"N_JOBS                    : {N_JOBS}  (cpu {os.cpu_count()})")
-    print(f"SMOKE_MODE                : {SMOKE_MODE}")
-    print("-" * 78)
-    print("실행 계획")
-    for p in range(2, PHASE + 1):
-        print(f"  Phase {p}  {phase_names[p]}")
-    if PHASE >= 6:
-        print(f"  -> {MODEL_PATH}   (단일 pkl artifact)")
-        print(f"  -> {OUTPUT_PATH}  (submission)")
-    if PHASE >= 4 and not SMOKE_MODE:
-        n_fit = len(TARGET_YEARS) * len(CF_SEEDS) * 2 * 3
-        print(f"  ExtraTrees 적합 {n_fit}회 (Layer 1 crossfit)"
-              + (" + 9회 (deploy)" if PHASE >= 6 else ""))
-        print("  예상 소요: 6코어 기준 약 15~25분. V20_SMOKE=1 로 먼저 배선 확인 가능.")
-    print("환경변수: V18_REPRO_PHASE / V18_REPRO_YEARS / V18_REPRO_RESUME /"
-          " V18_REPRO_UNUSED / V18_REPRO_DUMP_DIR / V20_SMOKE")
-    print("=" * 78)
-    if PHASE >= 5 and _YEARS_ENV and set(TARGET_YEARS) != set(PHASE5_SOURCE_YEARS):
-        print("[note] Phase 5/6 은 2020~2024 전체 V15_OOF 를 요구한다. "
-              "디스크에 있으면 그대로 쓰고, 없으면 명확히 실패한다.")
-        print("=" * 78)
+    # test는 schema(header)만 읽는다.
+    test_cols = pd.read_csv(
+        TEST_PATH,
+        encoding="utf-8-sig",
+        nrows=0,
+    ).columns.tolist()
 
-    screen = load_train()
-    validate_schema(screen)
-    anchor_team_id = fit_router(screen)
-    screen = attach_domain3(screen, anchor_team_id)
-    finalize_column_lists(screen)
-    domain_means = DomainMeans(screen)
+    base_features = [
+        c for c in test_cols
+        if c != ID
+    ]
 
-    print(f"ANCHOR_TEAM_ID            : {anchor_team_id}")
-    print(f"TRAIN_ROWS                : {len(screen)}")
-    print(f"SEASONS                   : {sorted(screen[SEASON_COL].unique().tolist())}")
-    print(f"RAWNUM / CAT_SMALL        : {len(RAWNUM)} / {len(CAT_SMALL)}")
-    print(f"domain3 share             : "
-          f"{screen.domain3.value_counts(normalize=True).round(4).to_dict()}")
-    print()
+    # 중요: 전에 삭제해서 LB가 크게 하락했던 canonical feature.
+    # 이번 baseline에서는 반드시 유지한다.
+    if "asof_pitcher_pitchmix_n" not in base_features:
+        raise RuntimeError(
+            "test schema에 asof_pitcher_pitchmix_n이 없습니다. "
+            "canonical v003 기준선과 다른 schema입니다."
+        )
 
-    phase2_summary = {
+    train = pd.read_csv(
+        TRAIN_PATH,
+        encoding="utf-8-sig",
+        usecols=[ID] + base_features + [TARGET],
+    )
+
+    required = {
+        ID,
+        TARGET,
+        SEASON_COL,
+        "pitcher_id",
+        "asof_pitcher_n",
+        "asof_pitcher_success_rate",
+        "asof_batter_n",
+        "asof_batter_success_rate",
+    }
+    missing = sorted(required - set(train.columns))
+    if missing:
+        raise KeyError(
+            f"train 필수 컬럼 없음: {missing}"
+        )
+
+    cat_cols = [
+        c for c in CAT_COLS
+        if c in base_features
+    ]
+
+    print("=" * 88)
+    print(f"Experiment : {EXPERIMENT_NAME}")
+    print("Baseline   : canonical cb_reg_v003 + Exact-ASOF 5")
+    print("Residual   : NO")
+    print("Conditional: NO")
+    print("Routing    : NO")
+    print("pitchmix_n : KEEP")
+    print(f"Train rows : {len(train):,}")
+    print(f"Base feats : {len(base_features)}")
+    print("=" * 88)
+
+    VALIDATION_DIR.mkdir(
+        parents=True,
+        exist_ok=False,
+    )
+    MODEL_DIR.mkdir(
+        parents=True,
+        exist_ok=False,
+    )
+
+    (
+        fold_rows,
+        oof,
+        final_features,
+        pooled,
+    ) = run_expanding_validation(
+        train=train,
+        base_features=base_features,
+        cat_cols=cat_cols,
+    )
+
+    oof.to_csv(
+        VALIDATION_DIR / "oof_pred.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    validation_meta = {
         "experiment_name": EXPERIMENT_NAME,
-        "anchor_team_id": anchor_team_id,
-        "train_rows": int(len(screen)),
-        "seasons": sorted(int(s) for s in screen[SEASON_COL].unique()),
-        "rawnum": RAWNUM,
-        "cat_small": CAT_SMALL,
-        "adapter_rawnum": ADAPTER_RAWNUM,
-        "eng_cols": ENG_COLS,
-        "bank_cols": BANK_COLS,
-        "pc_contexts": [[c, s] for c, s in PC_CONTEXTS],
-        "expected_dims": EXPECTED_DIMS,
-        "repro_build_unused_blocks": REPRO_BUILD_UNUSED_BLOCKS,
-        "unused_block_names": sorted(UNUSED_BLOCK_NAMES),
-        "deploy_selected_blocks": DEPLOY_SELECTED_BLOCKS,
-        "library_versions": library_versions(),
-        "years": {},
-    }
-    phase3_summary = {
-        "experiment_name": EXPERIMENT_NAME,
-        "library_versions": library_versions(),
-        "years": {},
-    }
-    phase4_summary = {
-        "experiment_name": EXPERIMENT_NAME,
-        "layer": "layer1_v15_residual_adapter",
-        "regime": "within_year_pitcher_half_crossfit (NOT strict next-year)",
-        "library_versions": library_versions(),
-        "smoke_mode": SMOKE_MODE,
-        "years": {},
+        "validation_method": "expanding_window",
+        "folds": fold_rows,
+        "pooled": pooled,
+        "final_features": final_features,
+        "n_final_features": len(final_features),
+        "exact_cols": EXACT_COLS,
+        "hbeb_configs": HBEB_CONFIGS,
+        "model_params": MODEL_PARAMS,
+        "early_stopping_rounds": EARLY_STOPPING_ROUNDS,
+        "final_iteration_strategy": FINAL_ITERATION_STRATEGY,
     }
 
-    for year in TARGET_YEARS:
-        print("-" * 78)
-        print(f"[Phase 2] year {year}")
-        st = run_phase2_year(screen, year, anchor_team_id)
-        rows = st["rows"]
-
-        blocks = {
-            "self_state": st["self_state"],
-            "gseason": st["gseason"],
-            "exact_asof_state": st["exact_asof_state"],
-            "pitcher_conditional": st["pitcher_conditional"],
-            "v18_stable": st["v18_stable"],
-            "adapter_matrix_surrogate": st["adapter_matrix_surrogate"],
-        }
-        ysum = {
-            "n_rows": st["n_rows"],
-            "source_year": st["source_year"],
-            "bank_prior": st["bank_prior"],
-            "bank_source_max_season": st["bank_source_max_season"],
-            "sec_features": round(st["sec"], 2),
-            "blocks": {k: summarize_block(k, v) for k, v in blocks.items()},
-            "unused_blocks": {
-                k: summarize_block(k, v) for k, v in st["unused_blocks"].items()
-            },
-            "pitcher_half_fold1_share": {
-                str(s): float(v.mean()) for s, v in st["pitcher_half"].items()
-            },
-        }
-
-        # Layer 0 의 temporal scalar 는 lightgbm 없이 계산 가능하므로 Phase 2 에서도
-        # 산출해 R3 Trend Scalars gate 를 미리 측정한다.
-        _slope = domain_means.trailing_core_slope(st["source_year"])
-        ysum["trend_slope"] = _slope
-        ysum["trend_prior"] = {
-            d: domain_means.value(int(st["source_year"]), d, st["source_year"]) + _slope
-            for d in ["R_CORE", "R_ANCHOR", "F"]
-        }
-        ysum["domain_means_source_year"] = {
-            d: domain_means.value(int(st["source_year"]), d, st["source_year"])
-            for d in ["R_CORE", "R_ANCHOR", "F"]
-        }
-        for k, v in blocks.items():
-            print(f"    {k:24s} {str(list(v.shape)):>16s}  nan={ysum['blocks'][k]['n_nan']}")
-        for k in st["unused_blocks"]:
-            print(f"    [unused] {k:17s} {str(list(st['unused_blocks'][k].shape)):>16s}")
-
-        if DUMP_FEATURE_MATRICES:
-            for k, v in blocks.items():
-                save_matrix(FEATURE_DUMP_DIR / f"{k}_{year}.npz", v)
-            for k, v in st["unused_blocks"].items():
-                save_matrix(FEATURE_DUMP_DIR / f"{k.lower()}_{year}.npz", v)
-            np.savez_compressed(
-                FEATURE_DUMP_DIR / f"data_{year}.npz",
-                row_id=st["row_id"].astype(str),
-                target=st["target"],
-                season=np.full(st["n_rows"], int(year), dtype=np.int64),
-                domain3=st["domain3"].astype(str),
-                **{f"pitcher_half_{s}": v for s, v in st["pitcher_half"].items()},
-            )
-
-        # ---------------- Phase 3 ----------------
-        if PHASE >= 3:
-            print(f"[Phase 3] year {year}  anchor  ({st['source_year']} -> {year})")
-            p_base, parts, meta = build_anchor(
-                screen, domain_means, st["source_year"], rows, year
-            )
-            y = st["target"]
-            residual_l1 = build_training_target(y, p_base)
-
-            adapter_base = transform_adapter(st["adapter_prep"], rows, p_base)
-            X_adapter = build_adapter_matrix(
-                adapter_base,
-                st["pitcher_conditional"],
-                st["exact_asof_state"],
-                st["unused_blocks"],
-            )
-            assert X_adapter.shape[1] == 128
-            EXPECTED_ADAPTER_FEATURE_COLS = (
-                list(adapter_base.columns)
-                + list(st["pitcher_conditional"].columns)
-                + list(st["exact_asof_state"].columns)
-            )
-            assert list(X_adapter.columns) == EXPECTED_ADAPTER_FEATURE_COLS
-
-            base_df = pd.DataFrame(
-                {
-                    ID: st["row_id"],
-                    "season": int(year),
-                    "domain3": st["domain3"],
-                    "target": y,
-                    "p_exact_lgb": np.asarray(parts["exact_lgb"], np.float64),
-                    "p_exact_ridge": np.asarray(parts["exact_ridge"], np.float64),
-                    "p_trend_lgb": np.asarray(parts["trend_center_lgb"], np.float64),
-                    "p_base": np.asarray(p_base, np.float64),
-                    "residual_l1": residual_l1,
-                }
-            )
-            # base_{year}.csv 는 사람이 보는 산출물이다.
-            # pandas 기본 to_csv 는 float64 round-trip 을 보장하지 않아
-            # 읽어들일 때 최대 1 ulp(약 5.55e-17) 오차가 생긴다. gate 가 그 오차를
-            # 재현 오차로 오인하지 않도록 %.17g 로 저장한다. 계산에는 영향이 없다.
-            base_df.to_csv(
-                VALIDATION_DIR / f"base_{year}.csv", index=False, float_format="%.17g"
-            )
-            # gate 용 무손실 산출물 (float64 원본 비트 그대로)
-            np.savez_compressed(
-                FEATURE_DUMP_DIR / f"anchor_{year}.npz",
-                p_base=np.asarray(p_base, np.float64),
-                p_exact_lgb=np.asarray(parts["exact_lgb"], np.float64),
-                p_exact_ridge=np.asarray(parts["exact_ridge"], np.float64),
-                p_trend_lgb=np.asarray(parts["trend_center_lgb"], np.float64),
-                residual_l1=np.asarray(residual_l1, np.float64),
-            )
-            save_matrix(FEATURE_DUMP_DIR / f"adapter_matrix_{year}.npz", X_adapter)
-
-            bss = raw_bss(y, p_base)
-            print(f"    base_bss={bss:.2f}  pred_mean={float(p_base.mean()):.6f}  "
-                  f"target_mean={float(y.mean()):.6f}")
-
-            phase3_summary["years"][str(year)] = {
-                "source_year": st["source_year"],
-                "n_rows": st["n_rows"],
-                "trend_slope": meta["trend_slope"],
-                "trend_prior": meta["trend_prior"],
-                "exact_feature_cols_n": len(meta["exact_feature_cols"]),
-                "ridge_feature_cols_n": len(meta["ridge_feature_cols"]),
-                "trend_feature_cols_n": len(meta["trend_feature_cols"]),
-                "exact_cat_levels": meta["exact_cat_levels"],
-                "adapter_matrix_shape": list(X_adapter.shape),
-                "adapter_columns": list(X_adapter.columns),
-                "p_exact_lgb": {"mean": float(np.mean(parts["exact_lgb"])),
-                                "min": float(np.min(parts["exact_lgb"])),
-                                "max": float(np.max(parts["exact_lgb"]))},
-                "p_exact_ridge": {"mean": float(np.mean(parts["exact_ridge"])),
-                                  "min": float(np.min(parts["exact_ridge"])),
-                                  "max": float(np.max(parts["exact_ridge"]))},
-                "p_trend_lgb": {"mean": float(np.mean(parts["trend_center_lgb"])),
-                                "min": float(np.min(parts["trend_center_lgb"])),
-                                "max": float(np.max(parts["trend_center_lgb"]))},
-                "p_base": {"mean": float(p_base.mean()), "min": float(p_base.min()),
-                           "max": float(p_base.max())},
-                "residual_l1": {"mean": float(residual_l1.mean()),
-                                "std": float(residual_l1.std())},
-                "base_bss": bss,
-                "official_score": official_score(y, p_base),
-            }
-            ysum["adapter_matrix"] = summarize_block("adapter_matrix", X_adapter)
-
-            # ---------------- Phase 4 : Layer 1 V15 OOF ----------------
-            if PHASE >= 4:
-                oof_npz = FEATURE_DUMP_DIR / f"v15_oof_{year}.npz"
-                if RESUME and oof_npz.exists():
-                    # 적합만 건너뛰고 보고는 한다. 통짜 덮어쓰기로 요약이 사라지는 것을 막는다.
-                    z = np.load(oof_npz)
-                    consensus = z["v15_oof"].astype(np.float64)
-                    oof_bss = raw_bss(y, consensus)
-                    seed_rows, fold_rows = [], []
-                    for name, box in [("v15_seed_scores", seed_rows),
-                                      ("v15_fold_scores", fold_rows)]:
-                        p_ = VALIDATION_DIR / f"{name}_{year}.csv"
-                        if p_.exists():
-                            box.extend(pd.read_csv(p_).to_dict("records"))
-                    phase4_summary["years"][str(year)] = {
-                        "source_year": st["source_year"],
-                        "n_rows": st["n_rows"],
-                        "adapter_matrix_shape": list(X_adapter.shape),
-                        "cf_seeds": list(CF_SEEDS),
-                        "v15_cf_cfg": V15_CF_CFG,
-                        "adapter_shrink": ADAPTER_SHRINK,
-                        "base_bss": bss,
-                        "v15_oof_bss": oof_bss,
-                        "gain_vs_base": oof_bss - bss,
-                        "official_score_base": official_score(y, p_base),
-                        "official_score_v15_oof": official_score(y, consensus),
-                        "seed_rows": seed_rows,
-                        "fold_rows": fold_rows,
-                        "v15_oof": {"mean": float(consensus.mean()),
-                                    "min": float(consensus.min()),
-                                    "max": float(consensus.max())},
-                        "domain_bss": {
-                            d: raw_bss(y[st["domain3"] == d], consensus[st["domain3"] == d])
-                            for d in ["R_CORE", "R_ANCHOR", "F"]
-                        },
-                        "resumed_from_npz": True,
-                    }
-                    print(f"[Phase 4] year {year}  RESUME — {oof_npz.name} 재사용, "
-                          f"v15_oof_bss={oof_bss:.2f} gain_vs_base={oof_bss - bss:+.2f}")
-                    del z, consensus
-                    gc.collect()
-                else:
-                    print(f"[Phase 4] year {year}  V15 residual adapter crossfit "
-                          f"(seeds={list(CF_SEEDS)}, cfg n_estimators="
-                          f"{V15_CF_CFG['n_estimators']})")
-                    t4 = time.time()
-                    consensus, preds, corrs, seed_rows, fold_rows = run_v15_oof(
-                        year, X_adapter, y, p_base, rows
-                    )
-                    np.savez_compressed(
-                        oof_npz,
-                        v15_oof=np.asarray(consensus, np.float64),
-                        p_base=np.asarray(p_base, np.float64),
-                        target=np.asarray(y, np.float64),
-                        **{f"p_seed{int(s)}": np.asarray(p, np.float64)
-                           for s, p in zip(CF_SEEDS, preds)},
-                        **{f"corr_seed{int(s)}": np.asarray(c, np.float64)
-                           for s, c in corrs.items()},
-                    )
-                    pd.DataFrame(
-                        {
-                            ID: st["row_id"],
-                            "season": int(year),
-                            "domain3": st["domain3"],
-                            "target": y,
-                            "p_base": np.asarray(p_base, np.float64),
-                            "v15_oof": np.asarray(consensus, np.float64),
-                            "residual_l2_source": y - np.asarray(consensus, np.float64),
-                        }
-                    ).to_csv(
-                        VALIDATION_DIR / f"v15_oof_{year}.csv",
-                        index=False, float_format="%.17g",
-                    )
-                    pd.DataFrame(seed_rows).to_csv(
-                        VALIDATION_DIR / f"v15_seed_scores_{year}.csv", index=False
-                    )
-                    pd.DataFrame(fold_rows).to_csv(
-                        VALIDATION_DIR / f"v15_fold_scores_{year}.csv", index=False
-                    )
-                    oof_bss = raw_bss(y, consensus)
-                    print(f"    v15_oof_bss={oof_bss:.2f}  "
-                          f"gain_vs_base={oof_bss - bss:+.2f}  "
-                          f"sec={time.time() - t4:.1f}")
-                    phase4_summary["years"][str(year)] = {
-                        "source_year": st["source_year"],
-                        "n_rows": st["n_rows"],
-                        "adapter_matrix_shape": list(X_adapter.shape),
-                        "cf_seeds": list(CF_SEEDS),
-                        "v15_cf_cfg": V15_CF_CFG,
-                        "adapter_shrink": ADAPTER_SHRINK,
-                        "base_bss": bss,
-                        "v15_oof_bss": oof_bss,
-                        "gain_vs_base": oof_bss - bss,
-                        "official_score_base": official_score(y, p_base),
-                        "official_score_v15_oof": official_score(y, consensus),
-                        "seed_rows": seed_rows,
-                        "fold_rows": fold_rows,
-                        "v15_oof": {"mean": float(consensus.mean()),
-                                    "min": float(consensus.min()),
-                                    "max": float(consensus.max())},
-                        "domain_bss": {
-                            d: raw_bss(y[st["domain3"] == d], consensus[st["domain3"] == d])
-                            for d in ["R_CORE", "R_ANCHOR", "F"]
-                        },
-                        "sec": round(time.time() - t4, 1),
-                    }
-                    del consensus, preds, corrs
-                    gc.collect()
-
-            del p_base, parts, adapter_base, X_adapter, base_df
-            gc.collect()
-
-        phase2_summary["years"][str(year)] = ysum
-        del st, rows, blocks
-        gc.collect()
-
-    # ---------------- Phase 5 : PASS 2 (Layer 2) ----------------
-    phase5_summary = None
-    if PHASE >= 5:
-        missing = [y for y in PHASE5_SOURCE_YEARS if set(TARGET_YEARS) and y not in TARGET_YEARS]
-        if missing and _YEARS_ENV:
-            print()
-            print("!" * 78)
-            print("Phase 5 는 2-pass 의 PASS 2 이며 2020~2024 전체 V15_OOF 가 필요하다.")
-            print(f"현재 V18_REPRO_YEARS={TARGET_YEARS} 로 제한되어 있으나, "
-                  "Phase 4 산출물이 디스크에 있으면 그대로 사용한다.")
-            print("!" * 78)
-        print()
-        print("=" * 78)
-        print("[Phase 5] Layer 2 — V18 temporal-stable conditional Ridge (PASS 2)")
-        print("=" * 78)
-        t5 = time.time()
-        phase5_summary = run_phase5(screen, FEATURE_DUMP_DIR, VALIDATION_DIR)
-        print(f"[Phase 5] done  {time.time() - t5:.1f}s")
-
-    # ---------------- Phase 6 : deploy artifact ----------------
-    phase6_summary = None
-    if PHASE >= 6:
-        print()
-        print("=" * 78)
-        print("[Phase 6] Final artifact — deploy regime (2024 -> 2025)")
-        print("=" * 78)
-        t6 = time.time()
-        phase6_summary = run_phase6(screen, domain_means, FEATURE_DUMP_DIR, VALIDATION_DIR)
-        print(f"[Phase 6] done  {time.time() - t6:.1f}s")
-
-    # DOMAIN_MEANS 미래 접근 감사 (§14)
-    phase3_summary["domain_means_audit"] = {
-        "n_access": len(domain_means.access_log),
-        "future_access_count": domain_means.future_access_count(),
-        "max_accessed_season": domain_means.max_accessed_season(),
-        "policy": "V18 원본 전 시즌 groupby 유지. 읽기는 season <= source_year 만 assert.",
-    }
-    assert domain_means.future_access_count() == 0
-
-    phase2_summary["elapsed_sec"] = round(time.time() - global_start, 1)
-    phase3_summary["elapsed_sec"] = round(time.time() - global_start, 1)
-
-    merge_years_json(VALIDATION_DIR / "phase2_summary.json", phase2_summary)
-    if PHASE >= 3:
-        merge_years_json(VALIDATION_DIR / "phase3_summary.json", phase3_summary)
-    if PHASE >= 4 and phase4_summary["years"]:
-        phase4_summary["elapsed_sec"] = round(time.time() - global_start, 1)
-        merge_years_json(VALIDATION_DIR / "phase4_summary.json", phase4_summary)
-
-    metadata = {
-        "experiment_name": EXPERIMENT_NAME,
-        "source": "kaggle_kbo_v18_RECOVERED_FROM_V20_exact.ipynb",
-        "source_verified_against": "kaggle_kbo_v20_TEMPORAL_ROLE_USAGE_ONE_SHOT_submit.ipynb",
-        "protocol": PROTOCOL_VERSION,
-        "source_protocol": SOURCE_PROTOCOL,
-        "target": TARGET,
-        "phase_implemented": PHASE,
-        "architecture": {
-            "layers": 3,
-            "layer0": "recent 1-season anchor: LGBMClassifier + Ridge(a=1e4) + trend-centered LGBMRegressor, equal 1/3",
-            "layer1": (
-                "three-domain ExtraTrees residual adapter, shrink 0.50, "
-                "pitcher-half crossfit x3 seeds"
-                + ("" if PHASE >= 4 else "  [NOT IMPLEMENTED AT THIS PHASE]")
-            ),
-            "layer2": (
-                "temporal-stable conditional Ridge(a=1e3) on prev-year OOF residual, "
-                "gamma 0.75, R_CORE only"
-                + ("" if PHASE >= 5 else "  [NOT IMPLEMENTED AT THIS PHASE]")
-            ),
-            "router": "domain3 = F / R_ANCHOR / R_CORE, anchor from F & season<=2022",
-        },
-        "features": {
-            "raw": {"rawnum": len(RAWNUM), "cat_small": len(CAT_SMALL), "eng": len(ENG_COLS)},
-            "temporal": {"domain_means": True, "trailing_core_slope": True,
-                         "v18_stable_decay": V18_DECAY},
-            "historical": {"self_state": EXPECTED_DIMS["self_state"],
-                           "gseason": EXPECTED_DIMS["gseason"],
-                           "exact_asof_state": EXPECTED_DIMS["exact_asof_state"]},
-            "conditional": {"pitcher_conditional": EXPECTED_DIMS["pitcher_conditional"],
-                            "v18_stable": EXPECTED_DIMS["v18_stable"]},
-            "anchor": {"exact_lgb": EXPECTED_DIMS["exact_lgb_features"],
-                       "exact_ridge": EXPECTED_DIMS["ridge_features"],
-                       "trend_lgb": EXPECTED_DIMS["trend_features"],
-                       "adapter": EXPECTED_DIMS["adapter_matrix"]},
-        },
-        "model_params": {
-            "base_cfg": BASE_CFG,
-            "v15_cf_cfg": V15_CF_CFG,
-            "final_adapter_cfg": FINAL_ADAPTER_CFG,
-            "adapter_shrink": ADAPTER_SHRINK,
-            "cf_seeds": list(CF_SEEDS),
-            "v18": {
-                "history_years": V18_HISTORY_YEARS, "decay": V18_DECAY,
-                "parent_strength": V18_PARENT_STRENGTH, "hand_strength": V18_HAND_STRENGTH,
-                "pressure_hand_strength": V18_PRESSURE_HAND_STRENGTH,
-                "ridge_alpha": V18_RIDGE_ALPHA, "gamma": V18_GAMMA,
-                "gamma_stress": list(V18_GAMMA_STRESS), "route_domain": V18_ROUTE_DOMAIN,
-            },
-            "gate": {"min_gain_2023": MIN_GAIN_2023, "min_gain_2024": MIN_GAIN_2024,
-                     "min_core_gain_2024": MIN_CORE_GAIN_2024, "min_boot_p05": MIN_BOOT_P05,
-                     "min_boot_prob": MIN_BOOT_PROB, "min_late_gain": MIN_LATE_GAIN},
-        },
-        "validation": {
-            "scheme": "adjacent-season transition (2020->21, 21->22, 22->23, 23->24)",
-            "regime": "within_year_pitcher_crossfit for layer1; strict next-year for layer2",
-            "metric": "raw_bss = 100000*(1 - MSE/(ybar*(1-ybar)))",
-            "official_metric_also_reported": True,
-            "warning": "V18 original validation BSS is not directly comparable to the "
-                       "project's expanding-window validation.",
-        },
-        "reproduction": {
-            "structural_reproducibility": "CONFIRMED",
-            "numerical_exact_reproducibility": "PHASE 2/3 GATE PENDING",
-            "v18_original_lb": 1081.6824647538,
-            "v18_original_lb_source": "V20 notebook cell 0 markdown + metadata v19_design/v20",
-            "v15_parent_lb": 1044.25629,
-            "omitted_dead_code": OMITTED_DEAD_CODE,
-            "omitted_v20_constants": OMITTED_V20_CONSTANTS,
-            "unused_but_computed_blocks": sorted(UNUSED_BLOCK_NAMES),
-            "library_versions": library_versions(),
-        },
-    }
-    write_json(MODEL_DIR / "metadata.json", metadata)
-    write_json(VALIDATION_DIR / "metadata.json", metadata)
+    with open(
+        VALIDATION_DIR / "metadata.json",
+        "w",
+        encoding="utf-8",
+    ) as f:
+        json.dump(
+            validation_meta,
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
 
     print()
-    print("=" * 78)
-    print(f"DONE  phase={PHASE}  elapsed={time.time() - global_start:.1f}s")
-    print(f"  -> {VALIDATION_DIR}/phase2_summary.json")
-    if PHASE >= 3:
-        print(f"  -> {VALIDATION_DIR}/phase3_summary.json")
-        print(f"  -> {VALIDATION_DIR}/base_{{year}}.csv")
-    if PHASE >= 4 and phase4_summary["years"]:
-        print(f"  -> {VALIDATION_DIR}/phase4_summary.json")
-        print(f"  -> {VALIDATION_DIR}/v15_oof_{{year}}.csv")
-        print(f"  -> {VALIDATION_DIR}/v15_seed_scores_{{year}}.csv")
-        print(f"  -> {VALIDATION_DIR}/v15_fold_scores_{{year}}.csv")
-        print(f"  -> {FEATURE_DUMP_DIR}/v15_oof_{{year}}.npz")
-    if PHASE >= 5 and phase5_summary is not None:
-        print(f"  -> {VALIDATION_DIR}/phase5_summary.json")
-        print(f"  -> {VALIDATION_DIR}/gate.json  "
-              f"(V18_SUBMIT_RECOMMENDED="
-              f"{phase5_summary['promotion_gate']['submit_recommended']})")
-        print(f"  -> {VALIDATION_DIR}/fold_{{2021..2024}}.csv · oof.csv")
-        print(f"  -> {VALIDATION_DIR}/v18_strict_temporal_transfer.csv · "
-              f"gamma_stress.csv · v18_months.csv · v18_domains.csv")
-        print(f"  -> {FEATURE_DUMP_DIR}/p18_{{2021..2024}}.npz")
-    if PHASE >= 6 and phase6_summary is not None:
-        print(f"  -> {VALIDATION_DIR}/phase6_summary.json")
-        print(f"  -> {MODEL_PATH}  ({phase6_summary['artifact_mb']} MB, "
-              f"v18_stable_enabled={phase6_summary['v18_stable_enabled']})")
-        print(f"  -> {OUTPUT_PATH}")
-        print(f"  -> {FEATURE_DUMP_DIR}/deploy_2025.npz")
-    print(f"  -> {MODEL_DIR}/metadata.json")
-    print("=" * 78)
+    print("=" * 88)
+    print("Expanding Window Summary")
+    print("=" * 88)
+    for row in fold_rows:
+        print(
+            f"{row['validation_season']} | "
+            f"Brier={row['brier']:.10f} | "
+            f"BSS={row['bss_raw']:.2f} | "
+            f"trees={row['best_tree_count']}"
+        )
+    print("-" * 88)
+    print(
+        f"Pooled OOF Brier = {pooled['brier']:.10f}"
+    )
+    print(
+        f"Pooled OOF BSS   = {pooled['bss_raw']:.2f}"
+    )
+    print("=" * 88)
+
+    final_iterations = int(
+        fold_rows[-1]["best_tree_count"]
+    )
+
+    print(
+        f"Final iterations ({FINAL_ITERATION_STRATEGY}) "
+        f"= {final_iterations}"
+    )
+
+    artifact, elapsed = train_final(
+        train=train,
+        base_features=base_features,
+        cat_cols=cat_cols,
+        final_iterations=final_iterations,
+    )
+
+    joblib.dump(
+        artifact,
+        MODEL_PATH,
+        compress=3,
+    )
+
+    final_meta = {
+        "experiment_name": EXPERIMENT_NAME,
+        "baseline": "canonical cb_reg_v003 + Exact-ASOF5",
+        "residual": False,
+        "pitcher_conditional": False,
+        "routing": False,
+        "asof_pitcher_pitchmix_n_kept": True,
+        "n_features": len(artifact["features"]),
+        "features": artifact["features"],
+        "exact_cols": EXACT_COLS,
+        "final_iterations": final_iterations,
+        "elapsed_seconds": float(elapsed),
+        "pooled_oof_brier": float(pooled["brier"]),
+        "pooled_oof_bss_raw": float(pooled["bss_raw"]),
+    }
+
+    with open(
+        MODEL_DIR / "final_metadata.json",
+        "w",
+        encoding="utf-8",
+    ) as f:
+        json.dump(
+            final_meta,
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    # 재현성용 train.py 복사
+    try:
+        shutil.copy2(
+            Path(__file__).resolve(),
+            MODEL_DIR / "train.py",
+        )
+    except Exception:
+        pass
+
+    print()
+    print("=" * 88)
+    print("Final model saved")
+    print(f"- {MODEL_PATH}")
+    print(f"- features: {len(artifact['features'])}")
+    print(
+        "- asof_pitcher_pitchmix_n: "
+        f"{'YES' if 'asof_pitcher_pitchmix_n' in artifact['features'] else 'NO'}"
+    )
+    print("=" * 88)
 
 
 if __name__ == "__main__":
