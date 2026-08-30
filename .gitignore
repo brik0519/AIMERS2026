@@ -23,12 +23,13 @@ data/mlp_2024Validation/
 data/mlp_2024Validation/
 data/mlp_2024Validation/validation/ensemble_v*/oof_pred.csv
 data/trackman/
+
 **/oof_pred.csv
 **/oof.csv
+**/oof_predictions.csv
 
-data/trackman/
+validation/shift_v*/oof.csv
 validation/ensemble_v*/oof_pred.csv
-
 validation/rresid_v001/r_predictions.csv
 validation/rresid_v002/ridge_predictions.csv
 validation/fanchor_v001/oof_predictions.csv
@@ -42,4 +43,3 @@ Anker Concept/validation/cb_reg_v008/oof_pred.csv
 Anker Concept/validation/cb_reg_v010/oof_pred.csv
 validation/v18_repro_v001/oof.csv
 
-validation/shift_v*/oof.csv
