@@ -1,0 +1,37 @@
+{
+  "experiment": "hybrid_v001",
+  "arm": "ANCHOR(carry b_F) vs CONTROL, F rows, paired 3-seed",
+  "harness": "expanding window 2020~2024, eval_set=R-only (esfix)",
+  "PRIMARY_R_shape": "N/A (F experiment; R frozen in deployment)",
+  "Gate1_R_level": "N/A",
+  "Gate2_F_level_all_folds": [
+    {
+      "fold": 2020,
+      "gate2_f_level": "FAIL"
+    },
+    {
+      "fold": 2021,
+      "gate2_f_level": "FAIL"
+    },
+    {
+      "fold": 2022,
+      "gate2_f_level": "FAIL"
+    },
+    {
+      "fold": 2023,
+      "gate2_f_level": "FAIL"
+    },
+    {
+      "fold": 2024,
+      "gate2_f_level": "FAIL"
+    }
+  ],
+  "clean_folds_mean_d_F_total_carry": -1494.2548928313543,
+  "clean_folds_win": "0/4",
+  "verdict": "RECORD — 최종 판정은 LB (hyb_v001 제출 ΔLB)",
+  "gate_cfg": {
+    "f_level_min": -10.0,
+    "inconclusive_k": 2.0
+  },
+  "forbidden": "oracle b_F는 진단 전용. 배포 코드 사용 시 규칙 위반."
+}

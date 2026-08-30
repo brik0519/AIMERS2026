@@ -1,0 +1,95 @@
+{
+  "experiment_name": "fanchor_gran_v001",
+  "purpose": "F anchor temporal granularity diagnostic",
+  "validation_years": [
+    2021,
+    2022,
+    2023,
+    2024
+  ],
+  "fast_mode": true,
+  "model_seeds": [
+    42
+  ],
+  "anchor_strength": 100.0,
+  "anchor_fallback_rate": 0.5,
+  "residual_arm_names": [
+    "A1_v001_career_prev_season",
+    "B2_latest_half",
+    "B3_latest_quarter",
+    "B4_latest_month"
+  ],
+  "anchor_arms": [
+    {
+      "name": "A1_v001_career_prev_season",
+      "pitcher_mode": "career",
+      "league_mode": "prev_season"
+    },
+    {
+      "name": "A2_career_latest_half",
+      "pitcher_mode": "career",
+      "league_mode": "latest_half"
+    },
+    {
+      "name": "A3_career_latest_quarter",
+      "pitcher_mode": "career",
+      "league_mode": "latest_quarter"
+    },
+    {
+      "name": "A4_career_latest_month",
+      "pitcher_mode": "career",
+      "league_mode": "latest_month"
+    },
+    {
+      "name": "B1_prev_season",
+      "pitcher_mode": "prev_season",
+      "league_mode": "prev_season"
+    },
+    {
+      "name": "B2_latest_half",
+      "pitcher_mode": "latest_half",
+      "league_mode": "latest_half"
+    },
+    {
+      "name": "B3_latest_quarter",
+      "pitcher_mode": "latest_quarter",
+      "league_mode": "latest_quarter"
+    },
+    {
+      "name": "B4_latest_month",
+      "pitcher_mode": "latest_month",
+      "league_mode": "latest_month"
+    },
+    {
+      "name": "C2_same_half_prev_year",
+      "pitcher_mode": "same_half_prev_year",
+      "league_mode": "same_half_prev_year"
+    },
+    {
+      "name": "C3_same_quarter_prev_year",
+      "pitcher_mode": "same_quarter_prev_year",
+      "league_mode": "same_quarter_prev_year"
+    },
+    {
+      "name": "C4_same_month_prev_year",
+      "pitcher_mode": "same_month_prev_year",
+      "league_mode": "same_month_prev_year"
+    }
+  ],
+  "control_structure": "canonical control = base test-schema features + Exact-ASOF5 + HB-EB",
+  "anchor_training": "CatBoost target = control_success - anchor; trained on all R+F rows",
+  "causal_b_f_policy": "F mean residual from validation year y is applied only to validation year y+1; same-fold fitting/evaluation forbidden",
+  "rule_compliance": {
+    "test_rows_used": false,
+    "test_usage": "header only",
+    "test_row_aggregation": false,
+    "anchor_stats_source": "official labeled fold-train only",
+    "row_local_target_inputs": [
+      "pitcher_id",
+      "season",
+      "game_month"
+    ],
+    "same_period_prev_year": "target row game_month only + frozen prior-year train statistics"
+  },
+  "elapsed_seconds": 952.6424403190613
+}

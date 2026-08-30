@@ -1,0 +1,14 @@
+{
+  "experiment": "hyb_v001",
+  "fold": "2019-2023 -> 2024",
+  "n_F_2024": 30010,
+  "control_brier_2024_F": 0.24746446318788762,
+  "anchor_raw_brier_2024_F": 0.2477849158602494,
+  "anchor_guarded_brier_2024_F": 0.24778253665773553,
+  "b_f": -0.0015424663736491318,
+  "anchor_trees": 153,
+  "anchor_fold_seconds": 78.35655856132507,
+  "anchor_mean_2024_F": 0.5389010351439201,
+  "y_mean_2024_F": 0.45928023992002664,
+  "note": "paired local check #1 — 기록 목적, veto 아님 (30_* §3-4)"
+}

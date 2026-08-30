@@ -1,0 +1,28 @@
+{
+  "train_seasons": [
+    2019,
+    2020,
+    2021,
+    2022,
+    2023
+  ],
+  "validation_season": 2024,
+  "n_train": 1221585,
+  "n_validation": 253507,
+  "control_best_iteration_zero_based": 215,
+  "control_final_tree_count": 216,
+  "treatment_best_iteration_zero_based": 163,
+  "treatment_final_tree_count": 164,
+  "control_brier_2024": 0.2478470647701315,
+  "treatment_brier_2024": 0.24776783254731138,
+  "routed_l1_brier_2024": 0.24775597483928302,
+  "routed_l1_bss_2024": 821.014830986555,
+  "control_fold_seconds": 92.54321503639221,
+  "treatment_fold_seconds": 87.72836184501648,
+  "anchor_best_iteration_zero_based": 152,
+  "anchor_final_tree_count": 153,
+  "anchor_fold_seconds": 78.35655856132507,
+  "control_brier_2024_F": 0.24746446318788762,
+  "anchor_guarded_brier_2024_F": 0.24778253665773553,
+  "b_f": -0.0015424663736491318
+}
