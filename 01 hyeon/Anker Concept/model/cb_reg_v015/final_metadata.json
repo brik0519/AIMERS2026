@@ -1,0 +1,1009 @@
+{
+  "experiment_name": "cb_reg_v015",
+  "validation_method": "expanding_window",
+  "ablation": "R1_control_vs_RP_placebo_vs_R2_real",
+  "placebo_policy": {
+    "seed": 20260826,
+    "within": "batter_hand",
+    "source": "strictly-past frozen-bank cell delta",
+    "unseen_encoding": "zero",
+    "deployment_candidate": false
+  },
+  "folds": [
+    {
+      "experiment_name": "cb_reg_v015",
+      "train_seasons": [
+        2019,
+        2020
+      ],
+      "validation_season": 2021,
+      "n_train": 481500,
+      "n_validation": 247088,
+      "dynamic_anchor": {
+        "strength": 80.0,
+        "train_diagnostics": [
+          {
+            "n_rows": 237413,
+            "anchor_mean": 0.5469820485372106,
+            "anchor_std": 0.052868100651203495,
+            "current_n_mean": 768.7283173204501,
+            "current_n_median": 571.0,
+            "invalid_rows": 0,
+            "invalid_rate": 0.0,
+            "history_seasons": [],
+            "target_season": 2019
+          },
+          {
+            "n_rows": 244087,
+            "anchor_mean": 0.5391106446458108,
+            "anchor_std": 0.04960848120475154,
+            "current_n_mean": 743.9998484147046,
+            "current_n_median": 524.0,
+            "invalid_rows": 0,
+            "invalid_rate": 0.0,
+            "history_seasons": [
+              2019
+            ],
+            "target_season": 2020
+          }
+        ],
+        "validation_diagnostics": {
+          "n_rows": 247088,
+          "anchor_mean": 0.5310775875917566,
+          "anchor_std": 0.049731143591970145,
+          "current_n_mean": 712.0224171145503,
+          "current_n_median": 507.0,
+          "invalid_rows": 0,
+          "invalid_rate": 0.0,
+          "history_seasons": [
+            2019,
+            2020
+          ],
+          "target_season": 2021
+        }
+      },
+      "conditional": {
+        "real_feature": "cf_platoon_delta",
+        "placebo_feature": "cf_platoon_placebo_delta",
+        "strength": 80.0,
+        "unseen_encoding": "zero",
+        "placebo_policy": "deterministic within-batter_hand permutation of strictly-past cell delta",
+        "train_diagnostics": [
+          {
+            "target_season": 2019,
+            "n_rows": 237413,
+            "unseen_rows": 237413,
+            "unseen_rate": 1.0,
+            "mean_abs_real_delta": 0.0,
+            "mean_abs_placebo_delta": 0.0,
+            "mean_n": 0.0,
+            "history_seasons": [],
+            "placebo_seed": 20260826
+          },
+          {
+            "n_rows": 244087,
+            "unseen_rows": 54621,
+            "unseen_rate": 0.22377676811956393,
+            "mean_abs_real_delta": 0.01330587087302665,
+            "mean_abs_placebo_delta": 0.013224411675149334,
+            "mean_n": 496.73059196106306,
+            "history_seasons": [
+              2019
+            ],
+            "placebo_seed": 38788179,
+            "target_season": 2020
+          }
+        ],
+        "validation_diagnostics": {
+          "n_rows": 247088,
+          "unseen_rows": 50856,
+          "unseen_rate": 0.20582140775756005,
+          "mean_abs_real_delta": 0.014082634395932329,
+          "mean_abs_placebo_delta": 0.013569187405625144,
+          "mean_n": 839.6400756005958,
+          "history_seasons": [
+            2019,
+            2020
+          ],
+          "placebo_seed": 38798364,
+          "target_season": 2021
+        },
+        "placebo_sanity": {
+          "real_mean": -9.9677145348416e-05,
+          "placebo_mean": 0.00016577421581391133,
+          "real_std": 0.01989780677772333,
+          "placebo_std": 0.019351309667944364,
+          "seen_real_placebo_corr": 0.0018891183684386303,
+          "seen_rate": 0.7941785922424399
+        }
+      },
+      "r0_anchor_only": {
+        "brier": 0.2466797929369818,
+        "bss": 902.6289118067716
+      },
+      "r1_residual_control": {
+        "brier": 0.24535619797476815,
+        "bss": 1434.3497292247496,
+        "iterations": 104
+      },
+      "rp_residual_placebo": {
+        "brier": 0.24536513568024781,
+        "bss": 1430.7592319811376,
+        "iterations": 42
+      },
+      "r2_residual_real": {
+        "brier": 0.24528190999677293,
+        "bss": 1464.1930464869154,
+        "iterations": 45
+      },
+      "causal_contrasts": {
+        "placebo_vs_control_bss": -3.590497243611935,
+        "real_vs_placebo_bss": 33.43381450577772,
+        "real_vs_control_bss": 29.843317262165783,
+        "placebo_vs_control_brier": -8.937705479661329e-06,
+        "real_vs_placebo_brier": 8.322568347488013e-05,
+        "real_vs_control_brier": 7.42879779952188e-05
+      },
+      "domain_metrics": [
+        {
+          "domain": "R",
+          "n": 221227,
+          "actual_mean": 0.5127629086865527,
+          "r0_brier": 0.24875816965726502,
+          "r1_brier": 0.2486033357310055,
+          "rp_brier": 0.24861268411072965,
+          "r2_brier": 0.24851285989898472
+        },
+        {
+          "domain": "F",
+          "n": 25861,
+          "actual_mean": 0.7038397587100267,
+          "r0_brier": 0.22890039358281555,
+          "r1_brier": 0.2175786741203493,
+          "rp_brier": 0.21758409872768594,
+          "r2_brier": 0.2176428645609193
+        }
+      ],
+      "seen_unseen": [
+        {
+          "validation_season": 2021,
+          "group": "seen",
+          "n_rows": 196232,
+          "share": 0.7941785922424399,
+          "r0_brier": 0.2468267283952877,
+          "r1_brier": 0.24530470797552292,
+          "rp_brier": 0.24539389122963176,
+          "r2_brier": 0.24533898108223678,
+          "delta_brier_placebo_vs_control": -8.918325410883776e-05,
+          "delta_brier_real_vs_placebo": 5.491014739497646e-05,
+          "delta_brier_real_vs_control": -3.42731067138613e-05,
+          "residual_mse_r1": 0.24530470797552292,
+          "residual_mse_rp": 0.24539389122963176,
+          "residual_mse_r2": 0.24533898108223678,
+          "delta_residual_mse_placebo_vs_control": -8.918325410883776e-05,
+          "delta_residual_mse_real_vs_placebo": 5.491014739497646e-05
+        },
+        {
+          "validation_season": 2021,
+          "group": "unseen",
+          "n_rows": 50856,
+          "share": 0.20582140775756005,
+          "r0_brier": 0.24611283055586117,
+          "r1_brier": 0.2455548763122675,
+          "rp_brier": 0.24525418006111332,
+          "r2_brier": 0.24506169658551868,
+          "delta_brier_placebo_vs_control": 0.00030069625115417,
+          "delta_brier_real_vs_placebo": 0.0001924834755946403,
+          "delta_brier_real_vs_control": 0.0004931797267488103,
+          "residual_mse_r1": 0.2455548763122675,
+          "residual_mse_rp": 0.24525418006111332,
+          "residual_mse_r2": 0.24506169658551868,
+          "delta_residual_mse_placebo_vs_control": 0.00030069625115417,
+          "delta_residual_mse_real_vs_placebo": 0.0001924834755946403
+        }
+      ],
+      "elapsed_seconds": 68.72727417945862
+    },
+    {
+      "experiment_name": "cb_reg_v015",
+      "train_seasons": [
+        2019,
+        2020,
+        2021
+      ],
+      "validation_season": 2022,
+      "n_train": 728588,
+      "n_validation": 247472,
+      "dynamic_anchor": {
+        "strength": 80.0,
+        "train_diagnostics": [
+          {
+            "n_rows": 237413,
+            "anchor_mean": 0.5469820485372106,
+            "anchor_std": 0.052868100651203495,
+            "current_n_mean": 768.7283173204501,
+            "current_n_median": 571.0,
+            "invalid_rows": 0,
+            "invalid_rate": 0.0,
+            "history_seasons": [],
+            "target_season": 2019
+          },
+          {
+            "n_rows": 244087,
+            "anchor_mean": 0.5391106446458108,
+            "anchor_std": 0.04960848120475154,
+            "current_n_mean": 743.9998484147046,
+            "current_n_median": 524.0,
+            "invalid_rows": 0,
+            "invalid_rate": 0.0,
+            "history_seasons": [
+              2019
+            ],
+            "target_season": 2020
+          },
+          {
+            "n_rows": 247088,
+            "anchor_mean": 0.5310775875917566,
+            "anchor_std": 0.049731143591970145,
+            "current_n_mean": 712.0224171145503,
+            "current_n_median": 507.0,
+            "invalid_rows": 0,
+            "invalid_rate": 0.0,
+            "history_seasons": [
+              2019,
+              2020
+            ],
+            "target_season": 2021
+          }
+        ],
+        "validation_diagnostics": {
+          "n_rows": 247472,
+          "anchor_mean": 0.5267543323194004,
+          "anchor_std": 0.06064331446374462,
+          "current_n_mean": 734.0844822848645,
+          "current_n_median": 527.0,
+          "invalid_rows": 0,
+          "invalid_rate": 0.0,
+          "history_seasons": [
+            2019,
+            2020,
+            2021
+          ],
+          "target_season": 2022
+        }
+      },
+      "conditional": {
+        "real_feature": "cf_platoon_delta",
+        "placebo_feature": "cf_platoon_placebo_delta",
+        "strength": 80.0,
+        "unseen_encoding": "zero",
+        "placebo_policy": "deterministic within-batter_hand permutation of strictly-past cell delta",
+        "train_diagnostics": [
+          {
+            "target_season": 2019,
+            "n_rows": 237413,
+            "unseen_rows": 237413,
+            "unseen_rate": 1.0,
+            "mean_abs_real_delta": 0.0,
+            "mean_abs_placebo_delta": 0.0,
+            "mean_n": 0.0,
+            "history_seasons": [],
+            "placebo_seed": 20260826
+          },
+          {
+            "n_rows": 244087,
+            "unseen_rows": 54621,
+            "unseen_rate": 0.22377676811956393,
+            "mean_abs_real_delta": 0.01330587087302665,
+            "mean_abs_placebo_delta": 0.013224411675149334,
+            "mean_n": 496.73059196106306,
+            "history_seasons": [
+              2019
+            ],
+            "placebo_seed": 38788179,
+            "target_season": 2020
+          },
+          {
+            "n_rows": 247088,
+            "unseen_rows": 50856,
+            "unseen_rate": 0.20582140775756005,
+            "mean_abs_real_delta": 0.014082634395932329,
+            "mean_abs_placebo_delta": 0.013569187405625144,
+            "mean_n": 839.6400756005958,
+            "history_seasons": [
+              2019,
+              2020
+            ],
+            "placebo_seed": 38798364,
+            "target_season": 2021
+          }
+        ],
+        "validation_diagnostics": {
+          "n_rows": 247472,
+          "unseen_rows": 38950,
+          "unseen_rate": 0.15739154328570504,
+          "mean_abs_real_delta": 0.014587740483838218,
+          "mean_abs_placebo_delta": 0.014743143660914282,
+          "mean_n": 1242.278601215491,
+          "history_seasons": [
+            2019,
+            2020,
+            2021
+          ],
+          "placebo_seed": 38808549,
+          "target_season": 2022
+        },
+        "placebo_sanity": {
+          "real_mean": -0.0006908179383277894,
+          "placebo_mean": 0.0003908490427755069,
+          "real_std": 0.020191755519447952,
+          "placebo_std": 0.02001502413813498,
+          "seen_real_placebo_corr": -0.11832987291804593,
+          "seen_rate": 0.842608456714295
+        }
+      },
+      "r0_anchor_only": {
+        "brier": 0.24602989459512006,
+        "bss": 1257.6930383335352
+      },
+      "r1_residual_control": {
+        "brier": 0.24346600184895348,
+        "bss": 2286.692725446324,
+        "iterations": 187
+      },
+      "rp_residual_placebo": {
+        "brier": 0.24343943601961784,
+        "bss": 2297.354727636209,
+        "iterations": 232
+      },
+      "r2_residual_real": {
+        "brier": 0.24333859136134287,
+        "bss": 2337.8279970298295,
+        "iterations": 175
+      },
+      "causal_contrasts": {
+        "placebo_vs_control_bss": 10.662002189885243,
+        "real_vs_placebo_bss": 40.473269393620285,
+        "real_vs_control_bss": 51.13527158350553,
+        "placebo_vs_control_brier": 2.6565829335634117e-05,
+        "real_vs_placebo_brier": 0.0001008446582749789,
+        "real_vs_control_brier": 0.00012741048761061302
+      },
+      "domain_metrics": [
+        {
+          "domain": "R",
+          "n": 217024,
+          "actual_mean": 0.5036908360365674,
+          "r0_brier": 0.2490767633295727,
+          "r1_brier": 0.24840875682140798,
+          "rp_brier": 0.2484113173348755,
+          "r2_brier": 0.24833746526385886
+        },
+        {
+          "domain": "F",
+          "n": 30448,
+          "actual_mean": 0.7087493431424067,
+          "r0_brier": 0.22431274929080322,
+          "r1_brier": 0.20823556125706016,
+          "rp_brier": 0.2080013917946282,
+          "r2_brier": 0.20770815225796563
+        }
+      ],
+      "seen_unseen": [
+        {
+          "validation_season": 2022,
+          "group": "seen",
+          "n_rows": 208522,
+          "share": 0.842608456714295,
+          "r0_brier": 0.2461410771941632,
+          "r1_brier": 0.2436237859984393,
+          "rp_brier": 0.24362379210021368,
+          "r2_brier": 0.24349798236078582,
+          "delta_brier_placebo_vs_control": -6.101774363553858e-09,
+          "delta_brier_real_vs_placebo": 0.00012580973942785678,
+          "delta_brier_real_vs_control": 0.00012580363765349323,
+          "residual_mse_r1": 0.24362392509179592,
+          "residual_mse_rp": 0.24362379210021368,
+          "residual_mse_r2": 0.24349798236078582,
+          "delta_residual_mse_placebo_vs_control": 1.3299158224677754e-07,
+          "delta_residual_mse_real_vs_placebo": 0.00012580973942785678
+        },
+        {
+          "validation_season": 2022,
+          "group": "unseen",
+          "n_rows": 38950,
+          "share": 0.15739154328570504,
+          "r0_brier": 0.24543466948811993,
+          "r1_brier": 0.2426212915429434,
+          "rp_brier": 0.24245247071440593,
+          "r2_brier": 0.24248527865310562,
+          "delta_brier_placebo_vs_control": 0.00016882082853747482,
+          "delta_brier_real_vs_placebo": -3.2807938699697115e-05,
+          "delta_brier_real_vs_control": 0.0001360128898377777,
+          "residual_mse_r1": 0.2426212915429434,
+          "residual_mse_rp": 0.24245247071440593,
+          "residual_mse_r2": 0.24248527865310562,
+          "delta_residual_mse_placebo_vs_control": 0.00016882082853747482,
+          "delta_residual_mse_real_vs_placebo": -3.2807938699697115e-05
+        }
+      ],
+      "elapsed_seconds": 171.84160709381104
+    },
+    {
+      "experiment_name": "cb_reg_v015",
+      "train_seasons": [
+        2019,
+        2020,
+        2021,
+        2022
+      ],
+      "validation_season": 2023,
+      "n_train": 976060,
+      "n_validation": 245525,
+      "dynamic_anchor": {
+        "strength": 80.0,
+        "train_diagnostics": [
+          {
+            "n_rows": 237413,
+            "anchor_mean": 0.5469820485372106,
+            "anchor_std": 0.052868100651203495,
+            "current_n_mean": 768.7283173204501,
+            "current_n_median": 571.0,
+            "invalid_rows": 0,
+            "invalid_rate": 0.0,
+            "history_seasons": [],
+            "target_season": 2019
+          },
+          {
+            "n_rows": 244087,
+            "anchor_mean": 0.5391106446458108,
+            "anchor_std": 0.04960848120475154,
+            "current_n_mean": 743.9998484147046,
+            "current_n_median": 524.0,
+            "invalid_rows": 0,
+            "invalid_rate": 0.0,
+            "history_seasons": [
+              2019
+            ],
+            "target_season": 2020
+          },
+          {
+            "n_rows": 247088,
+            "anchor_mean": 0.5310775875917566,
+            "anchor_std": 0.049731143591970145,
+            "current_n_mean": 712.0224171145503,
+            "current_n_median": 507.0,
+            "invalid_rows": 0,
+            "invalid_rate": 0.0,
+            "history_seasons": [
+              2019,
+              2020
+            ],
+            "target_season": 2021
+          },
+          {
+            "n_rows": 247472,
+            "anchor_mean": 0.5267543323194004,
+            "anchor_std": 0.06064331446374462,
+            "current_n_mean": 734.0844822848645,
+            "current_n_median": 527.0,
+            "invalid_rows": 0,
+            "invalid_rate": 0.0,
+            "history_seasons": [
+              2019,
+              2020,
+              2021
+            ],
+            "target_season": 2022
+          }
+        ],
+        "validation_diagnostics": {
+          "n_rows": 245525,
+          "anchor_mean": 0.5077336167732037,
+          "anchor_std": 0.05268463602219438,
+          "current_n_mean": 702.6150168007331,
+          "current_n_median": 526.0,
+          "invalid_rows": 0,
+          "invalid_rate": 0.0,
+          "history_seasons": [
+            2019,
+            2020,
+            2021,
+            2022
+          ],
+          "target_season": 2023
+        }
+      },
+      "conditional": {
+        "real_feature": "cf_platoon_delta",
+        "placebo_feature": "cf_platoon_placebo_delta",
+        "strength": 80.0,
+        "unseen_encoding": "zero",
+        "placebo_policy": "deterministic within-batter_hand permutation of strictly-past cell delta",
+        "train_diagnostics": [
+          {
+            "target_season": 2019,
+            "n_rows": 237413,
+            "unseen_rows": 237413,
+            "unseen_rate": 1.0,
+            "mean_abs_real_delta": 0.0,
+            "mean_abs_placebo_delta": 0.0,
+            "mean_n": 0.0,
+            "history_seasons": [],
+            "placebo_seed": 20260826
+          },
+          {
+            "n_rows": 244087,
+            "unseen_rows": 54621,
+            "unseen_rate": 0.22377676811956393,
+            "mean_abs_real_delta": 0.01330587087302665,
+            "mean_abs_placebo_delta": 0.013224411675149334,
+            "mean_n": 496.73059196106306,
+            "history_seasons": [
+              2019
+            ],
+            "placebo_seed": 38788179,
+            "target_season": 2020
+          },
+          {
+            "n_rows": 247088,
+            "unseen_rows": 50856,
+            "unseen_rate": 0.20582140775756005,
+            "mean_abs_real_delta": 0.014082634395932329,
+            "mean_abs_placebo_delta": 0.013569187405625144,
+            "mean_n": 839.6400756005958,
+            "history_seasons": [
+              2019,
+              2020
+            ],
+            "placebo_seed": 38798364,
+            "target_season": 2021
+          },
+          {
+            "n_rows": 247472,
+            "unseen_rows": 38950,
+            "unseen_rate": 0.15739154328570504,
+            "mean_abs_real_delta": 0.014587740483838218,
+            "mean_abs_placebo_delta": 0.014743143660914282,
+            "mean_n": 1242.278601215491,
+            "history_seasons": [
+              2019,
+              2020,
+              2021
+            ],
+            "placebo_seed": 38808549,
+            "target_season": 2022
+          }
+        ],
+        "validation_diagnostics": {
+          "n_rows": 245525,
+          "unseen_rows": 33878,
+          "unseen_rate": 0.13798187557275227,
+          "mean_abs_real_delta": 0.015134261314696185,
+          "mean_abs_placebo_delta": 0.014755380863362954,
+          "mean_n": 1605.343256287547,
+          "history_seasons": [
+            2019,
+            2020,
+            2021,
+            2022
+          ],
+          "placebo_seed": 38818734,
+          "target_season": 2023
+        },
+        "placebo_sanity": {
+          "real_mean": -0.0003254993474654077,
+          "placebo_mean": -0.0009965455016419647,
+          "real_std": 0.020755006619266422,
+          "placebo_std": 0.020264262729850335,
+          "seen_real_placebo_corr": 0.007092973193826347,
+          "seen_rate": 0.8620181244272478
+        }
+      },
+      "r0_anchor_only": {
+        "brier": 0.24885372505821923,
+        "bss": 458.50924851127246
+      },
+      "r1_residual_control": {
+        "brier": 0.24899736050020668,
+        "bss": 401.05507129598357,
+        "iterations": 1
+      },
+      "rp_residual_placebo": {
+        "brier": 0.24900199778681373,
+        "bss": 399.2001566395956,
+        "iterations": 1
+      },
+      "r2_residual_real": {
+        "brier": 0.24900199778681373,
+        "bss": 399.2001566395956,
+        "iterations": 1
+      },
+      "causal_contrasts": {
+        "placebo_vs_control_bss": -1.8549146563879617,
+        "real_vs_placebo_bss": 0.0,
+        "real_vs_control_bss": -1.8549146563879617,
+        "placebo_vs_control_brier": -4.637286607045432e-06,
+        "real_vs_placebo_brier": 0.0,
+        "real_vs_control_brier": -4.637286607045432e-06
+      },
+      "domain_metrics": [
+        {
+          "domain": "R",
+          "n": 219839,
+          "actual_mean": 0.5031181910398064,
+          "r0_brier": 0.2483859813952843,
+          "r1_brier": 0.24841567199456496,
+          "rp_brier": 0.24841549486593262,
+          "r2_brier": 0.24841549486593262
+        },
+        {
+          "domain": "F",
+          "n": 25686,
+          "actual_mean": 0.47290352721326795,
+          "r0_brier": 0.2528570069672728,
+          "r1_brier": 0.2539758631628155,
+          "rp_brier": 0.25402170562857845,
+          "r2_brier": 0.25402170562857845
+        }
+      ],
+      "seen_unseen": [
+        {
+          "validation_season": 2023,
+          "group": "seen",
+          "n_rows": 211647,
+          "share": 0.8620181244272478,
+          "r0_brier": 0.24878630883448458,
+          "r1_brier": 0.24892876353841273,
+          "rp_brier": 0.24893527636937438,
+          "r2_brier": 0.24893527636937438,
+          "delta_brier_placebo_vs_control": -6.512830961646898e-06,
+          "delta_brier_real_vs_placebo": 0.0,
+          "delta_brier_real_vs_control": -6.512830961646898e-06,
+          "residual_mse_r1": 0.24892876353841273,
+          "residual_mse_rp": 0.24893527636937438,
+          "residual_mse_r2": 0.24893527636937438,
+          "delta_residual_mse_placebo_vs_control": -6.512830961646898e-06,
+          "delta_residual_mse_real_vs_placebo": 0.0
+        },
+        {
+          "validation_season": 2023,
+          "group": "unseen",
+          "n_rows": 33878,
+          "share": 0.13798187557275227,
+          "r0_brier": 0.2492748963642222,
+          "r1_brier": 0.24942590826491545,
+          "rp_brier": 0.24941882840954183,
+          "r2_brier": 0.24941882840954183,
+          "delta_brier_placebo_vs_control": 7.079855373626209e-06,
+          "delta_brier_real_vs_placebo": 0.0,
+          "delta_brier_real_vs_control": 7.079855373626209e-06,
+          "residual_mse_r1": 0.24942590826491545,
+          "residual_mse_rp": 0.24941882840954183,
+          "residual_mse_r2": 0.24941882840954183,
+          "delta_residual_mse_placebo_vs_control": 7.079855373626209e-06,
+          "delta_residual_mse_real_vs_placebo": 0.0
+        }
+      ],
+      "elapsed_seconds": 90.36657762527466
+    },
+    {
+      "experiment_name": "cb_reg_v015",
+      "train_seasons": [
+        2019,
+        2020,
+        2021,
+        2022,
+        2023
+      ],
+      "validation_season": 2024,
+      "n_train": 1221585,
+      "n_validation": 253507,
+      "dynamic_anchor": {
+        "strength": 80.0,
+        "train_diagnostics": [
+          {
+            "n_rows": 237413,
+            "anchor_mean": 0.5469820485372106,
+            "anchor_std": 0.052868100651203495,
+            "current_n_mean": 768.7283173204501,
+            "current_n_median": 571.0,
+            "invalid_rows": 0,
+            "invalid_rate": 0.0,
+            "history_seasons": [],
+            "target_season": 2019
+          },
+          {
+            "n_rows": 244087,
+            "anchor_mean": 0.5391106446458108,
+            "anchor_std": 0.04960848120475154,
+            "current_n_mean": 743.9998484147046,
+            "current_n_median": 524.0,
+            "invalid_rows": 0,
+            "invalid_rate": 0.0,
+            "history_seasons": [
+              2019
+            ],
+            "target_season": 2020
+          },
+          {
+            "n_rows": 247088,
+            "anchor_mean": 0.5310775875917566,
+            "anchor_std": 0.049731143591970145,
+            "current_n_mean": 712.0224171145503,
+            "current_n_median": 507.0,
+            "invalid_rows": 0,
+            "invalid_rate": 0.0,
+            "history_seasons": [
+              2019,
+              2020
+            ],
+            "target_season": 2021
+          },
+          {
+            "n_rows": 247472,
+            "anchor_mean": 0.5267543323194004,
+            "anchor_std": 0.06064331446374462,
+            "current_n_mean": 734.0844822848645,
+            "current_n_median": 527.0,
+            "invalid_rows": 0,
+            "invalid_rate": 0.0,
+            "history_seasons": [
+              2019,
+              2020,
+              2021
+            ],
+            "target_season": 2022
+          },
+          {
+            "n_rows": 245525,
+            "anchor_mean": 0.5077336167732037,
+            "anchor_std": 0.05268463602219438,
+            "current_n_mean": 702.6150168007331,
+            "current_n_median": 526.0,
+            "invalid_rows": 0,
+            "invalid_rate": 0.0,
+            "history_seasons": [
+              2019,
+              2020,
+              2021,
+              2022
+            ],
+            "target_season": 2023
+          }
+        ],
+        "validation_diagnostics": {
+          "n_rows": 253507,
+          "anchor_mean": 0.49946689540295375,
+          "anchor_std": 0.04909954456347911,
+          "current_n_mean": 687.150240427286,
+          "current_n_median": 505.0,
+          "invalid_rows": 0,
+          "invalid_rate": 0.0,
+          "history_seasons": [
+            2019,
+            2020,
+            2021,
+            2022,
+            2023
+          ],
+          "target_season": 2024
+        }
+      },
+      "conditional": {
+        "real_feature": "cf_platoon_delta",
+        "placebo_feature": "cf_platoon_placebo_delta",
+        "strength": 80.0,
+        "unseen_encoding": "zero",
+        "placebo_policy": "deterministic within-batter_hand permutation of strictly-past cell delta",
+        "train_diagnostics": [
+          {
+            "target_season": 2019,
+            "n_rows": 237413,
+            "unseen_rows": 237413,
+            "unseen_rate": 1.0,
+            "mean_abs_real_delta": 0.0,
+            "mean_abs_placebo_delta": 0.0,
+            "mean_n": 0.0,
+            "history_seasons": [],
+            "placebo_seed": 20260826
+          },
+          {
+            "n_rows": 244087,
+            "unseen_rows": 54621,
+            "unseen_rate": 0.22377676811956393,
+            "mean_abs_real_delta": 0.01330587087302665,
+            "mean_abs_placebo_delta": 0.013224411675149334,
+            "mean_n": 496.73059196106306,
+            "history_seasons": [
+              2019
+            ],
+            "placebo_seed": 38788179,
+            "target_season": 2020
+          },
+          {
+            "n_rows": 247088,
+            "unseen_rows": 50856,
+            "unseen_rate": 0.20582140775756005,
+            "mean_abs_real_delta": 0.014082634395932329,
+            "mean_abs_placebo_delta": 0.013569187405625144,
+            "mean_n": 839.6400756005958,
+            "history_seasons": [
+              2019,
+              2020
+            ],
+            "placebo_seed": 38798364,
+            "target_season": 2021
+          },
+          {
+            "n_rows": 247472,
+            "unseen_rows": 38950,
+            "unseen_rate": 0.15739154328570504,
+            "mean_abs_real_delta": 0.014587740483838218,
+            "mean_abs_placebo_delta": 0.014743143660914282,
+            "mean_n": 1242.278601215491,
+            "history_seasons": [
+              2019,
+              2020,
+              2021
+            ],
+            "placebo_seed": 38808549,
+            "target_season": 2022
+          },
+          {
+            "n_rows": 245525,
+            "unseen_rows": 33878,
+            "unseen_rate": 0.13798187557275227,
+            "mean_abs_real_delta": 0.015134261314696185,
+            "mean_abs_placebo_delta": 0.014755380863362954,
+            "mean_n": 1605.343256287547,
+            "history_seasons": [
+              2019,
+              2020,
+              2021,
+              2022
+            ],
+            "placebo_seed": 38818734,
+            "target_season": 2023
+          }
+        ],
+        "validation_diagnostics": {
+          "n_rows": 253507,
+          "unseen_rows": 50357,
+          "unseen_rate": 0.19864145763233362,
+          "mean_abs_real_delta": 0.01266997163480301,
+          "mean_abs_placebo_delta": 0.013731863027290663,
+          "mean_n": 1640.5743391701214,
+          "history_seasons": [
+            2019,
+            2020,
+            2021,
+            2022,
+            2023
+          ],
+          "placebo_seed": 38828919,
+          "target_season": 2024
+        },
+        "placebo_sanity": {
+          "real_mean": -0.00020167842804039604,
+          "placebo_mean": 0.0014516462323864276,
+          "real_std": 0.01839554057303541,
+          "placebo_std": 0.019257781386728092,
+          "seen_real_placebo_corr": -0.10164019537546867,
+          "seen_rate": 0.8013585423676663
+        }
+      },
+      "r0_anchor_only": {
+        "brier": 0.24883576403205065,
+        "bss": 388.76533062789343
+      },
+      "r1_residual_control": {
+        "brier": 0.2480092474194805,
+        "bss": 719.6274981829416,
+        "iterations": 132
+      },
+      "rp_residual_placebo": {
+        "brier": 0.2480358493325952,
+        "bss": 708.9785087973872,
+        "iterations": 250
+      },
+      "r2_residual_real": {
+        "brier": 0.24793643904649826,
+        "bss": 748.7733565174153,
+        "iterations": 143
+      },
+      "causal_contrasts": {
+        "placebo_vs_control_bss": -10.648989385554387,
+        "real_vs_placebo_bss": 39.79484772002809,
+        "real_vs_control_bss": 29.1458583344737,
+        "placebo_vs_control_brier": -2.660191311470994e-05,
+        "real_vs_placebo_brier": 9.941028609694591e-05,
+        "real_vs_control_brier": 7.280837298223597e-05
+      },
+      "domain_metrics": [
+        {
+          "domain": "R",
+          "n": 223497,
+          "actual_mean": 0.4897067969592433,
+          "r0_brier": 0.24855679234824388,
+          "r1_brier": 0.24800696592189111,
+          "rp_brier": 0.24801425298952465,
+          "r2_brier": 0.2479379358826419
+        },
+        {
+          "domain": "F",
+          "n": 30010,
+          "actual_mean": 0.45928023992002664,
+          "r0_brier": 0.25091338263970686,
+          "r1_brier": 0.24802623868461668,
+          "rp_brier": 0.24819668631650807,
+          "r2_brier": 0.24792529148276649
+        }
+      ],
+      "seen_unseen": [
+        {
+          "validation_season": 2024,
+          "group": "seen",
+          "n_rows": 203150,
+          "share": 0.8013585423676663,
+          "r0_brier": 0.2490517504237493,
+          "r1_brier": 0.24810311635124901,
+          "rp_brier": 0.24815681935479164,
+          "r2_brier": 0.24802931833023242,
+          "delta_brier_placebo_vs_control": -5.370300354262669e-05,
+          "delta_brier_real_vs_placebo": 0.00012750102455921786,
+          "delta_brier_real_vs_control": 7.379802101659116e-05,
+          "residual_mse_r1": 0.24810311635124901,
+          "residual_mse_rp": 0.24815681935479164,
+          "residual_mse_r2": 0.24802931833023237,
+          "delta_residual_mse_placebo_vs_control": -5.370300354262669e-05,
+          "delta_residual_mse_real_vs_placebo": 0.00012750102455927337
+        },
+        {
+          "validation_season": 2024,
+          "group": "unseen",
+          "n_rows": 50357,
+          "share": 0.19864145763233362,
+          "r0_brier": 0.24796443262879833,
+          "r1_brier": 0.24763056176527629,
+          "rp_brier": 0.2475478325720809,
+          "r2_brier": 0.24756174582627885,
+          "delta_brier_placebo_vs_control": 8.272919319537997e-05,
+          "delta_brier_real_vs_placebo": -1.3913254197944758e-05,
+          "delta_brier_real_vs_control": 6.881593899743521e-05,
+          "residual_mse_r1": 0.24763056176527629,
+          "residual_mse_rp": 0.2475478325720809,
+          "residual_mse_r2": 0.24756174582627885,
+          "delta_residual_mse_placebo_vs_control": 8.272919319537997e-05,
+          "delta_residual_mse_real_vs_placebo": -1.3913254197944758e-05
+        }
+      ],
+      "elapsed_seconds": 268.304172039032
+    }
+  ],
+  "pooled": {
+    "R1_CONTROL": {
+      "brier": 0.24646207686569263,
+      "bss": 1360.2813363440887
+    },
+    "RP_PLACEBO": {
+      "brier": 0.24646561598621325,
+      "bss": 1358.864899962029
+    },
+    "R2_REAL": {
+      "brier": 0.24639443837976238,
+      "bss": 1387.3517940300846
+    }
+  },
+  "causal_decomposition": {
+    "placebo_vs_control_bss": -1.4164363820596009,
+    "real_vs_placebo_bss": 28.486894068055562,
+    "real_vs_control_bss": 27.07045768599596
+  },
+  "final_iterations": {
+    "R1_CONTROL": 132,
+    "RP_PLACEBO": 250,
+    "R2_REAL": 143
+  },
+  "elapsed_seconds": 849.6645843982697
+}

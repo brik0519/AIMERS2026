@@ -1,0 +1,30 @@
+{
+  "experiment": "hybrid_v001",
+  "folds": [
+    2020,
+    2021,
+    2022,
+    2023,
+    2024
+  ],
+  "seeds": [
+    42,
+    2026,
+    314
+  ],
+  "eval_set": "R-only (esfix)",
+  "arms": [
+    "CONTROL 52f",
+    "ANCHOR 52f residual + b_F"
+  ],
+  "b_f_policy": {
+    "deployable": "carry (직전 fold 잔차)",
+    "oracle": "진단 전용"
+  },
+  "elapsed_seconds": 1384.6492066383362,
+  "rule_compliance": {
+    "test_usage": "header only",
+    "labels": "official train only",
+    "b_f_carry_source": "previous fold residual (past labels only)"
+  }
+}

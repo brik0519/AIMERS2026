@@ -1,0 +1,31 @@
+{
+  "experiment_name": "fanchor_dyn_v001",
+  "formula": "A_t=(1-alpha_t)*A_prev+alpha_t*R_t",
+  "alpha_formula": "alpha_t=lambda*n_t/(n_t+kappa)",
+  "A_prev": "hyb_v001 career pitcher history + previous-season league prior",
+  "R_t": "exact_pitcher_season_success_rate",
+  "n_t": "exact_pitcher_season_n",
+  "kappa": 100.0,
+  "lambda_grid": [
+    0.0,
+    0.25,
+    0.5,
+    1.0
+  ],
+  "validation_years": [
+    2021,
+    2022,
+    2023,
+    2024
+  ],
+  "b_f": false,
+  "l2": false,
+  "rule_compliance": {
+    "test_rows_used": false,
+    "test_usage": "header only",
+    "test_row_aggregation": false,
+    "dynamic_state_source": "current row official ASOF only",
+    "historical_anchor_source": "official labeled fold-train only"
+  },
+  "elapsed_seconds": 1010.1523370742798
+}

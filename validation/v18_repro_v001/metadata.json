@@ -1,0 +1,172 @@
+{
+  "experiment_name": "v18_repro_v001",
+  "source": "kaggle_kbo_v18_RECOVERED_FROM_V20_exact.ipynb",
+  "source_verified_against": "kaggle_kbo_v20_TEMPORAL_ROLE_USAGE_ONE_SHOT_submit.ipynb",
+  "protocol": "V18_TEMPORAL_STABLE_HAND_PRESSURE_COUNT_RIDGE",
+  "source_protocol": "V20_TEMPORAL_ROLE_USAGE_V1",
+  "target": "control_success",
+  "phase_implemented": 6,
+  "architecture": {
+    "layers": 3,
+    "layer0": "recent 1-season anchor: LGBMClassifier + Ridge(a=1e4) + trend-centered LGBMRegressor, equal 1/3",
+    "layer1": "three-domain ExtraTrees residual adapter, shrink 0.50, pitcher-half crossfit x3 seeds",
+    "layer2": "temporal-stable conditional Ridge(a=1e3) on prev-year OOF residual, gamma 0.75, R_CORE only",
+    "router": "domain3 = F / R_ANCHOR / R_CORE, anchor from F & season<=2022"
+  },
+  "features": {
+    "raw": {
+      "rawnum": 27,
+      "cat_small": 9,
+      "eng": 6
+    },
+    "temporal": {
+      "domain_means": true,
+      "trailing_core_slope": true,
+      "v18_stable_decay": 0.65
+    },
+    "historical": {
+      "self_state": 34,
+      "gseason": 28,
+      "exact_asof_state": 62
+    },
+    "conditional": {
+      "pitcher_conditional": 21,
+      "v18_stable": 25
+    },
+    "anchor": {
+      "exact_lgb": 98,
+      "exact_ridge": 89,
+      "trend_lgb": 42,
+      "adapter": 128
+    }
+  },
+  "model_params": {
+    "base_cfg": {
+      "exact_lgb": {
+        "n_estimators": 120,
+        "learning_rate": 0.035,
+        "num_leaves": 7,
+        "min_child_samples": 350,
+        "subsample": 0.9,
+        "colsample_bytree": 0.9,
+        "reg_alpha": 1.0,
+        "reg_lambda": 6.0,
+        "max_bin": 127,
+        "random_state": 918
+      },
+      "ridge_alpha": 10000.0,
+      "trend_lgb": {
+        "n_estimators": 180,
+        "learning_rate": 0.04,
+        "num_leaves": 7,
+        "min_child_samples": 300,
+        "subsample": 0.85,
+        "colsample_bytree": 0.9,
+        "reg_alpha": 1.0,
+        "reg_lambda": 5.0,
+        "max_bin": 127,
+        "random_state": 77
+      }
+    },
+    "v15_cf_cfg": {
+      "n_estimators": 100,
+      "max_depth": 10,
+      "min_samples_leaf": 200,
+      "max_features": 0.7
+    },
+    "final_adapter_cfg": {
+      "n_estimators": 120,
+      "max_depth": 10,
+      "min_samples_leaf": 200,
+      "max_features": 0.7
+    },
+    "adapter_shrink": 0.5,
+    "cf_seeds": [
+      42,
+      2026,
+      314
+    ],
+    "v18": {
+      "history_years": 3,
+      "decay": 0.65,
+      "parent_strength": 100.0,
+      "hand_strength": 35.0,
+      "pressure_hand_strength": 45.0,
+      "ridge_alpha": 1000.0,
+      "gamma": 0.75,
+      "gamma_stress": [
+        0.55,
+        0.65,
+        0.75,
+        0.85,
+        0.95
+      ],
+      "route_domain": "R_CORE"
+    },
+    "gate": {
+      "min_gain_2023": 8.0,
+      "min_gain_2024": 10.0,
+      "min_core_gain_2024": 15.0,
+      "min_boot_p05": 3.0,
+      "min_boot_prob": 0.97,
+      "min_late_gain": 0.0
+    }
+  },
+  "validation": {
+    "scheme": "adjacent-season transition (2020->21, 21->22, 22->23, 23->24)",
+    "regime": "within_year_pitcher_crossfit for layer1; strict next-year for layer2",
+    "metric": "raw_bss = 100000*(1 - MSE/(ybar*(1-ybar)))",
+    "official_metric_also_reported": true,
+    "warning": "V18 original validation BSS is not directly comparable to the project's expanding-window validation."
+  },
+  "reproduction": {
+    "structural_reproducibility": "CONFIRMED",
+    "numerical_exact_reproducibility": "PHASE 2/3 GATE PENDING",
+    "v18_original_lb": 1081.6824647538,
+    "v18_original_lb_source": "V20 notebook cell 0 markdown + metadata v19_design/v20",
+    "v15_parent_lb": 1044.25629,
+    "omitted_dead_code": [
+      "global_season_features_for_training",
+      "exact_numeric_pair",
+      "one_adapter_crossfit",
+      "build_disagreement_block",
+      "score_prediction",
+      "assemble_blocks"
+    ],
+    "omitted_v20_constants": [
+      "V20_HISTORY_YEARS",
+      "V20_DECAY",
+      "V20_VOLUME_K",
+      "V20_ROLE_K",
+      "V20_ALPHA_GRID",
+      "V20_GAMMA_GRID",
+      "V20_ROUTE_DOMAIN",
+      "V20_DISCOVERY_TARGETS",
+      "V20_STRESS_TARGET",
+      "V20_MIN_DISCOVERY_GAIN",
+      "V20_MIN_STRESS_GAIN",
+      "V20_MIN_CORE_STRESS_GAIN",
+      "V20_MIN_BOOT_P05",
+      "V20_MIN_BOOT_PROB",
+      "V20_MIN_LATE_GAIN",
+      "V20_WORST_MONTH_GAIN"
+    ],
+    "unused_but_computed_blocks": [
+      "BATTER_CONDITIONAL",
+      "CROSS_DOMAIN_PROFILE",
+      "ROLE_DEPLOYMENT"
+    ],
+    "library_versions": {
+      "python": "3.11.15",
+      "numpy": "1.26.4",
+      "pandas": "2.0.3",
+      "scikit_learn": "1.8.0",
+      "lightgbm": "4.7.0",
+      "joblib": "1.5.3",
+      "scipy": "1.15.3",
+      "threadpoolctl": "3.6.0",
+      "n_jobs": 6,
+      "cpu_count": 8
+    }
+  }
+}

@@ -1,0 +1,303 @@
+{
+  "experiment_name": "cb_reg_v012",
+  "folds": [
+    {
+      "experiment_name": "cb_reg_v012",
+      "fold": 1,
+      "train_seasons": [
+        2019,
+        2020
+      ],
+      "validation_season": 2021,
+      "n_train": 481500,
+      "n_validation": 247088,
+      "control": {
+        "best_iteration": 72,
+        "brier": 0.2457566023316621,
+        "bss_raw": 1273.4974005113638
+      },
+      "dynamic": {
+        "best_iteration": 81,
+        "brier": 0.24532348513127036,
+        "bss_raw": 1447.491287164514,
+        "delta_brier": 0.0004331172003917416,
+        "delta_bss": 173.99388665315018,
+        "outside_0_1_raw": 0.0,
+        "anchor_diagnostics": {
+          "global_prior": 0.5484693665628245,
+          "mean_anchor": 0.5312565030520771,
+          "std_anchor": 0.04972378929750631,
+          "mean_current_n": 712.8164621511364,
+          "median_current_n": 508.0,
+          "share_current_n_zero": 0.0005261283429385482,
+          "share_invalid_reconstruction": 0.0001416499384834553,
+          "n_bank_pitchers": 465
+        },
+        "row_independence": {
+          "passed": true,
+          "max_abs_diff": 0.0,
+          "n_checked": 20
+        },
+        "domain_metrics": [
+          {
+            "domain": "F",
+            "n": 25861,
+            "share": 0.10466311597487535,
+            "positive_rate": 0.7038397587100267,
+            "control_brier": 0.22025386659885002,
+            "dynamic_brier": 0.21721182351890053,
+            "delta_brier": 0.0030420430799494858,
+            "anchor_mean": 0.5659722401898272,
+            "anchor_std": 0.07022450078163579,
+            "residual_pred_mean": 0.04555541034360144,
+            "residual_pred_std": 0.05231245396890975
+          },
+          {
+            "domain": "R",
+            "n": 221227,
+            "share": 0.8953368840251247,
+            "positive_rate": 0.5127629086865527,
+            "control_brier": 0.24873782184278082,
+            "dynamic_brier": 0.24860968293243157,
+            "delta_brier": 0.0001281389103492403,
+            "anchor_mean": 0.5271983018464405,
+            "anchor_std": 0.04502940786039885,
+            "residual_pred_mean": -0.0063954057548272665,
+            "residual_pred_std": 0.02273048037513126
+          }
+        ]
+      },
+      "dynamic_anchor_policy": {
+        "type": "row_local_current_season_pitcher_state",
+        "k": 80.0,
+        "history_rule": "strictly_past_seasons_only",
+        "validation_online_label_update": false
+      }
+    },
+    {
+      "experiment_name": "cb_reg_v012",
+      "fold": 2,
+      "train_seasons": [
+        2019,
+        2020,
+        2021
+      ],
+      "validation_season": 2022,
+      "n_train": 728588,
+      "n_validation": 247472,
+      "control": {
+        "best_iteration": 124,
+        "brier": 0.24337582123208099,
+        "bss_raw": 2322.886059463193
+      },
+      "dynamic": {
+        "best_iteration": 147,
+        "brier": 0.2435261633982871,
+        "bss_raw": 2262.547325630726,
+        "delta_brier": -0.0001503421662061022,
+        "delta_bss": -60.338733832466914,
+        "outside_0_1_raw": 4.040861188336458e-06,
+        "anchor_diagnostics": {
+          "global_prior": 0.5431423520563061,
+          "mean_anchor": 0.5269291246771474,
+          "std_anchor": 0.06050364940117824,
+          "mean_current_n": 734.9264967349842,
+          "median_current_n": 528.0,
+          "share_current_n_zero": 0.0005980474558737958,
+          "share_invalid_reconstruction": 0.0002424516713001875,
+          "n_bank_pitchers": 560
+        },
+        "row_independence": {
+          "passed": true,
+          "max_abs_diff": 0.0,
+          "n_checked": 20
+        },
+        "domain_metrics": [
+          {
+            "domain": "F",
+            "n": 30448,
+            "share": 0.12303614146246848,
+            "positive_rate": 0.7087493431424067,
+            "control_brier": 0.20651577056137355,
+            "dynamic_brier": 0.20820883047737893,
+            "delta_brier": -0.0016930599160053794,
+            "anchor_mean": 0.6018770760547871,
+            "anchor_std": 0.08395024353849816,
+            "residual_pred_mean": 0.10374685248179864,
+            "residual_pred_std": 0.052898186703931635
+          },
+          {
+            "domain": "R",
+            "n": 217024,
+            "share": 0.8769638585375316,
+            "positive_rate": 0.5036908360365674,
+            "control_brier": 0.24854720699043814,
+            "dynamic_brier": 0.24848110917744434,
+            "delta_brier": 6.609781299379835e-05,
+            "anchor_mean": 0.516414088443614,
+            "anchor_std": 0.047821157800129174,
+            "residual_pred_mean": -0.01162580647087427,
+            "residual_pred_std": 0.01849533910399718
+          }
+        ]
+      },
+      "dynamic_anchor_policy": {
+        "type": "row_local_current_season_pitcher_state",
+        "k": 80.0,
+        "history_rule": "strictly_past_seasons_only",
+        "validation_online_label_update": false
+      }
+    },
+    {
+      "experiment_name": "cb_reg_v012",
+      "fold": 3,
+      "train_seasons": [
+        2019,
+        2020,
+        2021,
+        2022
+      ],
+      "validation_season": 2023,
+      "n_train": 976060,
+      "n_validation": 245525,
+      "control": {
+        "best_iteration": 2,
+        "brier": 0.2514010454095717,
+        "bss_raw": -560.4188994837369
+      },
+      "dynamic": {
+        "best_iteration": 0,
+        "brier": 0.24902335129394537,
+        "bss_raw": 390.65875372445294,
+        "delta_brier": 0.0023776941156263276,
+        "delta_bss": 951.0776532081899,
+        "outside_0_1_raw": 0.0,
+        "anchor_diagnostics": {
+          "global_prior": 0.5395365039034485,
+          "mean_anchor": 0.5079673404864913,
+          "std_anchor": 0.05269906331555959,
+          "mean_current_n": 703.4764321352204,
+          "median_current_n": 527.0,
+          "share_current_n_zero": 0.000541696364932288,
+          "share_invalid_reconstruction": 0.0002851033499643621,
+          "n_bank_pitchers": 648
+        },
+        "row_independence": {
+          "passed": true,
+          "max_abs_diff": 0.0,
+          "n_checked": 20
+        },
+        "domain_metrics": [
+          {
+            "domain": "F",
+            "n": 25686,
+            "share": 0.10461663781692292,
+            "positive_rate": 0.47290352721326795,
+            "control_brier": 0.2586452693138102,
+            "dynamic_brier": 0.2541760181864882,
+            "delta_brier": 0.004469251127321994,
+            "anchor_mean": 0.517214798785304,
+            "anchor_std": 0.06439064471804039,
+            "residual_pred_mean": 0.014179472203189911,
+            "residual_pred_std": 0.003329339365172692
+          },
+          {
+            "domain": "R",
+            "n": 219839,
+            "share": 0.8953833621830771,
+            "positive_rate": 0.5031181910398064,
+            "control_brier": 0.2505546299182155,
+            "dynamic_brier": 0.24842131343077342,
+            "delta_brier": 0.002133316487442055,
+            "anchor_mean": 0.5068868669860508,
+            "anchor_std": 0.05104980324302961,
+            "residual_pred_mean": 0.002393478077370541,
+            "residual_pred_std": 0.0009122075572935179
+          }
+        ]
+      },
+      "dynamic_anchor_policy": {
+        "type": "row_local_current_season_pitcher_state",
+        "k": 80.0,
+        "history_rule": "strictly_past_seasons_only",
+        "validation_online_label_update": false
+      }
+    },
+    {
+      "experiment_name": "cb_reg_v012",
+      "fold": 4,
+      "train_seasons": [
+        2019,
+        2020,
+        2021,
+        2022,
+        2023
+      ],
+      "validation_season": 2024,
+      "n_train": 1221585,
+      "n_validation": 253507,
+      "control": {
+        "best_iteration": 171,
+        "brier": 0.2480912722504766,
+        "bss_raw": 686.7922073200991
+      },
+      "dynamic": {
+        "best_iteration": 228,
+        "brier": 0.24799534905210552,
+        "bss_raw": 725.1911418958749,
+        "delta_brier": 9.592319837109509e-05,
+        "delta_bss": 38.3989345757758,
+        "outside_0_1_raw": 0.0,
+        "anchor_diagnostics": {
+          "global_prior": 0.5315815109059132,
+          "mean_anchor": 0.4995813404216529,
+          "std_anchor": 0.049015710056576865,
+          "mean_current_n": 687.95106643998,
+          "median_current_n": 506.0,
+          "share_current_n_zero": 0.0006429802727340862,
+          "share_invalid_reconstruction": 0.0003234624684919943,
+          "n_bank_pitchers": 711
+        },
+        "row_independence": {
+          "passed": true,
+          "max_abs_diff": 0.0,
+          "n_checked": 20
+        },
+        "domain_metrics": [
+          {
+            "domain": "F",
+            "n": 30010,
+            "share": 0.11837937413957011,
+            "positive_rate": 0.45928023992002664,
+            "control_brier": 0.24786228707505548,
+            "dynamic_brier": 0.24781089629070988,
+            "delta_brier": 5.139078434560074e-05,
+            "anchor_mean": 0.4947915410743537,
+            "anchor_std": 0.05583660188243493,
+            "residual_pred_mean": -0.020113239508900288,
+            "residual_pred_std": 0.04334757305277765
+          },
+          {
+            "domain": "R",
+            "n": 223497,
+            "share": 0.8816206258604299,
+            "positive_rate": 0.4897067969592433,
+            "control_brier": 0.2481220191737659,
+            "dynamic_brier": 0.2480201163973919,
+            "delta_brier": 0.00010190277637397993,
+            "anchor_mean": 0.5002244894501072,
+            "anchor_std": 0.04798973005173372,
+            "residual_pred_mean": -0.0014331103694950503,
+            "residual_pred_std": 0.025241495973127567
+          }
+        ]
+      },
+      "dynamic_anchor_policy": {
+        "type": "row_local_current_season_pitcher_state",
+        "k": 80.0,
+        "history_rule": "strictly_past_seasons_only",
+        "validation_online_label_update": false
+      }
+    }
+  ]
+}

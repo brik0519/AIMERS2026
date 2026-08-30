@@ -1,0 +1,278 @@
+{
+  "experiment_name": "cb_reg_v011",
+  "fold": 3,
+  "train_seasons": [
+    2019,
+    2020,
+    2021,
+    2022
+  ],
+  "validation_season": 2023,
+  "n_train": 976060,
+  "n_validation": 245525,
+  "features": [
+    "season",
+    "game_month",
+    "game_dayofweek",
+    "inning",
+    "top_bottom",
+    "game_type",
+    "balls_before",
+    "strikes_before",
+    "outs_before",
+    "run_top_before",
+    "run_bot_before",
+    "run_total_before",
+    "score_diff_home",
+    "score_diff_pitcher_team",
+    "runner_on_1b",
+    "runner_on_2b",
+    "runner_on_3b",
+    "num_runners_on",
+    "base_state",
+    "home_win_expectancy",
+    "away_win_expectancy",
+    "li",
+    "pitcher_id",
+    "batter_id",
+    "pitcher_hand",
+    "batter_hand",
+    "pitcher_team_id",
+    "batter_team_id",
+    "asof_pitcher_n",
+    "asof_pitcher_reverse_rate",
+    "asof_pitcher_middle_rate",
+    "asof_pitcher_ball_rate",
+    "asof_pitcher_strike_rate",
+    "asof_pitcher_prev1_game_success_rate",
+    "asof_pitcher_prev3_game_success_rate",
+    "asof_pitcher_prev5_game_success_rate",
+    "asof_pitcher_prev1_game_middle_rate",
+    "asof_pitcher_prev3_game_middle_rate",
+    "asof_pitcher_prev5_game_middle_rate",
+    "asof_batter_n",
+    "asof_batter_middle_rate",
+    "asof_pitcher_pitchmix_n",
+    "asof_pitcher_fastball_rate",
+    "asof_pitcher_breaking_rate",
+    "asof_pitcher_offspeed_rate",
+    "hbeb_pitcher_success_rate",
+    "hbeb_batter_success_rate"
+  ],
+  "cat_cols": [
+    "top_bottom",
+    "game_type",
+    "base_state",
+    "pitcher_id",
+    "batter_id",
+    "pitcher_team_id",
+    "batter_team_id",
+    "pitcher_hand",
+    "batter_hand"
+  ],
+  "model_params": {
+    "iterations": 800,
+    "learning_rate": 0.07,
+    "depth": 8,
+    "loss_function": "RMSE",
+    "l2_leaf_reg": 10.0,
+    "random_strength": 1.0,
+    "random_seed": 42,
+    "max_ctr_complexity": 1,
+    "thread_count": -1,
+    "verbose": 100,
+    "allow_writing_files": false
+  },
+  "control": {
+    "target_representation": "absolute",
+    "best_iteration": 2,
+    "metrics": {
+      "raw_brier": 0.2514010454095717,
+      "raw_bss_raw": -560.4188994837369,
+      "clipped_brier": 0.2514010454095717,
+      "clipped_bss_raw": -560.4188994837369,
+      "clipped_bss": 0.0,
+      "prediction_raw_mean": 0.5365413750502848,
+      "prediction_raw_std": 0.012718950947554297,
+      "prediction_raw_min": 0.5101532268464634,
+      "prediction_raw_max": 0.5830348336225041,
+      "n_prediction_below_0": 0,
+      "n_prediction_above_1": 0,
+      "ratio_prediction_outside_0_1": 0.0
+    },
+    "domain_metrics": {
+      "R": {
+        "n": 219839,
+        "share": 0.8953833621830771,
+        "actual_mean": 0.5031181910398064,
+        "pred_mean": 0.5326257569390411,
+        "bias": 0.029507565899234756,
+        "brier": 0.2505546299182155,
+        "bss_raw": -225.74999340337786
+      },
+      "F": {
+        "n": 25686,
+        "share": 0.10461663781692292,
+        "actual_mean": 0.47290352721326795,
+        "pred_mean": 0.5700540111149756,
+        "bias": 0.09715048390170761,
+        "brier": 0.2586452693138102,
+        "bss_raw": -3762.8462709757314
+      }
+    }
+  },
+  "treatment": {
+    "target_representation": "season_x_RF_centered",
+    "best_iteration": 143,
+    "training_center_table": [
+      {
+        "season": 2019,
+        "domain": "F",
+        "center": 0.6892499806096332
+      },
+      {
+        "season": 2019,
+        "domain": "R",
+        "center": 0.5494903769367803
+      },
+      {
+        "season": 2020,
+        "domain": "F",
+        "center": 0.5877740921035627
+      },
+      {
+        "season": 2020,
+        "domain": "R",
+        "center": 0.5269248530836586
+      },
+      {
+        "season": 2021,
+        "domain": "F",
+        "center": 0.7038397587100267
+      },
+      {
+        "season": 2021,
+        "domain": "R",
+        "center": 0.5127629086865527
+      },
+      {
+        "season": 2022,
+        "domain": "F",
+        "center": 0.7087493431424067
+      },
+      {
+        "season": 2022,
+        "domain": "R",
+        "center": 0.5036908360365674
+      }
+    ],
+    "blind_anchor": {
+      "policy": "previous_season_R_F_prevalence",
+      "source_seasons": [
+        2022
+      ],
+      "R": 0.5036908360365674,
+      "F": 0.7087493431424067
+    },
+    "blind_metrics": {
+      "raw_brier": 0.25401803835067527,
+      "raw_bss_raw": -1607.2160835830646,
+      "clipped_brier": 0.25401803835067527,
+      "clipped_bss_raw": -1607.2160835830646,
+      "clipped_bss": 0.0,
+      "prediction_raw_mean": 0.5200602671517576,
+      "prediction_raw_std": 0.07043820104998436,
+      "prediction_raw_min": 0.338913333074199,
+      "prediction_raw_max": 0.8093009425816177,
+      "n_prediction_below_0": 0,
+      "n_prediction_above_1": 0,
+      "ratio_prediction_outside_0_1": 0.0
+    },
+    "blind_domain_metrics": {
+      "R": {
+        "n": 219839,
+        "share": 0.8953833621830771,
+        "actual_mean": 0.5031181910398064,
+        "pred_mean": 0.4997726415520259,
+        "bias": -0.003345549487780486,
+        "brier": 0.24896286912970098,
+        "bss_raw": 410.97908596359144
+      },
+      "F": {
+        "n": 25686,
+        "share": 0.10461663781692292,
+        "actual_mean": 0.47290352721326795,
+        "pred_mean": 0.6936961514552458,
+        "bias": 0.22079262424197782,
+        "brier": 0.29728376078195184,
+        "bss_raw": -19263.767130606226
+      }
+    },
+    "delta_bss_blind_vs_control": -1046.7971840993278,
+    "oracle_DIAGNOSTIC_ONLY": {
+      "anchor": {
+        "policy": "ORACLE_DIAGNOSTIC_ONLY",
+        "source_seasons": [
+          2023
+        ],
+        "R": 0.5031181910398064,
+        "F": 0.47290352721326795
+      },
+      "metrics": {
+        "raw_brier": 0.24894547218440016,
+        "raw_bss_raw": 421.81039777042815,
+        "clipped_brier": 0.24894547218440016,
+        "clipped_bss_raw": 421.81039777042815,
+        "clipped_bss": 421.81039777042815,
+        "prediction_raw_mean": 0.4948741340435251,
+        "prediction_raw_std": 0.039988000922517274,
+        "prediction_raw_min": 0.338340688077438,
+        "prediction_raw_max": 0.6144640261942965,
+        "n_prediction_below_0": 0,
+        "n_prediction_above_1": 0,
+        "ratio_prediction_outside_0_1": 0.0
+      },
+      "domain_metrics": {
+        "R": {
+          "n": 219839,
+          "share": 0.8953833621830771,
+          "actual_mean": 0.5031181910398064,
+          "pred_mean": 0.4991999965552648,
+          "bias": -0.0039181944845415595,
+          "brier": 0.24896702867634443,
+          "bss_raw": 409.3152025936891
+        },
+        "F": {
+          "n": 25686,
+          "share": 0.10461663781692292,
+          "actual_mean": 0.47290352721326795,
+          "pred_mean": 0.45785033552610704,
+          "bias": -0.015053191687160905,
+          "brier": 0.248760976442263,
+          "bss_raw": 202.51665427183337
+        }
+      },
+      "residual_metrics": {
+        "R": {
+          "n": 219839,
+          "target_mean": 3.0446429299897394e-17,
+          "prediction_mean": -0.003918194484541462,
+          "bias": -0.0039181944845414944,
+          "mse": 0.24896702867634443,
+          "rmse": 0.4989659594364574
+        },
+        "F": {
+          "n": 25686,
+          "target_mean": -5.560191928979995e-17,
+          "prediction_mean": -0.01505319168716088,
+          "bias": -0.015053191687160834,
+          "mse": 0.24876097644226297,
+          "rmse": 0.4987594374468146
+        }
+      },
+      "delta_bss_vs_control": 982.2292972541651,
+      "warning": "Validation labels used. Never use for selection/deployment."
+    }
+  },
+  "elapsed_seconds": 82.14323115348816
+}

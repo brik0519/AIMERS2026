@@ -1,0 +1,19 @@
+{
+  "experiment": "esfix_v001",
+  "type": "measurement integrity fix (not a performance experiment)",
+  "question": "early stopping eval_set 에서 F 를 빼면 fold 2023 이 사용 가능한 fold 가 되는가",
+  "trigger": "fanchor_v001: fold 2023 A_shared best_iteration = 4/4/5",
+  "arms": [
+    "A_shared",
+    "D_eval_r_only"
+  ],
+  "control": "A_shared",
+  "seeds": [
+    7,
+    42,
+    2026
+  ],
+  "min_healthy_iter": 50,
+  "deploy_impact": "none — deploy freezes T_final from fold_2024. 이것은 검증 측정 결함이다.",
+  "uses_test_csv": "header only"
+}

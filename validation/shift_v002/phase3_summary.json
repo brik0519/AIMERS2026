@@ -1,0 +1,39 @@
+{
+  "experiment_name": "shift_v002",
+  "library_versions": {
+    "python": "3.11.15",
+    "numpy": "1.26.4",
+    "pandas": "2.0.3",
+    "scikit_learn": "1.8.0",
+    "lightgbm": "4.7.0",
+    "joblib": "1.5.3",
+    "scipy": "1.15.3",
+    "n_jobs": 6,
+    "cpu_count": 8
+  },
+  "years": {},
+  "segment_means_audit": {
+    "n_access": 253514,
+    "future_access_count": 0,
+    "max_accessed_season": 2024,
+    "policy": "전 시즌 groupby 유지. 읽기는 season <= source_year 만 assert."
+  },
+  "elapsed_sec": 233.9,
+  "library_versions_history": [
+    {
+      "at": "2026-08-27T23:22:18",
+      "years": [],
+      "versions": {
+        "python": "3.11.15",
+        "numpy": "1.26.4",
+        "pandas": "2.0.3",
+        "scikit_learn": "1.8.0",
+        "lightgbm": "4.7.0",
+        "joblib": "1.5.3",
+        "scipy": "1.15.3",
+        "n_jobs": 6,
+        "cpu_count": 8
+      }
+    }
+  ]
+}

@@ -1,0 +1,1857 @@
+{
+  "reference_dir": "validation/v18_repro_v001/reference",
+  "candidate_dir": "validation/v18_repro_v001/matrices",
+  "thresholds": {
+    "r2_max_abs_diff": 1e-07,
+    "r2_mean_abs_diff": 1e-09,
+    "r3_pred_max_abs_diff": 1e-06,
+    "r3_scalar_abs_diff": 1e-12
+  },
+  "years": {
+    "2020": {
+      "R0 Artifact Chain": {
+        "links": {
+          "anchor.p_base -> v15_oof.p_base": 0.0,
+          "anchor.target(역산) -> v15_oof.target": 0.0
+        },
+        "max_abs_diff": 0.0,
+        "status": "PASS",
+        "note": ""
+      },
+      "R1 Data": {
+        "n_rows": [
+          244087,
+          244087
+        ],
+        "row_id_order": true,
+        "target": 0.0,
+        "season": true,
+        "domain3": true,
+        "pitcher_half": {
+          "pitcher_half_42": true,
+          "pitcher_half_2026": true,
+          "pitcher_half_314": true
+        },
+        "status": "PASS"
+      },
+      "R2 Self State": {
+        "ref_shape": [
+          244087,
+          34
+        ],
+        "cand_shape": [
+          244087,
+          34
+        ],
+        "n_cols_ref": 34,
+        "n_cols_cand": 34,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Global Season": {
+        "ref_shape": [
+          244087,
+          28
+        ],
+        "cand_shape": [
+          244087,
+          28
+        ],
+        "n_cols_ref": 28,
+        "n_cols_cand": 28,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Pitcher Conditional": {
+        "ref_shape": [
+          244087,
+          21
+        ],
+        "cand_shape": [
+          244087,
+          21
+        ],
+        "n_cols_ref": 21,
+        "n_cols_cand": 21,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Exact ASOF": {
+        "ref_shape": [
+          244087,
+          62
+        ],
+        "cand_shape": [
+          244087,
+          62
+        ],
+        "n_cols_ref": 62,
+        "n_cols_cand": 62,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Adapter Matrix": {
+        "ref_shape": [
+          244087,
+          128
+        ],
+        "cand_shape": [
+          244087,
+          128
+        ],
+        "n_cols_ref": 128,
+        "n_cols_cand": 128,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Stable": {
+        "ref_shape": [
+          244087,
+          25
+        ],
+        "cand_shape": [
+          244087,
+          25
+        ],
+        "n_cols_ref": 25,
+        "n_cols_cand": 25,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 [unused] Cross Domain": {
+        "ref_shape": [
+          244087,
+          20
+        ],
+        "cand_shape": [
+          244087,
+          20
+        ],
+        "n_cols_ref": 20,
+        "n_cols_cand": 20,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 [unused] Batter Conditional": {
+        "ref_shape": [
+          244087,
+          9
+        ],
+        "cand_shape": [
+          244087,
+          9
+        ],
+        "n_cols_ref": 9,
+        "n_cols_cand": 9,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 [unused] Role Deployment": {
+        "ref_shape": [
+          244087,
+          10
+        ],
+        "cand_shape": [
+          244087,
+          10
+        ],
+        "n_cols_ref": 10,
+        "n_cols_cand": 10,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R3 Trend Scalars": {
+        "trend_slope_diff": 0.0,
+        "trend_prior_max_diff": 0.0,
+        "status": "PASS"
+      },
+      "R3 Exact LGB": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 1.0,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R3 Ridge": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 1.0,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R3 Trend LGB": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 1.0,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R3 Anchor": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 1.0,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R3 Residual": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 0.9999999999999999,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R4 Seed 42": {
+        "max_abs_diff": 1.1102230246251565e-16,
+        "mean_abs_diff": 1.4498256322510771e-18,
+        "corr": 1.0,
+        "bss_ref": 897.1333619590682,
+        "bss_cand": 897.1333619590682,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "base_target_guard": {
+          "p_base": 0.0,
+          "target": 0.0
+        },
+        "status": "PASS"
+      },
+      "R4 Seed 2026": {
+        "max_abs_diff": 1.1102230246251565e-16,
+        "mean_abs_diff": 1.4862134128252218e-18,
+        "corr": 0.9999999999999998,
+        "bss_ref": 888.8509700584857,
+        "bss_cand": 888.8509700584857,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "base_target_guard": {
+          "p_base": 0.0,
+          "target": 0.0
+        },
+        "status": "PASS"
+      },
+      "R4 Seed 314": {
+        "max_abs_diff": 1.1102230246251565e-16,
+        "mean_abs_diff": 1.4659727098808537e-18,
+        "corr": 1.0,
+        "bss_ref": 908.8226558430334,
+        "bss_cand": 908.8226558430334,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "base_target_guard": {
+          "p_base": 0.0,
+          "target": 0.0
+        },
+        "status": "PASS"
+      },
+      "R4 V15 OOF": {
+        "max_abs_diff": 2.220446049250313e-16,
+        "mean_abs_diff": 1.426173574877883e-18,
+        "corr": 1.0,
+        "bss_ref": 914.1349961444889,
+        "bss_cand": 914.1349961444889,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "base_target_guard": {
+          "p_base": 0.0,
+          "target": 0.0
+        },
+        "status": "PASS"
+      },
+      "R5 L2 Correction": {
+        "status": "SKIP",
+        "note": "2020 는 Layer 2 전이 대상이 아님"
+      },
+      "R5 P18 Final": {
+        "status": "SKIP",
+        "note": "2020 는 Layer 2 전이 대상이 아님"
+      }
+    },
+    "2021": {
+      "R0 Artifact Chain": {
+        "links": {
+          "anchor.p_base -> v15_oof.p_base": 0.0,
+          "anchor.target(역산) -> v15_oof.target": 0.0,
+          "v15_oof.v15_oof -> p18.v15_oof": 0.0,
+          "v15_oof.target -> p18.target": 0.0
+        },
+        "max_abs_diff": 0.0,
+        "status": "PASS",
+        "note": ""
+      },
+      "R1 Data": {
+        "n_rows": [
+          247088,
+          247088
+        ],
+        "row_id_order": true,
+        "target": 0.0,
+        "season": true,
+        "domain3": true,
+        "pitcher_half": {
+          "pitcher_half_42": true,
+          "pitcher_half_2026": true,
+          "pitcher_half_314": true
+        },
+        "status": "PASS"
+      },
+      "R2 Self State": {
+        "ref_shape": [
+          247088,
+          34
+        ],
+        "cand_shape": [
+          247088,
+          34
+        ],
+        "n_cols_ref": 34,
+        "n_cols_cand": 34,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Global Season": {
+        "ref_shape": [
+          247088,
+          28
+        ],
+        "cand_shape": [
+          247088,
+          28
+        ],
+        "n_cols_ref": 28,
+        "n_cols_cand": 28,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Pitcher Conditional": {
+        "ref_shape": [
+          247088,
+          21
+        ],
+        "cand_shape": [
+          247088,
+          21
+        ],
+        "n_cols_ref": 21,
+        "n_cols_cand": 21,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Exact ASOF": {
+        "ref_shape": [
+          247088,
+          62
+        ],
+        "cand_shape": [
+          247088,
+          62
+        ],
+        "n_cols_ref": 62,
+        "n_cols_cand": 62,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Adapter Matrix": {
+        "ref_shape": [
+          247088,
+          128
+        ],
+        "cand_shape": [
+          247088,
+          128
+        ],
+        "n_cols_ref": 128,
+        "n_cols_cand": 128,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Stable": {
+        "ref_shape": [
+          247088,
+          25
+        ],
+        "cand_shape": [
+          247088,
+          25
+        ],
+        "n_cols_ref": 25,
+        "n_cols_cand": 25,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 [unused] Cross Domain": {
+        "ref_shape": [
+          247088,
+          20
+        ],
+        "cand_shape": [
+          247088,
+          20
+        ],
+        "n_cols_ref": 20,
+        "n_cols_cand": 20,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 [unused] Batter Conditional": {
+        "ref_shape": [
+          247088,
+          9
+        ],
+        "cand_shape": [
+          247088,
+          9
+        ],
+        "n_cols_ref": 9,
+        "n_cols_cand": 9,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 [unused] Role Deployment": {
+        "ref_shape": [
+          247088,
+          10
+        ],
+        "cand_shape": [
+          247088,
+          10
+        ],
+        "n_cols_ref": 10,
+        "n_cols_cand": 10,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R3 Trend Scalars": {
+        "trend_slope_diff": 0.0,
+        "trend_prior_max_diff": 0.0,
+        "status": "PASS"
+      },
+      "R3 Exact LGB": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 0.9999999999999999,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R3 Ridge": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 1.0,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R3 Trend LGB": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 1.0,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R3 Anchor": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 1.0,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R3 Residual": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 1.0,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R4 Seed 42": {
+        "max_abs_diff": 1.1102230246251565e-16,
+        "mean_abs_diff": 1.5344377829335742e-18,
+        "corr": 0.9999999999999999,
+        "bss_ref": 1858.5620106274291,
+        "bss_cand": 1858.5620106274291,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "base_target_guard": {
+          "p_base": 0.0,
+          "target": 0.0
+        },
+        "status": "PASS"
+      },
+      "R4 Seed 2026": {
+        "max_abs_diff": 1.1102230246251565e-16,
+        "mean_abs_diff": 1.4553569484397793e-18,
+        "corr": 0.9999999999999999,
+        "bss_ref": 1850.408753749233,
+        "bss_cand": 1850.408753749233,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "base_target_guard": {
+          "p_base": 0.0,
+          "target": 0.0
+        },
+        "status": "PASS"
+      },
+      "R4 Seed 314": {
+        "max_abs_diff": 1.1102230246251565e-16,
+        "mean_abs_diff": 1.504557808536771e-18,
+        "corr": 1.0,
+        "bss_ref": 1856.8649934727732,
+        "bss_cand": 1856.8649934727732,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "base_target_guard": {
+          "p_base": 0.0,
+          "target": 0.0
+        },
+        "status": "PASS"
+      },
+      "R4 V15 OOF": {
+        "max_abs_diff": 2.220446049250313e-16,
+        "mean_abs_diff": 1.4991659334576485e-18,
+        "corr": 1.0,
+        "bss_ref": 1866.5786463076706,
+        "bss_cand": 1866.5786463076706,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "base_target_guard": {
+          "p_base": 0.0,
+          "target": 0.0
+        },
+        "status": "PASS"
+      },
+      "R5 L2 Correction": {
+        "status": "SKIP",
+        "note": "reference p18 없음 (stage != p18)"
+      },
+      "R5 P18 Final": {
+        "status": "SKIP",
+        "note": "reference p18 없음 (stage != p18)"
+      }
+    },
+    "2022": {
+      "R0 Artifact Chain": {
+        "links": {
+          "anchor.p_base -> v15_oof.p_base": 0.0,
+          "anchor.target(역산) -> v15_oof.target": 0.0,
+          "v15_oof.v15_oof -> p18.v15_oof": 0.0,
+          "v15_oof.target -> p18.target": 0.0
+        },
+        "max_abs_diff": 0.0,
+        "status": "PASS",
+        "note": ""
+      },
+      "R1 Data": {
+        "n_rows": [
+          247472,
+          247472
+        ],
+        "row_id_order": true,
+        "target": 0.0,
+        "season": true,
+        "domain3": true,
+        "pitcher_half": {
+          "pitcher_half_42": true,
+          "pitcher_half_2026": true,
+          "pitcher_half_314": true
+        },
+        "status": "PASS"
+      },
+      "R2 Self State": {
+        "ref_shape": [
+          247472,
+          34
+        ],
+        "cand_shape": [
+          247472,
+          34
+        ],
+        "n_cols_ref": 34,
+        "n_cols_cand": 34,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Global Season": {
+        "ref_shape": [
+          247472,
+          28
+        ],
+        "cand_shape": [
+          247472,
+          28
+        ],
+        "n_cols_ref": 28,
+        "n_cols_cand": 28,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Pitcher Conditional": {
+        "ref_shape": [
+          247472,
+          21
+        ],
+        "cand_shape": [
+          247472,
+          21
+        ],
+        "n_cols_ref": 21,
+        "n_cols_cand": 21,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Exact ASOF": {
+        "ref_shape": [
+          247472,
+          62
+        ],
+        "cand_shape": [
+          247472,
+          62
+        ],
+        "n_cols_ref": 62,
+        "n_cols_cand": 62,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Adapter Matrix": {
+        "ref_shape": [
+          247472,
+          128
+        ],
+        "cand_shape": [
+          247472,
+          128
+        ],
+        "n_cols_ref": 128,
+        "n_cols_cand": 128,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Stable": {
+        "ref_shape": [
+          247472,
+          25
+        ],
+        "cand_shape": [
+          247472,
+          25
+        ],
+        "n_cols_ref": 25,
+        "n_cols_cand": 25,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 [unused] Cross Domain": {
+        "ref_shape": [
+          247472,
+          20
+        ],
+        "cand_shape": [
+          247472,
+          20
+        ],
+        "n_cols_ref": 20,
+        "n_cols_cand": 20,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 [unused] Batter Conditional": {
+        "ref_shape": [
+          247472,
+          9
+        ],
+        "cand_shape": [
+          247472,
+          9
+        ],
+        "n_cols_ref": 9,
+        "n_cols_cand": 9,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 [unused] Role Deployment": {
+        "ref_shape": [
+          247472,
+          10
+        ],
+        "cand_shape": [
+          247472,
+          10
+        ],
+        "n_cols_ref": 10,
+        "n_cols_cand": 10,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R3 Trend Scalars": {
+        "trend_slope_diff": 0.0,
+        "trend_prior_max_diff": 0.0,
+        "status": "PASS"
+      },
+      "R3 Exact LGB": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 0.9999999999999998,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R3 Ridge": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 1.0,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R3 Trend LGB": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 1.0,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R3 Anchor": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 1.0,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R3 Residual": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 1.0,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R4 Seed 42": {
+        "max_abs_diff": 1.1102230246251565e-16,
+        "mean_abs_diff": 1.1502763282872006e-18,
+        "corr": 1.0,
+        "bss_ref": 2479.3612746689673,
+        "bss_cand": 2479.3612746689673,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "base_target_guard": {
+          "p_base": 0.0,
+          "target": 0.0
+        },
+        "status": "PASS"
+      },
+      "R4 Seed 2026": {
+        "max_abs_diff": 1.1102230246251565e-16,
+        "mean_abs_diff": 1.112367455533586e-18,
+        "corr": 1.0,
+        "bss_ref": 2462.5195092434105,
+        "bss_cand": 2462.5195092434105,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "base_target_guard": {
+          "p_base": 0.0,
+          "target": 0.0
+        },
+        "status": "PASS"
+      },
+      "R4 Seed 314": {
+        "max_abs_diff": 1.1102230246251565e-16,
+        "mean_abs_diff": 1.103170628415845e-18,
+        "corr": 0.9999999999999998,
+        "bss_ref": 2462.315556916994,
+        "bss_cand": 2462.315556916994,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "base_target_guard": {
+          "p_base": 0.0,
+          "target": 0.0
+        },
+        "status": "PASS"
+      },
+      "R4 V15 OOF": {
+        "max_abs_diff": 2.220446049250313e-16,
+        "mean_abs_diff": 1.1170780255207215e-18,
+        "corr": 1.0,
+        "bss_ref": 2479.607212772417,
+        "bss_cand": 2479.607212772417,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "base_target_guard": {
+          "p_base": 0.0,
+          "target": 0.0
+        },
+        "status": "PASS"
+      },
+      "R5 L2 Correction": {
+        "status": "SKIP",
+        "note": "reference p18 없음 (stage != p18)"
+      },
+      "R5 P18 Final": {
+        "status": "SKIP",
+        "note": "reference p18 없음 (stage != p18)"
+      }
+    },
+    "2023": {
+      "R0 Artifact Chain": {
+        "links": {
+          "anchor.p_base -> v15_oof.p_base": 0.0,
+          "anchor.target(역산) -> v15_oof.target": 0.0,
+          "v15_oof.v15_oof -> p18.v15_oof": 0.0,
+          "v15_oof.target -> p18.target": 0.0
+        },
+        "max_abs_diff": 0.0,
+        "status": "PASS",
+        "note": ""
+      },
+      "R1 Data": {
+        "n_rows": [
+          245525,
+          245525
+        ],
+        "row_id_order": true,
+        "target": 0.0,
+        "season": true,
+        "domain3": true,
+        "pitcher_half": {
+          "pitcher_half_42": true,
+          "pitcher_half_2026": true,
+          "pitcher_half_314": true
+        },
+        "status": "PASS"
+      },
+      "R2 Self State": {
+        "ref_shape": [
+          245525,
+          34
+        ],
+        "cand_shape": [
+          245525,
+          34
+        ],
+        "n_cols_ref": 34,
+        "n_cols_cand": 34,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Global Season": {
+        "ref_shape": [
+          245525,
+          28
+        ],
+        "cand_shape": [
+          245525,
+          28
+        ],
+        "n_cols_ref": 28,
+        "n_cols_cand": 28,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Pitcher Conditional": {
+        "ref_shape": [
+          245525,
+          21
+        ],
+        "cand_shape": [
+          245525,
+          21
+        ],
+        "n_cols_ref": 21,
+        "n_cols_cand": 21,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Exact ASOF": {
+        "ref_shape": [
+          245525,
+          62
+        ],
+        "cand_shape": [
+          245525,
+          62
+        ],
+        "n_cols_ref": 62,
+        "n_cols_cand": 62,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Adapter Matrix": {
+        "ref_shape": [
+          245525,
+          128
+        ],
+        "cand_shape": [
+          245525,
+          128
+        ],
+        "n_cols_ref": 128,
+        "n_cols_cand": 128,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Stable": {
+        "ref_shape": [
+          245525,
+          25
+        ],
+        "cand_shape": [
+          245525,
+          25
+        ],
+        "n_cols_ref": 25,
+        "n_cols_cand": 25,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 [unused] Cross Domain": {
+        "ref_shape": [
+          245525,
+          20
+        ],
+        "cand_shape": [
+          245525,
+          20
+        ],
+        "n_cols_ref": 20,
+        "n_cols_cand": 20,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 [unused] Batter Conditional": {
+        "ref_shape": [
+          245525,
+          9
+        ],
+        "cand_shape": [
+          245525,
+          9
+        ],
+        "n_cols_ref": 9,
+        "n_cols_cand": 9,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 [unused] Role Deployment": {
+        "ref_shape": [
+          245525,
+          10
+        ],
+        "cand_shape": [
+          245525,
+          10
+        ],
+        "n_cols_ref": 10,
+        "n_cols_cand": 10,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R3 Trend Scalars": {
+        "trend_slope_diff": 0.0,
+        "trend_prior_max_diff": 0.0,
+        "status": "PASS"
+      },
+      "R3 Exact LGB": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 1.0,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R3 Ridge": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 1.0,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R3 Trend LGB": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 0.9999999999999998,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R3 Anchor": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 0.9999999999999999,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R3 Residual": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 1.0,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R4 Seed 42": {
+        "max_abs_diff": 1.1102230246251565e-16,
+        "mean_abs_diff": 1.4983093339152657e-18,
+        "corr": 1.0,
+        "bss_ref": 696.4288718022349,
+        "bss_cand": 696.4288718022349,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "base_target_guard": {
+          "p_base": 0.0,
+          "target": 0.0
+        },
+        "status": "PASS"
+      },
+      "R4 Seed 2026": {
+        "max_abs_diff": 1.1102230246251565e-16,
+        "mean_abs_diff": 1.5437537546361e-18,
+        "corr": 0.9999999999999999,
+        "bss_ref": 694.0929252275852,
+        "bss_cand": 694.0929252275852,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "base_target_guard": {
+          "p_base": 0.0,
+          "target": 0.0
+        },
+        "status": "PASS"
+      },
+      "R4 Seed 314": {
+        "max_abs_diff": 1.1102230246251565e-16,
+        "mean_abs_diff": 1.742262219277356e-18,
+        "corr": 1.0,
+        "bss_ref": 694.7128670971026,
+        "bss_cand": 694.7128670971026,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "base_target_guard": {
+          "p_base": 0.0,
+          "target": 0.0
+        },
+        "status": "PASS"
+      },
+      "R4 V15 OOF": {
+        "max_abs_diff": 2.220446049250313e-16,
+        "mean_abs_diff": 1.5557366118410961e-18,
+        "corr": 1.0,
+        "bss_ref": 708.501067974987,
+        "bss_cand": 708.501067974987,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "base_target_guard": {
+          "p_base": 0.0,
+          "target": 0.0
+        },
+        "status": "PASS"
+      },
+      "R5 L2 Correction": {
+        "status": "SKIP",
+        "note": "reference p18 없음 (stage != p18)"
+      },
+      "R5 P18 Final": {
+        "status": "SKIP",
+        "note": "reference p18 없음 (stage != p18)"
+      }
+    },
+    "2024": {
+      "R0 Artifact Chain": {
+        "links": {
+          "anchor.p_base -> v15_oof.p_base": 0.0,
+          "anchor.target(역산) -> v15_oof.target": 0.0,
+          "v15_oof.v15_oof -> p18.v15_oof": 0.0,
+          "v15_oof.target -> p18.target": 0.0
+        },
+        "max_abs_diff": 0.0,
+        "status": "PASS",
+        "note": ""
+      },
+      "R1 Data": {
+        "n_rows": [
+          253507,
+          253507
+        ],
+        "row_id_order": true,
+        "target": 0.0,
+        "season": true,
+        "domain3": true,
+        "pitcher_half": {
+          "pitcher_half_42": true,
+          "pitcher_half_2026": true,
+          "pitcher_half_314": true
+        },
+        "status": "PASS"
+      },
+      "R2 Self State": {
+        "ref_shape": [
+          253507,
+          34
+        ],
+        "cand_shape": [
+          253507,
+          34
+        ],
+        "n_cols_ref": 34,
+        "n_cols_cand": 34,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Global Season": {
+        "ref_shape": [
+          253507,
+          28
+        ],
+        "cand_shape": [
+          253507,
+          28
+        ],
+        "n_cols_ref": 28,
+        "n_cols_cand": 28,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Pitcher Conditional": {
+        "ref_shape": [
+          253507,
+          21
+        ],
+        "cand_shape": [
+          253507,
+          21
+        ],
+        "n_cols_ref": 21,
+        "n_cols_cand": 21,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Exact ASOF": {
+        "ref_shape": [
+          253507,
+          62
+        ],
+        "cand_shape": [
+          253507,
+          62
+        ],
+        "n_cols_ref": 62,
+        "n_cols_cand": 62,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Adapter Matrix": {
+        "ref_shape": [
+          253507,
+          128
+        ],
+        "cand_shape": [
+          253507,
+          128
+        ],
+        "n_cols_ref": 128,
+        "n_cols_cand": 128,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 Stable": {
+        "ref_shape": [
+          253507,
+          25
+        ],
+        "cand_shape": [
+          253507,
+          25
+        ],
+        "n_cols_ref": 25,
+        "n_cols_cand": 25,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 [unused] Cross Domain": {
+        "ref_shape": [
+          253507,
+          20
+        ],
+        "cand_shape": [
+          253507,
+          20
+        ],
+        "n_cols_ref": 20,
+        "n_cols_cand": 20,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 [unused] Batter Conditional": {
+        "ref_shape": [
+          253507,
+          9
+        ],
+        "cand_shape": [
+          253507,
+          9
+        ],
+        "n_cols_ref": 9,
+        "n_cols_cand": 9,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R2 [unused] Role Deployment": {
+        "ref_shape": [
+          253507,
+          10
+        ],
+        "cand_shape": [
+          253507,
+          10
+        ],
+        "n_cols_ref": 10,
+        "n_cols_cand": 10,
+        "column_order_match": true,
+        "dtype_match": true,
+        "nan_mask_match": true,
+        "n_nan_ref": 0,
+        "n_nan_cand": 0,
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "status": "PASS"
+      },
+      "R3 Trend Scalars": {
+        "trend_slope_diff": 0.0,
+        "trend_prior_max_diff": 0.0,
+        "status": "PASS"
+      },
+      "R3 Exact LGB": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 1.0,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R3 Ridge": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 1.0,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R3 Trend LGB": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 1.0,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R3 Anchor": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 1.0,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R3 Residual": {
+        "max_abs_diff": 0.0,
+        "mean_abs_diff": 0.0,
+        "corr": 0.9999999999999999,
+        "candidate_source": "npz",
+        "bit_identical": true,
+        "status": "PASS"
+      },
+      "R4 Seed 42": {
+        "max_abs_diff": 1.1102230246251565e-16,
+        "mean_abs_diff": 9.575682893738259e-19,
+        "corr": 1.0,
+        "bss_ref": 912.7799902995392,
+        "bss_cand": 912.7799902995392,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "base_target_guard": {
+          "p_base": 0.0,
+          "target": 0.0
+        },
+        "status": "PASS"
+      },
+      "R4 Seed 2026": {
+        "max_abs_diff": 1.1102230246251565e-16,
+        "mean_abs_diff": 9.29539764096019e-19,
+        "corr": 1.0,
+        "bss_ref": 894.4873834009437,
+        "bss_cand": 894.4873834009437,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "base_target_guard": {
+          "p_base": 0.0,
+          "target": 0.0
+        },
+        "status": "PASS"
+      },
+      "R4 Seed 314": {
+        "max_abs_diff": 1.1102230246251565e-16,
+        "mean_abs_diff": 8.73701686394138e-19,
+        "corr": 1.0,
+        "bss_ref": 920.8605764891909,
+        "bss_cand": 920.8605764891909,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "base_target_guard": {
+          "p_base": 0.0,
+          "target": 0.0
+        },
+        "status": "PASS"
+      },
+      "R4 V15 OOF": {
+        "max_abs_diff": 2.220446049250313e-16,
+        "mean_abs_diff": 9.153065286033826e-19,
+        "corr": 1.0,
+        "bss_ref": 920.5762725757461,
+        "bss_cand": 920.5762725757461,
+        "bss_abs_diff": 0.0,
+        "bit_identical": false,
+        "base_target_guard": {
+          "p_base": 0.0,
+          "target": 0.0
+        },
+        "status": "PASS"
+      },
+      "R5 L2 Correction": {
+        "status": "SKIP",
+        "note": "reference p18 없음 (stage != p18)"
+      },
+      "R5 P18 Final": {
+        "status": "SKIP",
+        "note": "reference p18 없음 (stage != p18)"
+      }
+    }
+  },
+  "promotion_gate": {
+    "status": "SKIP",
+    "note": "reference manifest_p18.json 없음"
+  },
+  "deploy": {
+    "p1": {
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "corr": 1.0,
+      "n": 5,
+      "bit_identical": true,
+      "row_domain_guard": {
+        "row_id": true,
+        "domain3": true
+      },
+      "status": "PASS"
+    },
+    "p2": {
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "corr": 1.0,
+      "n": 5,
+      "bit_identical": true,
+      "row_domain_guard": {
+        "row_id": true,
+        "domain3": true
+      },
+      "status": "PASS"
+    },
+    "p3": {
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "corr": 1.0,
+      "n": 5,
+      "bit_identical": true,
+      "row_domain_guard": {
+        "row_id": true,
+        "domain3": true
+      },
+      "status": "PASS"
+    },
+    "p_base25": {
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "corr": 1.0,
+      "n": 5,
+      "bit_identical": true,
+      "row_domain_guard": {
+        "row_id": true,
+        "domain3": true
+      },
+      "status": "PASS"
+    },
+    "correction": {
+      "max_abs_diff": 8.673617379884035e-19,
+      "mean_abs_diff": 1.7347234759768072e-19,
+      "corr": 1.0,
+      "n": 5,
+      "bit_identical": false,
+      "row_domain_guard": {
+        "row_id": true,
+        "domain3": true
+      },
+      "status": "PASS"
+    },
+    "final_v15_direct": {
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "corr": 1.0,
+      "n": 5,
+      "bit_identical": true,
+      "row_domain_guard": {
+        "row_id": true,
+        "domain3": true
+      },
+      "status": "PASS"
+    },
+    "stable_corr25": {
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "corr": 1.0,
+      "n": 5,
+      "bit_identical": true,
+      "row_domain_guard": {
+        "row_id": true,
+        "domain3": true
+      },
+      "status": "PASS"
+    },
+    "final_direct": {
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "corr": 1.0,
+      "n": 5,
+      "bit_identical": true,
+      "row_domain_guard": {
+        "row_id": true,
+        "domain3": true
+      },
+      "status": "PASS"
+    }
+  },
+  "deploy_by_gate": {
+    "R6 Deploy exact_lgb": {
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "corr": 1.0,
+      "n": 5,
+      "bit_identical": true,
+      "row_domain_guard": {
+        "row_id": true,
+        "domain3": true
+      },
+      "status": "PASS"
+    },
+    "R6 Deploy ridge": {
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "corr": 1.0,
+      "n": 5,
+      "bit_identical": true,
+      "row_domain_guard": {
+        "row_id": true,
+        "domain3": true
+      },
+      "status": "PASS"
+    },
+    "R6 Deploy trend_lgb": {
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "corr": 1.0,
+      "n": 5,
+      "bit_identical": true,
+      "row_domain_guard": {
+        "row_id": true,
+        "domain3": true
+      },
+      "status": "PASS"
+    },
+    "R6 Deploy p_base25": {
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "corr": 1.0,
+      "n": 5,
+      "bit_identical": true,
+      "row_domain_guard": {
+        "row_id": true,
+        "domain3": true
+      },
+      "status": "PASS"
+    },
+    "R6 Deploy L1 corr": {
+      "max_abs_diff": 8.673617379884035e-19,
+      "mean_abs_diff": 1.7347234759768072e-19,
+      "corr": 1.0,
+      "n": 5,
+      "bit_identical": false,
+      "row_domain_guard": {
+        "row_id": true,
+        "domain3": true
+      },
+      "status": "PASS"
+    },
+    "R6 Deploy V15 direct": {
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "corr": 1.0,
+      "n": 5,
+      "bit_identical": true,
+      "row_domain_guard": {
+        "row_id": true,
+        "domain3": true
+      },
+      "status": "PASS"
+    },
+    "R6 Deploy L2 corr": {
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "corr": 1.0,
+      "n": 5,
+      "bit_identical": true,
+      "row_domain_guard": {
+        "row_id": true,
+        "domain3": true
+      },
+      "status": "PASS"
+    },
+    "R6 Deploy FINAL": {
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0,
+      "corr": 1.0,
+      "n": 5,
+      "bit_identical": true,
+      "row_domain_guard": {
+        "row_id": true,
+        "domain3": true
+      },
+      "status": "PASS"
+    }
+  },
+  "deploy_artifact": {
+    "loaded_with": "pickle",
+    "reference_available": true,
+    "missing_keys": [],
+    "dims": {
+      "exact_lgb": 98,
+      "ridge": 89,
+      "trend_lgb": 42,
+      "adapter": 128,
+      "adapter_base": 45,
+      "pitcher_conditional": 21,
+      "exact_adapter": 62,
+      "v18_stable": 25
+    },
+    "dim_mismatch": {},
+    "n_adapter_models": 9,
+    "artifact_mb": 25.5,
+    "v18_stable_enabled": true,
+    "ref_v18_stable_enabled": true,
+    "stable_enabled_match": true,
+    "expected_year_match": true,
+    "route_domain_match": true,
+    "gamma_match": true,
+    "shrink_match": true,
+    "seeds_match": true,
+    "selected_blocks_match": true,
+    "ref_dims": {
+      "exact": 98,
+      "ridge": 89,
+      "trend": 42,
+      "adapter": 128,
+      "adapter_base": 45,
+      "pitcher_conditional": 21,
+      "exact_adapter": 62,
+      "v18_stable": 25
+    },
+    "ref_dim_mismatch": {},
+    "status": "PASS",
+    "model_path": "model/v18_repro_v001/v18_repro_v001.pkl"
+  },
+  "script_parity": {
+    "n": 5,
+    "row_id_order_match": true,
+    "compared_against": "hardened",
+    "max_abs_diff": 5.551115123125783e-17,
+    "mean_abs_diff": 3.3306690738754695e-17,
+    "bit_identical": false,
+    "threshold": 1e-10,
+    "range_ok": true,
+    "status": "PASS",
+    "submission": "output/submission.csv"
+  },
+  "overall": "PASS",
+  "counts": {
+    "PASS": 115,
+    "SKIP": 11
+  }
+}

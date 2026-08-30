@@ -1,0 +1,34 @@
+{
+  "experiment_name": "cb_reg_v017",
+  "source_experiment": "cb_reg_v015",
+  "formula": "clip(anchor + gamma * residual, 0, 1)",
+  "gammas": [
+    0.0,
+    0.25,
+    0.4,
+    0.5,
+    0.6,
+    0.75,
+    0.85,
+    1.0
+  ],
+  "n_oof": 993592,
+  "seasons": [
+    2021,
+    2022,
+    2023,
+    2024
+  ],
+  "diagnostic_best_pooled_gamma": 1.0,
+  "diagnostic_best_pooled_r2_bss": 1387.3517940300737,
+  "selection_warning": "Do not deploy gamma solely from maximum pooled BSS. Choose only after checking fold stability, 2023 downside, 2024 gain retention, and R2-RP semantic preservation.",
+  "output_files": [
+    "residual_shrink_by_fold.csv",
+    "residual_shrink_pooled.csv",
+    "residual_shrink_causal.csv",
+    "residual_mean_diagnostics.csv",
+    "residual_shrink_wide.csv",
+    "residual_shrink_stability.csv",
+    "source_manifest.csv"
+  ]
+}

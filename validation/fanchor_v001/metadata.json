@@ -1,0 +1,25 @@
+{
+  "experiment": "fanchor_v001",
+  "question": "F 를 공유 학습 목적함수에서 분리하면 R_shape 가 개선되는가",
+  "closed_by_probe": "F level 외부 고정의 2024 oracle 상한 +12.8 LB pt. 배포 가능 정책 중 현행 모델을 이기는 것 없음.",
+  "arms": [
+    "A_shared",
+    "B_r_only",
+    "C_f_weight"
+  ],
+  "control": "A_shared",
+  "seeds": [
+    7,
+    42,
+    2026
+  ],
+  "f_level_policy": "prev",
+  "f_weight": 0.25,
+  "primary": "d_R_shape_2024 > 0, 3/3 seed",
+  "level_gate_pt": 5.0,
+  "tail_veto_pt": -250.0,
+  "detection_2sigma_lb_pts": 57.0,
+  "f_shape_excluded": true,
+  "uses_test_csv": "header only",
+  "base_module": "cb_reg_v021_pitcher_conditional_r_only_ablation.py"
+}

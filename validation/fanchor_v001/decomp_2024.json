@@ -1,0 +1,36 @@
+{
+  "experiment": "fanchor_v001",
+  "brier_point": 2.5e-06,
+  "lbp_weights": {
+    "R_shape": 1.0,
+    "R_level": 1.5,
+    "F_level": 1.3,
+    "F_shape": "excluded (lbtrack coef -0.095)"
+  },
+  "arms_2024_mean": {
+    "A_shared": {
+      "R_shape": 749.657,
+      "R_level": -23.178,
+      "F_shape": 42.177,
+      "F_level": -14.463,
+      "total_pts": 754.193,
+      "LBP": 696.088
+    },
+    "B_r_only": {
+      "R_shape": 668.598,
+      "R_level": -11.594,
+      "F_shape": 0.0,
+      "F_level": -8.788,
+      "total_pts": 648.216,
+      "LBP": 639.782
+    },
+    "C_f_weight": {
+      "R_shape": 743.459,
+      "R_level": -19.46,
+      "F_shape": 41.25,
+      "F_level": -29.971,
+      "total_pts": 735.278,
+      "LBP": 675.306
+    }
+  }
+}

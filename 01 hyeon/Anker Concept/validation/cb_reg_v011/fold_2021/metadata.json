@@ -1,0 +1,256 @@
+{
+  "experiment_name": "cb_reg_v011",
+  "fold": 1,
+  "train_seasons": [
+    2019,
+    2020
+  ],
+  "validation_season": 2021,
+  "n_train": 481500,
+  "n_validation": 247088,
+  "features": [
+    "season",
+    "game_month",
+    "game_dayofweek",
+    "inning",
+    "top_bottom",
+    "game_type",
+    "balls_before",
+    "strikes_before",
+    "outs_before",
+    "run_top_before",
+    "run_bot_before",
+    "run_total_before",
+    "score_diff_home",
+    "score_diff_pitcher_team",
+    "runner_on_1b",
+    "runner_on_2b",
+    "runner_on_3b",
+    "num_runners_on",
+    "base_state",
+    "home_win_expectancy",
+    "away_win_expectancy",
+    "li",
+    "pitcher_id",
+    "batter_id",
+    "pitcher_hand",
+    "batter_hand",
+    "pitcher_team_id",
+    "batter_team_id",
+    "asof_pitcher_n",
+    "asof_pitcher_reverse_rate",
+    "asof_pitcher_middle_rate",
+    "asof_pitcher_ball_rate",
+    "asof_pitcher_strike_rate",
+    "asof_pitcher_prev1_game_success_rate",
+    "asof_pitcher_prev3_game_success_rate",
+    "asof_pitcher_prev5_game_success_rate",
+    "asof_pitcher_prev1_game_middle_rate",
+    "asof_pitcher_prev3_game_middle_rate",
+    "asof_pitcher_prev5_game_middle_rate",
+    "asof_batter_n",
+    "asof_batter_middle_rate",
+    "asof_pitcher_pitchmix_n",
+    "asof_pitcher_fastball_rate",
+    "asof_pitcher_breaking_rate",
+    "asof_pitcher_offspeed_rate",
+    "hbeb_pitcher_success_rate",
+    "hbeb_batter_success_rate"
+  ],
+  "cat_cols": [
+    "top_bottom",
+    "game_type",
+    "base_state",
+    "pitcher_id",
+    "batter_id",
+    "pitcher_team_id",
+    "batter_team_id",
+    "pitcher_hand",
+    "batter_hand"
+  ],
+  "model_params": {
+    "iterations": 800,
+    "learning_rate": 0.07,
+    "depth": 8,
+    "loss_function": "RMSE",
+    "l2_leaf_reg": 10.0,
+    "random_strength": 1.0,
+    "random_seed": 42,
+    "max_ctr_complexity": 1,
+    "thread_count": -1,
+    "verbose": 100,
+    "allow_writing_files": false
+  },
+  "control": {
+    "target_representation": "absolute",
+    "best_iteration": 72,
+    "metrics": {
+      "raw_brier": 0.2457566023316621,
+      "raw_bss_raw": 1273.4974005113638,
+      "clipped_brier": 0.2457566023316621,
+      "clipped_bss_raw": 1273.4974005113638,
+      "clipped_bss": 1273.4974005113638,
+      "prediction_raw_mean": 0.5253472712446398,
+      "prediction_raw_std": 0.044712839345484645,
+      "prediction_raw_min": 0.37899987077114,
+      "prediction_raw_max": 0.694870035960745,
+      "n_prediction_below_0": 0,
+      "n_prediction_above_1": 0,
+      "ratio_prediction_outside_0_1": 0.0
+    },
+    "domain_metrics": {
+      "R": {
+        "n": 221227,
+        "share": 0.8953368840251247,
+        "actual_mean": 0.5127629086865527,
+        "pred_mean": 0.5171848129543705,
+        "bias": 0.0044219042678177445,
+        "brier": 0.24873782184278082,
+        "bss_raw": 440.0012180599288
+      },
+      "F": {
+        "n": 25861,
+        "share": 0.10466311597487535,
+        "actual_mean": 0.7038397587100267,
+        "pred_mean": 0.5951727288905703,
+        "bias": -0.10866702981945642,
+        "brier": 0.22025386659885002,
+        "bss_raw": -5663.01294439198
+      }
+    }
+  },
+  "treatment": {
+    "target_representation": "season_x_RF_centered",
+    "best_iteration": 82,
+    "training_center_table": [
+      {
+        "season": 2019,
+        "domain": "F",
+        "center": 0.6892499806096332
+      },
+      {
+        "season": 2019,
+        "domain": "R",
+        "center": 0.5494903769367803
+      },
+      {
+        "season": 2020,
+        "domain": "F",
+        "center": 0.5877740921035627
+      },
+      {
+        "season": 2020,
+        "domain": "R",
+        "center": 0.5269248530836586
+      }
+    ],
+    "blind_anchor": {
+      "policy": "previous_season_R_F_prevalence",
+      "source_seasons": [
+        2020
+      ],
+      "R": 0.5269248530836586,
+      "F": 0.5877740921035627
+    },
+    "blind_metrics": {
+      "raw_brier": 0.24605467036790202,
+      "raw_bss_raw": 1153.7561016999873,
+      "clipped_brier": 0.24605467036790202,
+      "clipped_bss_raw": 1153.7561016999873,
+      "clipped_bss": 1153.7561016999873,
+      "prediction_raw_mean": 0.5210018491221267,
+      "prediction_raw_std": 0.04434483517159806,
+      "prediction_raw_min": 0.3617845011248553,
+      "prediction_raw_max": 0.7001435367043005,
+      "n_prediction_below_0": 0,
+      "n_prediction_above_1": 0,
+      "ratio_prediction_outside_0_1": 0.0
+    },
+    "blind_domain_metrics": {
+      "R": {
+        "n": 221227,
+        "share": 0.8953368840251247,
+        "actual_mean": 0.5127629086865527,
+        "pred_mean": 0.5138289669453447,
+        "bias": 0.0010660582587920242,
+        "brier": 0.24875536200178103,
+        "bss_raw": 432.98058004131684
+      },
+      "F": {
+        "n": 25861,
+        "share": 0.10466311597487535,
+        "actual_mean": 0.7038397587100267,
+        "pred_mean": 0.5823620132813994,
+        "bias": -0.12147774542862733,
+        "brier": 0.22295170033239878,
+        "bss_raw": -6957.252383234451
+      }
+    },
+    "delta_bss_blind_vs_control": -119.74129881137651,
+    "oracle_DIAGNOSTIC_ONLY": {
+      "anchor": {
+        "policy": "ORACLE_DIAGNOSTIC_ONLY",
+        "source_seasons": [
+          2021
+        ],
+        "R": 0.5127629086865527,
+        "F": 0.7038397587100267
+      },
+      "metrics": {
+        "raw_brier": 0.24466577362391784,
+        "raw_bss_raw": 1711.7102592054823,
+        "clipped_brier": 0.24466577362391784,
+        "clipped_bss_raw": 1711.7102592054823,
+        "clipped_bss": 1711.7102592054823,
+        "prediction_raw_mean": 0.5204699322786184,
+        "prediction_raw_std": 0.07230749710694274,
+        "prediction_raw_min": 0.34762255672774944,
+        "prediction_raw_max": 0.8162092033107645,
+        "n_prediction_below_0": 0,
+        "n_prediction_above_1": 0,
+        "ratio_prediction_outside_0_1": 0.0
+      },
+      "domain_metrics": {
+        "R": {
+          "n": 221227,
+          "share": 0.8953368840251247,
+          "actual_mean": 0.5127629086865527,
+          "pred_mean": 0.49966702254823875,
+          "bias": -0.013095886138313972,
+          "brier": 0.2489257277553176,
+          "bss_raw": 364.78984777179363
+        },
+        "F": {
+          "n": 25861,
+          "share": 0.10466311597487535,
+          "actual_mean": 0.7038397587100267,
+          "pred_mean": 0.6984276798878635,
+          "bias": -0.005412078822163213,
+          "brier": 0.20822414829515373,
+          "bss_raw": 108.03798183719076
+        }
+      },
+      "residual_metrics": {
+        "R": {
+          "n": 221227,
+          "target_mean": 3.332269968634497e-17,
+          "prediction_mean": -0.013095886138313848,
+          "bias": -0.013095886138313851,
+          "mse": 0.2489257277553176,
+          "rmse": 0.4989245712082314
+        },
+        "F": {
+          "n": 25861,
+          "target_mean": -4.9455818582737725e-18,
+          "prediction_mean": -0.005412078822163234,
+          "bias": -0.005412078822163227,
+          "mse": 0.20822414829515373,
+          "rmse": 0.4563158426957733
+        }
+      },
+      "delta_bss_vs_control": 438.2128586941185,
+      "warning": "Validation labels used. Never use for selection/deployment."
+    }
+  },
+  "elapsed_seconds": 41.78214120864868
+}

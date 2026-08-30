@@ -1,0 +1,88 @@
+{
+  "experiment_name": "shift_v001",
+  "regime": "deploy (2024 full-fit -> 2025), NOT validation crossfit",
+  "expected_year": 2025,
+  "n_test_rows": 5,
+  "anchor_team_id": 13,
+  "layer2_mode": "shift",
+  "shift_adopted": true,
+  "reference_intercept_removed": -0.00014109515177551657,
+  "artifact_path": "model/shift_v001/shift_v001.pkl",
+  "artifact_mb": 25.51,
+  "trend_slope": -0.012836636139525709,
+  "trend_prior": {
+    "CORE": 0.4670631003330109,
+    "ANCHOR_TEAM": 0.5160232637889947,
+    "FUTURES": 0.44644360378050096
+  },
+  "deploy_feature_parity_vs_phase2": {
+    "pitcher_context": 0.0,
+    "asof_state": 0.0
+  },
+  "dims": {
+    "exact_lgb": 98,
+    "ridge": 89,
+    "trend_lgb": 42,
+    "residual": 128,
+    "residual_base": 45,
+    "pitcher_context": 21,
+    "asof_residual": 62,
+    "sensitivity": 25
+  },
+  "residual_cfg": {
+    "n_estimators": 120,
+    "max_depth": 10,
+    "min_samples_leaf": 200,
+    "max_features": 0.7
+  },
+  "residual_seeds": [
+    42,
+    2026,
+    314
+  ],
+  "residual_shrink": 0.5,
+  "n_residual_models": 9,
+  "pred": {
+    "p_base25": {
+      "mean": 0.4352146963590801,
+      "min": 0.38666782658924653,
+      "max": 0.46575943140722975
+    },
+    "correction": {
+      "mean": 0.00816641412858746,
+      "min": 0.0053420315212497,
+      "max": 0.012630726549193219
+    },
+    "adjusted_direct": {
+      "mean": 0.4392979034233738,
+      "min": 0.39145919276286106,
+      "max": 0.47207479468182634
+    },
+    "shift_corr25": {
+      "mean": -0.0010842242510989309,
+      "min": -0.005773129407316446,
+      "max": 0.003835609881207347
+    },
+    "reference_corr25": {
+      "mean": -0.0012239489005878568,
+      "min": -0.005913379602134228,
+      "max": 0.003697821171954274
+    },
+    "final_direct": {
+      "mean": 0.4384847352350496,
+      "min": 0.38712934570737373,
+      "max": 0.47141184402847636
+    }
+  },
+  "library_versions": {
+    "python": "3.11.15",
+    "numpy": "1.26.4",
+    "pandas": "2.0.3",
+    "scikit_learn": "1.9.0",
+    "lightgbm": "4.7.0",
+    "joblib": "1.5.3",
+    "scipy": "1.17.1",
+    "n_jobs": 6,
+    "cpu_count": 8
+  }
+}

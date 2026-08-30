@@ -1,0 +1,172 @@
+{
+  "experiment_name": "danker_v001",
+  "standalone_training": true,
+  "external_model_dependency": false,
+  "external_validation_dependency": false,
+  "architecture": {
+    "L1_R": "CatBoost Exact-ASOF5 + HB-EB + R-only PC FULL treatment",
+    "L1_F": "0.75*Control + 0.25*Dynamic-ASOF residual CatBoost",
+    "Dynamic": "A_t=(1-alpha)A_prev+alpha*R_t; lambda=1; kappa=100; no b_F",
+    "L2": "ExtraTrees residual adapter; core + Exact-ASOF5; no PC; R-only correction",
+    "L3": false
+  },
+  "validated_source": {
+    "f_blend_experiment": "fanchor_blend_v001",
+    "f_blend_primary_gate": "2024 F gain > 0 for 3/3 CatBoost seeds",
+    "f_blend_temporal_mean_gate": "2021~2024 positive in 4/4 folds",
+    "settings_frozen": {
+      "dynamic_lambda": 1.0,
+      "dynamic_kappa": 100.0,
+      "f_blend_weight": 0.25
+    }
+  },
+  "latest_fold": {
+    "train_seasons": [
+      2019,
+      2020,
+      2021,
+      2022,
+      2023
+    ],
+    "validation_season": 2024,
+    "n_train": 1221585,
+    "n_validation": 253507,
+    "n_R": 223497,
+    "n_F": 30010,
+    "control_best_iteration_zero_based": 215,
+    "control_final_tree_count": 216,
+    "treatment_best_iteration_zero_based": 163,
+    "treatment_final_tree_count": 164,
+    "dynamic_best_iteration_zero_based": 181,
+    "dynamic_final_tree_count": 182,
+    "control_brier_2024": 0.2478470647701315,
+    "treatment_brier_2024": 0.24776783254731138,
+    "dynamic_brier_2024": 0.24787588925701645,
+    "danker_l1_brier_2024": 0.24774945828389086,
+    "danker_l1_bss_2024": 823.6234677752807,
+    "control_brier_2024_F": 0.24746446318788762,
+    "dynamic_brier_2024_F": 0.2477177188351075,
+    "blend_brier_2024_F": 0.24740941512364906,
+    "dynamic_gain_2024_F_pt": -101.97862143210725,
+    "blend_gain_2024_F_pt": 22.166240971048744,
+    "dynamic_lambda": 1.0,
+    "dynamic_kappa": 100.0,
+    "f_blend_weight": 0.25,
+    "dynamic_diag_train": {
+      "lambda": 1.0,
+      "kappa": 100.0,
+      "asof_available_rate": 0.9984700205061458,
+      "mean_current_n": 732.011189561103,
+      "median_current_n": 530.0,
+      "mean_alpha": 0.7578361835098746,
+      "p90_alpha": 0.9468367889420521,
+      "mean_abs_anchor_shift": 0.03885197759289125,
+      "max_abs_anchor_shift": 0.20682404287760736
+    },
+    "dynamic_diag_2024": {
+      "lambda": 1.0,
+      "kappa": 100.0,
+      "asof_available_rate": 0.9984576362782882,
+      "mean_current_n": 687.150240427286,
+      "median_current_n": 505.0,
+      "mean_alpha": 0.7525632134833465,
+      "p90_alpha": 0.9426934097421203,
+      "mean_abs_anchor_shift": 0.03695058224786419,
+      "max_abs_anchor_shift": 0.21485221911915103
+    },
+    "control_fold_seconds": 91.3461811542511,
+    "treatment_fold_seconds": 90.28578686714172,
+    "dynamic_fold_seconds": 87.6668062210083,
+    "dynamic_correction_mean_2024": -0.003810861287095962,
+    "dynamic_correction_std_2024": 0.02573998837184329,
+    "dynamic_correction_abs_mean_2024": 0.01933304735337952
+  },
+  "final_l1": {
+    "control_tree_count": 216,
+    "treatment_tree_count": 164,
+    "dynamic_tree_count": 182,
+    "control_fit_seconds": 86.41429424285889,
+    "treatment_fit_seconds": 76.37533664703369,
+    "dynamic_fit_seconds": 76.08123230934143,
+    "control_features": 52,
+    "treatment_features": 73,
+    "dynamic_features": 52,
+    "dynamic_full_diag": {
+      "lambda": 1.0,
+      "kappa": 100.0,
+      "asof_available_rate": 0.9984678921721493,
+      "mean_current_n": 724.3014571294536,
+      "median_current_n": 526.0,
+      "mean_alpha": 0.7569299791426113,
+      "p90_alpha": 0.9462654486835035,
+      "mean_abs_anchor_shift": 0.03852520676793132,
+      "max_abs_anchor_shift": 0.21485221911915103
+    }
+  },
+  "l2": {
+    "source_year": 2024,
+    "n_source_rows": 253507,
+    "n_R": 223497,
+    "n_F_protected": 30010,
+    "n_features": 49,
+    "n_core_features": 44,
+    "n_exact_features": 5,
+    "residual_mean_all": -0.008523522101505745,
+    "residual_std_all": 0.4976713854089624,
+    "residual_mean_R": -0.00737034584390102,
+    "residual_std_R": 0.49773566829249855,
+    "adapter_seeds": [
+      42,
+      2026,
+      314
+    ],
+    "final_cfg": {
+      "n_estimators": 120,
+      "max_depth": 10,
+      "min_samples_leaf": 200,
+      "max_features": 0.7
+    },
+    "shrink": 0.5,
+    "fit_diagnostics": [
+      {
+        "adapter_seed": 42,
+        "n_train_R": 223497,
+        "n_protected_F": 30010,
+        "fit_elapsed_seconds": 23.053773403167725,
+        "train_correction_mean_R": -0.007370345843901019,
+        "train_correction_std_R": 0.018222408269221762,
+        "train_correction_abs_mean_R": 0.015442306675718538
+      },
+      {
+        "adapter_seed": 2026,
+        "n_train_R": 223497,
+        "n_protected_F": 30010,
+        "fit_elapsed_seconds": 23.00960683822632,
+        "train_correction_mean_R": -0.0073703458439010215,
+        "train_correction_std_R": 0.01764400704957358,
+        "train_correction_abs_mean_R": 0.015046187520682331
+      },
+      {
+        "adapter_seed": 314,
+        "n_train_R": 223497,
+        "n_protected_F": 30010,
+        "fit_elapsed_seconds": 23.056440114974976,
+        "train_correction_mean_R": -0.007370345843901022,
+        "train_correction_std_R": 0.01817961540102696,
+        "train_correction_abs_mean_R": 0.015544944211261276
+      }
+    ]
+  },
+  "rule_compliance": {
+    "test_rows_used_during_training": false,
+    "test_usage_during_training": "header_only",
+    "test_row_aggregation": false,
+    "other_test_rows_used": false,
+    "dynamic_state_source": "current row official ASOF only",
+    "dynamic_historical_source": "official labeled train only",
+    "l2_residual_source": "official 2024 labels + genuine danker 2024 L1 OOT prediction",
+    "exact_asof": "row-local official ASOF minus completed prior-season train labels",
+    "pc_source": "exactly previous labeled season only"
+  },
+  "elapsed_seconds": 689.8324015140533
+}

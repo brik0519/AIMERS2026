@@ -1,0 +1,87 @@
+{
+  "experiment_name": "cb_reg_v008",
+  "fold": 1,
+  "train_seasons": [
+    2019,
+    2020
+  ],
+  "validation_season": 2021,
+  "n_train": 481500,
+  "n_validation": 247088,
+  "early_stopping_policy": "full_validation",
+  "n_early_stopping_eval": 247088,
+  "early_stopping_eval_share": 1.0,
+  "correction_metadata": {
+    "enabled": false
+  },
+  "domain_metrics": {
+    "R": {
+      "n": 221227,
+      "share": 0.8953368840251247,
+      "metrics": {
+        "positive_rate": 0.5127629086865527,
+        "brier": 0.24873782184278082,
+        "baseline_brier": 0.24983710816185872,
+        "bss_raw": 440.00121805993774,
+        "bss": 440.00121805993774
+      },
+      "prediction_mean": 0.5171848129543705,
+      "prediction_std": 0.03898036373123593
+    },
+    "F": {
+      "n": 25861,
+      "share": 0.10466311597487535,
+      "metrics": {
+        "positive_rate": 0.7038397587100267,
+        "brier": 0.22025386659885002,
+        "baseline_brier": 0.2084493527690381,
+        "bss_raw": -5663.012944391976,
+        "bss": 0.0
+      },
+      "prediction_mean": 0.5951727288905703,
+      "prediction_std": 0.025648877997531273
+    }
+  },
+  "model_type": "CatBoostRegressor",
+  "model_params": {
+    "iterations": 800,
+    "learning_rate": 0.07,
+    "depth": 8,
+    "loss_function": "RMSE",
+    "l2_leaf_reg": 10.0,
+    "random_strength": 1.0,
+    "random_seed": 42,
+    "max_ctr_complexity": 1,
+    "thread_count": -1,
+    "verbose": 100,
+    "allow_writing_files": false
+  },
+  "positive_rate": 0.5327616072006734,
+  "raw_brier": 0.2457566023316621,
+  "raw_bss_raw": 1273.4974005113586,
+  "raw_bss": 1273.4974005113586,
+  "clipped_brier": 0.2457566023316621,
+  "clipped_bss_raw": 1273.4974005113586,
+  "clipped_bss": 1273.4974005113586,
+  "brier": 0.2457566023316621,
+  "baseline_brier": 0.24892667709362878,
+  "bss_raw": 1273.4974005113586,
+  "bss": 1273.4974005113586,
+  "prediction_raw_mean": 0.5253472712446398,
+  "prediction_raw_std": 0.044712839345484645,
+  "prediction_raw_min": 0.37899987077114,
+  "prediction_raw_max": 0.694870035960745,
+  "prediction_clip_mean": 0.5253472712446398,
+  "prediction_clip_std": 0.044712839345484645,
+  "prediction_clip_min": 0.37899987077114,
+  "prediction_clip_max": 0.694870035960745,
+  "elapsed_seconds": 19.512802362442017,
+  "best_iteration": 72,
+  "final_iterations": 73,
+  "n_prediction_below_0": 0,
+  "ratio_prediction_below_0": 0.0,
+  "n_prediction_above_1": 0,
+  "ratio_prediction_above_1": 0.0,
+  "n_prediction_outside_0_1": 0,
+  "ratio_prediction_outside_0_1": 0.0
+}

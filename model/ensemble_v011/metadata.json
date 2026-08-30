@@ -1,0 +1,21 @@
+{
+  "experiment_name": "ensemble_v011",
+  "source_experiment_name": "ensemble_v011_h1",
+  "n_train_rows": 1475092,
+  "n_features": 47,
+  "cat_iterations": 207,
+  "xgb_iterations": 115,
+  "cat_weight": 0.7,
+  "xgb_weight": 0.3,
+  "cat_elapsed_seconds": 83.71664810180664,
+  "xgb_elapsed_seconds": 11.09752368927002,
+  "model_path": "model/ensemble_v011/ensemble_v011.pkl",
+  "rule_compliance": {
+    "test_values_used_for_training": false,
+    "test_distribution_used": false,
+    "cross_test_aggregation": false,
+    "weights_frozen_before_test_inference": true,
+    "model_parameters_frozen_before_test_inference": true,
+    "row_independent_test_prediction": true
+  }
+}

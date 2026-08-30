@@ -1,0 +1,6 @@
+{
+  "n_single_rows": 5,
+  "single_vs_full_max_abs_diff": 0.0,
+  "atol": 1e-09,
+  "pass": true
+}

@@ -1,0 +1,62 @@
+{
+  "protocol": "ANCHOR_RESIDUAL_SENSITIVITY_SHIFT_V1",
+  "layer2_mode_if_adopted": "shift (fit_intercept=False)",
+  "layer2_mode_if_rejected": "reference (fit_intercept=True)",
+  "transition_2022_to_2023_gain": 26.32508847711938,
+  "transition_2023_to_2024_gain": 24.33548772162726,
+  "core_2024_gain": 34.54632673772778,
+  "sum_gain_reference": 37.326717312213646,
+  "sum_gain_final": 63.61661004655707,
+  "worst_gain_reference": -29.604619462708797,
+  "worst_gain_final": -2.750560253583899,
+  "n_transitions_final_not_worse": 2,
+  "bootstrap_final_vs_adjusted": {
+    "mean": 24.63269387026549,
+    "median": 24.400011654161553,
+    "p05": 11.194090020647588,
+    "p10": 14.190565910078364,
+    "p95": 39.377082173855,
+    "prob_positive": 0.9986666666666667
+  },
+  "bootstrap_final_vs_reference": {
+    "mean": -0.33899237962146606,
+    "median": -0.3029083390658909,
+    "p05": -3.0756421959952265,
+    "p10": -2.4916021506962025,
+    "p95": 2.3142386565603057,
+    "prob_positive": 0.41933333333333334
+  },
+  "bootstrap_reference_vs_adjusted": {
+    "mean": 24.971686249886954,
+    "median": 24.921901543855075,
+    "p05": 11.104137974287791,
+    "p10": 13.895843861397475,
+    "p95": 40.30251741828685,
+    "prob_positive": 0.9986666666666667
+  },
+  "early_gain": 33.40104316673637,
+  "late_gain": 12.493840102079048,
+  "scale": 0.75,
+  "shift_segment": "CORE",
+  "stress_ok": true,
+  "layer_gate": {
+    "g23>=8.0": true,
+    "g24>=10.0": true,
+    "core24>=15.0": true,
+    "boot_vs_adjusted_p05>=3.0": true,
+    "boot_vs_adjusted_prob>=0.97": true,
+    "late_gain>=0.0": true,
+    "stress_ok": true
+  },
+  "layer_gate_ok": true,
+  "relative_gate": {
+    "sum_gain_final>sum_gain_reference": true,
+    "worst_transition_final>worst_transition_reference": true,
+    "boot_2024_final_vs_reference_p05>=-5.0": true,
+    "transitions_final>=reference_count>=2": true
+  },
+  "relative_gate_ok": true,
+  "adopt": true,
+  "submit_recommended": true,
+  "warning": "2023/2024 are development-exposed. Validation BSS is not an LB estimate. Deploy Layer 2 is trained on 2024 residual whose mean is small; the value of intercept removal is robustness to next-season base-rate shift, not a large LB gain."
+}
