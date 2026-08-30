@@ -1,0 +1,593 @@
+========================================================================================================================
+SOURCE
+========================================================================================================================
+model/cb_reg_v003_exact_pc_l2/train.py
+
+========================================================================================================================
+EXACT CONSTANTS
+========================================================================================================================
+
+# lines 42-42
+SOURCE_YEAR = 2024
+
+# lines 43-43
+EXPECTED_TARGET_YEAR = 2025
+
+# lines 45-48
+CAT_COLS = [
+    "top_bottom", "game_type", "base_state", "pitcher_id", "batter_id",
+    "pitcher_team_id", "batter_team_id", "pitcher_hand", "batter_hand",
+]
+
+# lines 50-56
+EXACT_FEATURES = [
+    "exact_pitcher_season_n",
+    "exact_pitcher_season_logn",
+    "exact_pitcher_season_success_rate",
+    "exact_pitcher_past_success_rate",
+    "exact_pitcher_season_minus_past",
+]
+
+# lines 109-114
+V15_CF_CFG = {
+    "n_estimators": 100,
+    "max_depth": 10,
+    "min_samples_leaf": 200,
+    "max_features": 0.7,
+}
+
+# lines 115-120
+FINAL_ADAPTER_CFG = {
+    "n_estimators": 120,
+    "max_depth": 10,
+    "min_samples_leaf": 200,
+    "max_features": 0.7,
+}
+
+# lines 121-121
+ADAPTER_SEEDS = [42, 2026, 314]
+
+# lines 122-122
+ADAPTER_SHRINK = 0.50
+
+# lines 123-123
+N_JOBS = max(1, min(6, os.cpu_count() or 1))
+
+# lines 125-155
+REFERENCE_RAWNUM = [
+    "game_month",
+    "inning",
+    "balls_before",
+    "strikes_before",
+    "outs_before",
+    "score_diff_pitcher_team",
+    "num_runners_on",
+    "home_win_expectancy",
+    "li",
+    "asof_pitcher_n",
+    "asof_pitcher_success_rate",
+    "asof_pitcher_reverse_rate",
+    "asof_pitcher_middle_rate",
+    "asof_pitcher_ball_rate",
+    "asof_pitcher_strike_rate",
+    "asof_pitcher_prev1_game_success_rate",
+    "asof_pitcher_prev3_game_success_rate",
+    "asof_pitcher_prev5_game_success_rate",
+    "asof_pitcher_prev1_game_middle_rate",
+    "asof_pitcher_prev3_game_middle_rate",
+    "asof_pitcher_prev5_game_middle_rate",
+    "asof_batter_n",
+    "asof_batter_success_rate",
+    "asof_batter_middle_rate",
+    "asof_pitcher_fastball_rate",
+    "asof_pitcher_breaking_rate",
+    "asof_pitcher_offspeed_rate",
+    "pitcher_team_id",
+    "batter_team_id",
+]
+
+# lines 157-166
+REFERENCE_CAT_SMALL = [
+    "game_dayofweek",
+    "top_bottom",
+    "game_type",
+    "base_state",
+    "pitcher_hand",
+    "batter_hand",
+    "pitcher_team_id",
+    "batter_team_id",
+]
+
+# lines 168-175
+ENG_COLS = [
+    "eng_recent35",
+    "eng_recent_delta",
+    "eng_sb",
+    "eng_same",
+    "eng_close",
+    "eng_late",
+]
+
+MISSING CONSTANTS: []
+
+========================================================================================================================
+EXACT FUNCTIONS
+========================================================================================================================
+
+------------------------------------------------------------------------------------------------------------------------
+FUNCTION numeric_series (lines 1046-1052)
+------------------------------------------------------------------------------------------------------------------------
+def numeric_series(frame: pd.DataFrame, col: str, default=np.nan) -> pd.Series:
+    if col not in frame.columns:
+        return pd.Series(
+            np.full(len(frame), default, dtype=np.float64),
+            index=frame.index,
+        )
+    return pd.to_numeric(frame[col], errors="coerce")
+
+------------------------------------------------------------------------------------------------------------------------
+FUNCTION add_eng (lines 1055-1086)
+------------------------------------------------------------------------------------------------------------------------
+def add_eng(frame: pd.DataFrame) -> pd.DataFrame:
+    x = frame.copy()
+    career = numeric_series(x, "asof_pitcher_success_rate", 0.5)
+    p1 = numeric_series(x, "asof_pitcher_prev1_game_success_rate", np.nan)
+    p3 = numeric_series(x, "asof_pitcher_prev3_game_success_rate", np.nan)
+    p5 = numeric_series(x, "asof_pitcher_prev5_game_success_rate", np.nan)
+    p1 = p1.fillna(career)
+    p3 = p3.fillna(p1)
+    p5 = p5.fillna(p3)
+    x["eng_recent35"] = 0.5 * p1 + 0.3 * p3 + 0.2 * p5
+    x["eng_recent_delta"] = x["eng_recent35"] - career
+    x["eng_sb"] = (
+        numeric_series(x, "asof_pitcher_strike_rate", np.nan)
+        - numeric_series(x, "asof_pitcher_ball_rate", np.nan)
+    )
+    if "pitcher_hand" in x.columns and "batter_hand" in x.columns:
+        x["eng_same"] = (
+            x["pitcher_hand"].astype(str)
+            .eq(x["batter_hand"].astype(str))
+            .astype(np.float32)
+        )
+    else:
+        x["eng_same"] = 0.0
+    x["eng_close"] = (
+        numeric_series(x, "score_diff_pitcher_team", np.nan)
+        .abs().le(1).astype(np.float32)
+    )
+    x["eng_late"] = (
+        numeric_series(x, "inning", np.nan)
+        .ge(7).astype(np.float32)
+    )
+    return x
+
+------------------------------------------------------------------------------------------------------------------------
+FUNCTION fit_adapter_prep (lines 1089-1105)
+------------------------------------------------------------------------------------------------------------------------
+def fit_adapter_prep(map_rows: pd.DataFrame) -> dict:
+    m = add_eng(map_rows.reset_index(drop=True))
+    numeric_cols = [c for c in REFERENCE_RAWNUM if c in m.columns] + ENG_COLS
+    med = (
+        m[numeric_cols]
+        .apply(pd.to_numeric, errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
+        .median()
+        .fillna(0.0)
+        .to_dict()
+    )
+    cat_cols = [c for c in REFERENCE_CAT_SMALL if c in m.columns]
+    maps = {}
+    for col in cat_cols:
+        s = m[col].astype("string").fillna("<NA>").astype(str)
+        maps[col] = {value: idx for idx, value in enumerate(pd.Index(s.unique()))}
+    return {"numeric_cols": numeric_cols, "med": med, "maps": maps}
+
+------------------------------------------------------------------------------------------------------------------------
+FUNCTION transform_adapter_core (lines 1108-1126)
+------------------------------------------------------------------------------------------------------------------------
+def transform_adapter_core(prep: dict, rows: pd.DataFrame, base_pred) -> pd.DataFrame:
+    r = add_eng(rows.reset_index(drop=True))
+    A = (
+        r[prep["numeric_cols"]]
+        .apply(pd.to_numeric, errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
+        .copy()
+    )
+    for col in prep["numeric_cols"]:
+        A[col] = A[col].fillna(float(prep["med"].get(col, 0.0))).astype(np.float32)
+    for col, mapping in prep["maps"].items():
+        A["code_" + col] = (
+            r[col].astype("string").fillna("<NA>").astype(str)
+            .map(mapping).fillna(-1).astype(np.float32)
+        )
+    A["base_pred"] = np.asarray(base_pred, dtype=np.float32)
+    if not np.isfinite(A.to_numpy(dtype=np.float64)).all():
+        raise RuntimeError("adapter core contains NaN/Inf")
+    return A.reset_index(drop=True)
+
+------------------------------------------------------------------------------------------------------------------------
+FUNCTION exact5_matrix (lines 1129-1141)
+------------------------------------------------------------------------------------------------------------------------
+def exact5_matrix(rows: pd.DataFrame, pitcher_season_stats: pd.DataFrame) -> pd.DataFrame:
+    transformed, _ = add_pitcher_exact_asof_features(rows, pitcher_season_stats)
+    exact = (
+        transformed[EXACT_FEATURES]
+        .apply(pd.to_numeric, errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+        .astype(np.float32)
+        .reset_index(drop=True)
+    )
+    if not np.isfinite(exact.to_numpy(dtype=np.float64)).all():
+        raise RuntimeError("Exact-ASOF5 matrix contains NaN/Inf")
+    return exact
+
+------------------------------------------------------------------------------------------------------------------------
+FUNCTION fit_final_l2_models (lines 1144-1179)
+------------------------------------------------------------------------------------------------------------------------
+def fit_final_l2_models(X24, raw24, residual24):
+    gt = raw24[GAME_TYPE_COL].fillna("__MISSING__").astype(str).to_numpy()
+    r_mask = gt != "F"
+    f_mask = gt == "F"
+    n_r = int(r_mask.sum())
+    minimum = int(FINAL_ADAPTER_CFG["min_samples_leaf"]) * 2
+    if n_r <= minimum:
+        raise RuntimeError(f"Final L2 R rows insufficient: {n_r} <= {minimum}")
+
+    models = {}
+    diagnostics = []
+    for seed in ADAPTER_SEEDS:
+        model = ExtraTreesRegressor(
+            n_jobs=N_JOBS,
+            random_state=16200 + int(seed),
+            **FINAL_ADAPTER_CFG,
+        )
+        t0 = time.time()
+        model.fit(X24.loc[r_mask], residual24[r_mask])
+        elapsed = time.time() - t0
+        corr = np.asarray(model.predict(X24.loc[r_mask]), dtype=np.float64)
+        models[int(seed)] = model
+        diagnostics.append({
+            "adapter_seed": int(seed),
+            "n_train_R": n_r,
+            "n_protected_F": int(f_mask.sum()),
+            "fit_elapsed_seconds": float(elapsed),
+            "train_correction_mean_R": float(corr.mean()),
+            "train_correction_std_R": float(corr.std()),
+            "train_correction_abs_mean_R": float(np.mean(np.abs(corr))),
+        })
+        print(
+            f"[L2 seed={seed}] R rows={n_r:,} | fit={elapsed:.1f}s | "
+            f"corr mean={corr.mean():+.6f} | corr abs={np.mean(np.abs(corr)):.6f}"
+        )
+    return models, pd.DataFrame(diagnostics), r_mask, f_mask
+
+MISSING FUNCTIONS: []
+
+========================================================================================================================
+FINAL L2 CONSTRUCTION CONTEXT
+========================================================================================================================
+
+# context lines 1500-1529
+ 1500:     )
+ 1501: 
+ 1502:     pc_tables_by_source_season = build_pc_tables_by_source_season(train)
+ 1503: 
+ 1504:     # -----------------------------------------------------------------
+ 1505:     # 3) Final L2 on 2024 OOT residuals
+ 1506:     # -----------------------------------------------------------------
+ 1507:     raw24 = fold_val.copy().reset_index(drop=True)
+ 1508:     residual24 = y24 - l1_oof24
+ 1509: 
+ 1510:     adapter_prep = fit_adapter_prep(raw24)
+ 1511:     core24 = transform_adapter_core(adapter_prep, raw24, l1_oof24)
+ 1512: 
+ 1513:     # Full train stats are safe here: exact transform itself only subtracts
+ 1514:     # completed seasons strictly earlier than each row's season.
+ 1515:     full_pitcher_stats = final_views["pitcher_season_stats"]
+ 1516:     exact24 = exact5_matrix(raw24, full_pitcher_stats)
+ 1517:     X24 = pd.concat([core24, exact24], axis=1)
+ 1518: 
+ 1519:     if X24.columns.duplicated().any():
+ 1520:         dup = X24.columns[X24.columns.duplicated()].tolist()
+ 1521:         raise RuntimeError(f"Duplicate L2 columns: {dup}")
+ 1522:     if not np.isfinite(X24.to_numpy(dtype=np.float64)).all():
+ 1523:         raise RuntimeError("L2 X24 contains NaN/Inf")
+ 1524: 
+ 1525:     print("\n" + "=" * 112)
+ 1526:     print("FINAL L2 TRAINING")
+ 1527:     print("=" * 112)
+ 1528:     print(f"2024 rows      : {len(raw24):,}")
+ 1529:     print(f"R residual rows: {int(r24.sum()):,}")
+
+# context lines 1501-1530
+ 1501: 
+ 1502:     pc_tables_by_source_season = build_pc_tables_by_source_season(train)
+ 1503: 
+ 1504:     # -----------------------------------------------------------------
+ 1505:     # 3) Final L2 on 2024 OOT residuals
+ 1506:     # -----------------------------------------------------------------
+ 1507:     raw24 = fold_val.copy().reset_index(drop=True)
+ 1508:     residual24 = y24 - l1_oof24
+ 1509: 
+ 1510:     adapter_prep = fit_adapter_prep(raw24)
+ 1511:     core24 = transform_adapter_core(adapter_prep, raw24, l1_oof24)
+ 1512: 
+ 1513:     # Full train stats are safe here: exact transform itself only subtracts
+ 1514:     # completed seasons strictly earlier than each row's season.
+ 1515:     full_pitcher_stats = final_views["pitcher_season_stats"]
+ 1516:     exact24 = exact5_matrix(raw24, full_pitcher_stats)
+ 1517:     X24 = pd.concat([core24, exact24], axis=1)
+ 1518: 
+ 1519:     if X24.columns.duplicated().any():
+ 1520:         dup = X24.columns[X24.columns.duplicated()].tolist()
+ 1521:         raise RuntimeError(f"Duplicate L2 columns: {dup}")
+ 1522:     if not np.isfinite(X24.to_numpy(dtype=np.float64)).all():
+ 1523:         raise RuntimeError("L2 X24 contains NaN/Inf")
+ 1524: 
+ 1525:     print("\n" + "=" * 112)
+ 1526:     print("FINAL L2 TRAINING")
+ 1527:     print("=" * 112)
+ 1528:     print(f"2024 rows      : {len(raw24):,}")
+ 1529:     print(f"R residual rows: {int(r24.sum()):,}")
+ 1530:     print(f"L2 features    : {X24.shape[1]} ({core24.shape[1]} core + {exact24.shape[1]} Exact)")
+
+# context lines 1507-1536
+ 1507:     raw24 = fold_val.copy().reset_index(drop=True)
+ 1508:     residual24 = y24 - l1_oof24
+ 1509: 
+ 1510:     adapter_prep = fit_adapter_prep(raw24)
+ 1511:     core24 = transform_adapter_core(adapter_prep, raw24, l1_oof24)
+ 1512: 
+ 1513:     # Full train stats are safe here: exact transform itself only subtracts
+ 1514:     # completed seasons strictly earlier than each row's season.
+ 1515:     full_pitcher_stats = final_views["pitcher_season_stats"]
+ 1516:     exact24 = exact5_matrix(raw24, full_pitcher_stats)
+ 1517:     X24 = pd.concat([core24, exact24], axis=1)
+ 1518: 
+ 1519:     if X24.columns.duplicated().any():
+ 1520:         dup = X24.columns[X24.columns.duplicated()].tolist()
+ 1521:         raise RuntimeError(f"Duplicate L2 columns: {dup}")
+ 1522:     if not np.isfinite(X24.to_numpy(dtype=np.float64)).all():
+ 1523:         raise RuntimeError("L2 X24 contains NaN/Inf")
+ 1524: 
+ 1525:     print("\n" + "=" * 112)
+ 1526:     print("FINAL L2 TRAINING")
+ 1527:     print("=" * 112)
+ 1528:     print(f"2024 rows      : {len(raw24):,}")
+ 1529:     print(f"R residual rows: {int(r24.sum()):,}")
+ 1530:     print(f"L2 features    : {X24.shape[1]} ({core24.shape[1]} core + {exact24.shape[1]} Exact)")
+ 1531:     print(f"Residual mean  : {residual24.mean():+.8f}")
+ 1532:     print(f"Residual std   : {residual24.std():.8f}")
+ 1533: 
+ 1534:     l2_models, l2_fit_diag, l2_r_mask, l2_f_mask = fit_final_l2_models(
+ 1535:         X24=X24,
+ 1536:         raw24=raw24,
+
+# context lines 1134-1163
+ 1134:         .replace([np.inf, -np.inf], np.nan)
+ 1135:         .fillna(0.0)
+ 1136:         .astype(np.float32)
+ 1137:         .reset_index(drop=True)
+ 1138:     )
+ 1139:     if not np.isfinite(exact.to_numpy(dtype=np.float64)).all():
+ 1140:         raise RuntimeError("Exact-ASOF5 matrix contains NaN/Inf")
+ 1141:     return exact
+ 1142: 
+ 1143: 
+ 1144: def fit_final_l2_models(X24, raw24, residual24):
+ 1145:     gt = raw24[GAME_TYPE_COL].fillna("__MISSING__").astype(str).to_numpy()
+ 1146:     r_mask = gt != "F"
+ 1147:     f_mask = gt == "F"
+ 1148:     n_r = int(r_mask.sum())
+ 1149:     minimum = int(FINAL_ADAPTER_CFG["min_samples_leaf"]) * 2
+ 1150:     if n_r <= minimum:
+ 1151:         raise RuntimeError(f"Final L2 R rows insufficient: {n_r} <= {minimum}")
+ 1152: 
+ 1153:     models = {}
+ 1154:     diagnostics = []
+ 1155:     for seed in ADAPTER_SEEDS:
+ 1156:         model = ExtraTreesRegressor(
+ 1157:             n_jobs=N_JOBS,
+ 1158:             random_state=16200 + int(seed),
+ 1159:             **FINAL_ADAPTER_CFG,
+ 1160:         )
+ 1161:         t0 = time.time()
+ 1162:         model.fit(X24.loc[r_mask], residual24[r_mask])
+ 1163:         elapsed = time.time() - t0
+
+# context lines 1524-1553
+ 1524: 
+ 1525:     print("\n" + "=" * 112)
+ 1526:     print("FINAL L2 TRAINING")
+ 1527:     print("=" * 112)
+ 1528:     print(f"2024 rows      : {len(raw24):,}")
+ 1529:     print(f"R residual rows: {int(r24.sum()):,}")
+ 1530:     print(f"L2 features    : {X24.shape[1]} ({core24.shape[1]} core + {exact24.shape[1]} Exact)")
+ 1531:     print(f"Residual mean  : {residual24.mean():+.8f}")
+ 1532:     print(f"Residual std   : {residual24.std():.8f}")
+ 1533: 
+ 1534:     l2_models, l2_fit_diag, l2_r_mask, l2_f_mask = fit_final_l2_models(
+ 1535:         X24=X24,
+ 1536:         raw24=raw24,
+ 1537:         residual24=residual24,
+ 1538:     )
+ 1539: 
+ 1540:     # -----------------------------------------------------------------
+ 1541:     # 4) Save one self-contained artifact
+ 1542:     # -----------------------------------------------------------------
+ 1543:     MODEL_DIR.mkdir(parents=True, exist_ok=False)
+ 1544: 
+ 1545:     artifact = {
+ 1546:         "experiment_name": EXPERIMENT_NAME,
+ 1547:         "model_type": "Standalone routed CatBoost L1 + R-only ExtraTrees L2",
+ 1548:         "random_seed": BASE_SEED,
+ 1549:         "expected_target_year": EXPECTED_TARGET_YEAR,
+ 1550: 
+ 1551:         "control": {
+ 1552:             "model": control_model,
+ 1553:             "features": list(final_views["control_features"]),
+
+# context lines 1591-1620
+ 1591:         "l2": {
+ 1592:             "source_year": SOURCE_YEAR,
+ 1593:             "residual_definition": "official_y_2024 - standalone_L1_2019_2023_to_2024_routed_prediction",
+ 1594:             "adapter_models": l2_models,
+ 1595:             "adapter_seeds": list(ADAPTER_SEEDS),
+ 1596:             "validation_crossfit_cfg": dict(V15_CF_CFG),
+ 1597:             "final_adapter_cfg": dict(FINAL_ADAPTER_CFG),
+ 1598:             "adapter_shrink": float(ADAPTER_SHRINK),
+ 1599:             "adapter_prep": adapter_prep,
+ 1600:             "adapter_feature_cols": list(X24.columns),
+ 1601:             "adapter_core_feature_cols": list(core24.columns),
+ 1602:             "exact_cols": list(EXACT_FEATURES),
+ 1603:             "pitcher_season_stats": full_pitcher_stats,
+ 1604:             "reference_rawnum": list(REFERENCE_RAWNUM),
+ 1605:             "reference_cat_small": list(REFERENCE_CAT_SMALL),
+ 1606:             "eng_cols": list(ENG_COLS),
+ 1607:             "pc_in_l2": False,
+ 1608:             "exact_in_l2": True,
+ 1609:             "fit_scope": "all official 2024 R rows",
+ 1610:         },
+ 1611: 
+ 1612:         "l2_routing": {
+ 1613:             "column": GAME_TYPE_COL,
+ 1614:             "L2_rule": "game_type != 'F'",
+ 1615:             "protected_rule": "game_type == 'F'",
+ 1616:             "R_prediction": "clip(L1 + 0.50 * mean(3 ExtraTrees corrections), 0, 1)",
+ 1617:             "F_prediction": "L1 exactly",
+ 1618:         },
+ 1619: 
+ 1620:         "prediction_policy": "np.clip(prediction, 0.0, 1.0)",
+
+# context lines 1590-1619
+ 1590: 
+ 1591:         "l2": {
+ 1592:             "source_year": SOURCE_YEAR,
+ 1593:             "residual_definition": "official_y_2024 - standalone_L1_2019_2023_to_2024_routed_prediction",
+ 1594:             "adapter_models": l2_models,
+ 1595:             "adapter_seeds": list(ADAPTER_SEEDS),
+ 1596:             "validation_crossfit_cfg": dict(V15_CF_CFG),
+ 1597:             "final_adapter_cfg": dict(FINAL_ADAPTER_CFG),
+ 1598:             "adapter_shrink": float(ADAPTER_SHRINK),
+ 1599:             "adapter_prep": adapter_prep,
+ 1600:             "adapter_feature_cols": list(X24.columns),
+ 1601:             "adapter_core_feature_cols": list(core24.columns),
+ 1602:             "exact_cols": list(EXACT_FEATURES),
+ 1603:             "pitcher_season_stats": full_pitcher_stats,
+ 1604:             "reference_rawnum": list(REFERENCE_RAWNUM),
+ 1605:             "reference_cat_small": list(REFERENCE_CAT_SMALL),
+ 1606:             "eng_cols": list(ENG_COLS),
+ 1607:             "pc_in_l2": False,
+ 1608:             "exact_in_l2": True,
+ 1609:             "fit_scope": "all official 2024 R rows",
+ 1610:         },
+ 1611: 
+ 1612:         "l2_routing": {
+ 1613:             "column": GAME_TYPE_COL,
+ 1614:             "L2_rule": "game_type != 'F'",
+ 1615:             "protected_rule": "game_type == 'F'",
+ 1616:             "R_prediction": "clip(L1 + 0.50 * mean(3 ExtraTrees corrections), 0, 1)",
+ 1617:             "F_prediction": "L1 exactly",
+ 1618:         },
+ 1619: 
+
+# context lines 1594-1623
+ 1594:             "adapter_models": l2_models,
+ 1595:             "adapter_seeds": list(ADAPTER_SEEDS),
+ 1596:             "validation_crossfit_cfg": dict(V15_CF_CFG),
+ 1597:             "final_adapter_cfg": dict(FINAL_ADAPTER_CFG),
+ 1598:             "adapter_shrink": float(ADAPTER_SHRINK),
+ 1599:             "adapter_prep": adapter_prep,
+ 1600:             "adapter_feature_cols": list(X24.columns),
+ 1601:             "adapter_core_feature_cols": list(core24.columns),
+ 1602:             "exact_cols": list(EXACT_FEATURES),
+ 1603:             "pitcher_season_stats": full_pitcher_stats,
+ 1604:             "reference_rawnum": list(REFERENCE_RAWNUM),
+ 1605:             "reference_cat_small": list(REFERENCE_CAT_SMALL),
+ 1606:             "eng_cols": list(ENG_COLS),
+ 1607:             "pc_in_l2": False,
+ 1608:             "exact_in_l2": True,
+ 1609:             "fit_scope": "all official 2024 R rows",
+ 1610:         },
+ 1611: 
+ 1612:         "l2_routing": {
+ 1613:             "column": GAME_TYPE_COL,
+ 1614:             "L2_rule": "game_type != 'F'",
+ 1615:             "protected_rule": "game_type == 'F'",
+ 1616:             "R_prediction": "clip(L1 + 0.50 * mean(3 ExtraTrees corrections), 0, 1)",
+ 1617:             "F_prediction": "L1 exactly",
+ 1618:         },
+ 1619: 
+ 1620:         "prediction_policy": "np.clip(prediction, 0.0, 1.0)",
+ 1621:         "rule_compliance": {
+ 1622:             "test_rows_used_during_training": False,
+ 1623:             "test_usage_during_training": "header_only",
+
+# context lines 1595-1624
+ 1595:             "adapter_seeds": list(ADAPTER_SEEDS),
+ 1596:             "validation_crossfit_cfg": dict(V15_CF_CFG),
+ 1597:             "final_adapter_cfg": dict(FINAL_ADAPTER_CFG),
+ 1598:             "adapter_shrink": float(ADAPTER_SHRINK),
+ 1599:             "adapter_prep": adapter_prep,
+ 1600:             "adapter_feature_cols": list(X24.columns),
+ 1601:             "adapter_core_feature_cols": list(core24.columns),
+ 1602:             "exact_cols": list(EXACT_FEATURES),
+ 1603:             "pitcher_season_stats": full_pitcher_stats,
+ 1604:             "reference_rawnum": list(REFERENCE_RAWNUM),
+ 1605:             "reference_cat_small": list(REFERENCE_CAT_SMALL),
+ 1606:             "eng_cols": list(ENG_COLS),
+ 1607:             "pc_in_l2": False,
+ 1608:             "exact_in_l2": True,
+ 1609:             "fit_scope": "all official 2024 R rows",
+ 1610:         },
+ 1611: 
+ 1612:         "l2_routing": {
+ 1613:             "column": GAME_TYPE_COL,
+ 1614:             "L2_rule": "game_type != 'F'",
+ 1615:             "protected_rule": "game_type == 'F'",
+ 1616:             "R_prediction": "clip(L1 + 0.50 * mean(3 ExtraTrees corrections), 0, 1)",
+ 1617:             "F_prediction": "L1 exactly",
+ 1618:         },
+ 1619: 
+ 1620:         "prediction_policy": "np.clip(prediction, 0.0, 1.0)",
+ 1621:         "rule_compliance": {
+ 1622:             "test_rows_used_during_training": False,
+ 1623:             "test_usage_during_training": "header_only",
+ 1624:             "test_row_aggregation": False,
+
+# context lines 1596-1625
+ 1596:             "validation_crossfit_cfg": dict(V15_CF_CFG),
+ 1597:             "final_adapter_cfg": dict(FINAL_ADAPTER_CFG),
+ 1598:             "adapter_shrink": float(ADAPTER_SHRINK),
+ 1599:             "adapter_prep": adapter_prep,
+ 1600:             "adapter_feature_cols": list(X24.columns),
+ 1601:             "adapter_core_feature_cols": list(core24.columns),
+ 1602:             "exact_cols": list(EXACT_FEATURES),
+ 1603:             "pitcher_season_stats": full_pitcher_stats,
+ 1604:             "reference_rawnum": list(REFERENCE_RAWNUM),
+ 1605:             "reference_cat_small": list(REFERENCE_CAT_SMALL),
+ 1606:             "eng_cols": list(ENG_COLS),
+ 1607:             "pc_in_l2": False,
+ 1608:             "exact_in_l2": True,
+ 1609:             "fit_scope": "all official 2024 R rows",
+ 1610:         },
+ 1611: 
+ 1612:         "l2_routing": {
+ 1613:             "column": GAME_TYPE_COL,
+ 1614:             "L2_rule": "game_type != 'F'",
+ 1615:             "protected_rule": "game_type == 'F'",
+ 1616:             "R_prediction": "clip(L1 + 0.50 * mean(3 ExtraTrees corrections), 0, 1)",
+ 1617:             "F_prediction": "L1 exactly",
+ 1618:         },
+ 1619: 
+ 1620:         "prediction_policy": "np.clip(prediction, 0.0, 1.0)",
+ 1621:         "rule_compliance": {
+ 1622:             "test_rows_used_during_training": False,
+ 1623:             "test_usage_during_training": "header_only",
+ 1624:             "test_row_aggregation": False,
+ 1625:             "l2_residual_source": "official 2024 labels + standalone 2024 L1 out-of-time prediction",
+
+========================================================================================================================
+END
+========================================================================================================================
