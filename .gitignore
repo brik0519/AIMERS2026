@@ -27,6 +27,7 @@ data/trackman/
 **/oof_pred.csv
 **/oof.csv
 **/oof_predictions.csv
+**/predictions.csv
 
 validation/shift_v*/oof.csv
 validation/ensemble_v*/oof_pred.csv
