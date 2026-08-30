@@ -1,24 +1,65 @@
-"""wl_v002 — D arm(recency x RMSE) 재평가. LB 0회, train.csv 불필요.
+"""rresid_v002 — Ridge representation retest on the frozen Treatment OOF bank.
 
-배경       : wl_v001 의 FAIL 은 2023->2024 단일 전이 판정이었다. source 2023 은 병리적
-             연도(전 성분 음수 skill, s* 반전)라 '2023의 최근 월을 더 믿기'가 무익했던
-             것일 수 있다. 2024-2025 연속성 가설 하에서는 정상 연도 전이가 2025 의
-             더 나은 대리다.
-설계       : A(균등 x Logloss, 대조군) vs D(recency x RMSE) 를 정상 전이 2개
-             (2020->2021, 2021->2022)와 참조 전이(2023->2024)에서 비교.
-             입력·프로토콜은 wl_v001 과 동일 (m1 의 98열, pitcher-half 내부 holdout
-             트리 수, 가중치는 source 학습에만, anchor 의 m1 자리 대입 평가).
-판정 (사전 등록):
-             정상 전이 2개 모두에서  [D - A] (anchor 대입) >= +1.0bp
-             AND 2023->2024 에서     [D - A] >= -0.5bp  (비열세 가드)
-             -> PASS: deploy(2024 source) 에 recency x RMSE m1 을 적용한 full run 을
-                Day 2 제출 후보로 승격. FAIL: D arm 최종 폐기.
-최우선 규칙: 평가 데이터 독립 추론 — train 내부 전이만 사용, test 무관.
+Why this experiment exists
+--------------------------
+rresid_v001 established that the existing ExtraTrees-adapter 49-column matrix,
+when fed to a standardized Ridge, did not transfer R residual Shape robustly.
+That does NOT falsify the Ridge idea used by shift_v002/v003 because that layer
+used a different 25-column sensitivity representation and scale=0.75.
 
-사용:
-  python wl_v002_decision.py
-  WL2_SMOKE=1 python wl_v002_decision.py
+This audit therefore reuses the already-generated rresid_v001 Treatment OOF
+residual bank and compares four strictly-next-year correction designs:
+
+  R0 CONSTANT_S05
+     previous-year mean R residual * 0.50 (Level reference)
+
+  R1 RIDGE_CODED49_S05
+     exact reproduction of rresid_v001 Ridge representation:
+       adapter numeric + integer category codes + base_pred + Exact-ASOF5
+       StandardScaler -> Ridge(alpha=1000, fit_intercept=False)
+       centered residual target, scale=0.50
+
+  R2 RIDGE_OHE_S05
+     Ridge-native rewrite of the same adapter information:
+       genuine numeric/engineered features + base_pred + Exact-ASOF5
+       small categorical features -> source-fitted OneHotEncoder
+       BOTH numeric and one-hot columns source-centered/scaled
+       Ridge(alpha=1000, fit_intercept=False)
+       centered residual target, scale=0.50
+
+  R3 RIDGE_SENS25_SHIFT_ALLR_S075
+     shift_v002/v003 sensitivity representation:
+       25 sensitivity columns
+       last <=3 labeled seasons, decay=0.65
+       pitcher×batter_hand and pitcher×pressure×batter_hand EB deltas/reliability
+       count one-hot indicators
+       source standardization and clip[-8,8]
+       Ridge(alpha=1000, solver='lsqr', fit_intercept=False)
+       RAW source residual target, scale=0.75
+     NOTE: original shift_v002/v003 applied this only to route_segment=CORE.
+     This experiment intentionally applies it to the current R branch
+     (game_type != 'F') because danker R does not use the shift router.  The
+     feature/model construction is shift-faithful; the routing is R-branch-specific.
+
+  R4 RIDGE_SENS25_REFERENCE_ALLR_S075
+     same 25 features but fit_intercept=True.  This mirrors the shift reference
+     model and diagnoses whether any gain is only previous-year Level transfer.
+
+Temporal protocol
+-----------------
+For target t in [2021,2022,2023,2024]:
+  fit residual correction ONLY on Treatment OOF residuals from t-1
+  apply to Treatment OOF predictions in t.
+
+No final model is trained. No test rows are used.
+
+Fast execution
+--------------
+The expensive CatBoost OOF stage is NOT repeated. By default this script reads:
+  ./validation/rresid_v001/residual_bank.csv
+You can override it with RRESID_BANK_SOURCE=/path/to/residual_bank.csv.
 """
+
 from __future__ import annotations
 
 import json
@@ -28,2982 +69,873 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import xgboost as xgb
-from catboost import CatBoostClassifier
-from scipy.optimize import minimize
-from scipy.special import betaln
-from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import OrdinalEncoder
-from xgboost import XGBClassifier
+from scipy import sparse
+from sklearn.linear_model import Ridge
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 
-# =========================================================
-# 실험 설정
-# =========================================================
-EXPERIMENT_NAME = "ensemble_v008"
+# =============================================================================
+# Paths / identifiers
+# =============================================================================
 
-ID = "row_id"
-TARGET = "control_success"
+EXPERIMENT_NAME = "rresid_v002"
 
-BASE_CAT_WEIGHT = 0.5655685
-BASE_XGB_WEIGHT = 1.0 - BASE_CAT_WEIGHT
-
-# =========================================================
-# Feature 실험 Tag Mode
-# =========================================================
-# Boolean 조합 대신 "모델:기능" Tag를 조합하여 실험을 정의한다.
-# 하나의 Tag는 하나의 가설만 담당하도록 유지한다.
-#
-# 지원 Tag:
-# - "cat:temporal"
-#     CatBoost에 현재 행의 공식 asof_* 값으로 만든 Temporal Feature 추가
-# - "xgb:temporal"
-#     XGBoost에 현재 행의 공식 asof_* 값으로 만든 Temporal Feature 추가
-# - "xgb:raw-player-id"
-#     XGBoost에 pitcher_id / batter_id raw numeric representation 유지
-#     이 Tag가 없으면 pitcher_id / batter_id를 XGBoost Feature에서 제거
-# - "xgb:reliability"
-#     XGBoost에 exact count-based Beta-Binomial Empirical Bayes
-#     reliability Feature를 추가
-#
-# 대표 실험:
-# A) Raw / Raw
-#    FEATURE_TAGS = {"xgb:raw-player-id"}
-#
-# B) Cat Temporal / XGB Raw
-#    FEATURE_TAGS = {
-#        "cat:temporal",
-#        "xgb:raw-player-id",
-#    }
-#
-# C) Cat Raw / XGB Temporal
-#    FEATURE_TAGS = {
-#        "xgb:temporal",
-#        "xgb:raw-player-id",
-#    }
-#
-# D) Temporal / Temporal
-#    FEATURE_TAGS = {
-#        "cat:temporal",
-#        "xgb:temporal",
-#        "xgb:raw-player-id",
-#    }
-#
-# C-ID-DROP) Cat Raw / XGB Temporal + raw pitcher/batter ID 제거
-#    FEATURE_TAGS = {"xgb:temporal"}
-#
-# E) Cat Raw / XGB Reliability  <- ensemble_v008 권장
-#    FEATURE_TAGS = {
-#        "xgb:raw-player-id",
-#        "xgb:reliability",
-#    }
-SUPPORTED_FEATURE_TAGS = {
-    "cat:temporal",
-    "xgb:temporal",
-    "xgb:raw-player-id",
-    "xgb:reliability",
-}
-
-# ensemble_v007 Control 대비 Reliability만 추가한다.
-# Temporal은 끈 상태로 유지한다.
-FEATURE_TAGS = {
-    "xgb:raw-player-id",
-    "xgb:reliability",
-}
-
-# 최종 blend weight:
-# - pooled_oof : 모든 expanding OOF prediction으로 최적화
-# - fixed      : 기존 weight 사용
-FINAL_WEIGHT_MODE = "pooled_oof"
-
-# Hidden future와 가장 가까운 2024 Fold의 best iteration을
-# Final model iteration으로 사용한다.
-FINAL_ITERATION_STRATEGY = "latest_fold"
-
-
-# =========================================================
-# 경로
-# =========================================================
 DATA_DIR = Path("./data")
+TRAIN_PATH = DATA_DIR / "train.csv"
 
 MODEL_ROOT = Path("./model")
 MODEL_DIR = MODEL_ROOT / EXPERIMENT_NAME
-MODEL_PATH = MODEL_DIR / f"{EXPERIMENT_NAME}.pkl"
+MODEL_PATH = MODEL_DIR / f"{EXPERIMENT_NAME}.pkl"  # intentionally not written
 
 VALIDATION_ROOT = Path("./validation")
 VALIDATION_DIR = VALIDATION_ROOT / EXPERIMENT_NAME
 
 OUTPUT_DIR = Path("./output")
 
-TRAIN_PATH = DATA_DIR / "train.csv"
-TEST_PATH = DATA_DIR / "test.csv"
-SAMPLE_SUB_PATH = DATA_DIR / "sample_submission.csv"
-OUTPUT_PATH = OUTPUT_DIR / "submission.csv"
+DEFAULT_BANK_PATH = VALIDATION_ROOT / "rresid_v001" / "residual_bank.csv"
+BANK_SOURCE_PATH = Path(os.environ.get("RRESID_BANK_SOURCE", str(DEFAULT_BANK_PATH)))
 
+RIDGE_METRICS_PATH = VALIDATION_DIR / "ridge_metrics.csv"
+RIDGE_PREDICTIONS_PATH = VALIDATION_DIR / "ridge_predictions.csv"
+YEAR_SUMMARY_PATH = VALIDATION_DIR / "year_summary.csv"
+SEED_SUMMARY_PATH = VALIDATION_DIR / "seed_summary.csv"
+META_PATH = VALIDATION_DIR / "final_metadata.json"
 
-# =========================================================
-# Expanding Window Validation
-# =========================================================
-EXPANDING_FOLDS = [
-    {
-        "fold": 1,
-        "train_seasons": [2019, 2020],
-        "validation_season": 2021,
-    },
-    {
-        "fold": 2,
-        "train_seasons": [2019, 2020, 2021],
-        "validation_season": 2022,
-    },
-    {
-        "fold": 3,
-        "train_seasons": [2019, 2020, 2021, 2022],
-        "validation_season": 2023,
-    },
-    {
-        "fold": 4,
-        "train_seasons": [2019, 2020, 2021, 2022, 2023],
-        "validation_season": 2024,
-    },
+ID = "row_id"
+TARGET = "control_success"
+SEASON_COL = "season"
+GAME_TYPE_COL = "game_type"
+
+EVAL_YEARS = [2021, 2022, 2023, 2024]
+RIDGE_ALPHA = 1000.0
+COMMON_SHRINK = 0.50
+SHIFT_SCALE = 0.75
+
+# shift_v002/v003 sensitivity constants
+SENS_HISTORY_YEARS = 3
+SENS_DECAY = 0.65
+SENS_PARENT_STRENGTH = 100.0
+SENS_HAND_STRENGTH = 35.0
+SENS_PRESSURE_HAND_STRENGTH = 45.0
+
+PRIMARY_ARMS = [
+    "CONSTANT_S05",
+    "RIDGE_CODED49_S05",
+    "RIDGE_OHE_S05",
+    "RIDGE_SENS25_SHIFT_ALLR_S075",
+    "RIDGE_SENS25_REFERENCE_ALLR_S075",
 ]
 
 
-# =========================================================
-# CatBoost Feature 정책
-# =========================================================
-# train_cb.py의 categorical 정책을 그대로 유지한다.
-CAT_COLS = [
+# =============================================================================
+# Existing adapter information set (rresid_v001 / cb_reg_v003_exact_pc_l2)
+# =============================================================================
+
+EXACT_FEATURES = [
+    "exact_pitcher_season_n",
+    "exact_pitcher_season_logn",
+    "exact_pitcher_season_success_rate",
+    "exact_pitcher_past_success_rate",
+    "exact_pitcher_season_minus_past",
+]
+
+REFERENCE_RAWNUM = [
+    "game_month",
+    "inning",
+    "balls_before",
+    "strikes_before",
+    "outs_before",
+    "score_diff_pitcher_team",
+    "num_runners_on",
+    "home_win_expectancy",
+    "li",
+    "asof_pitcher_n",
+    "asof_pitcher_success_rate",
+    "asof_pitcher_reverse_rate",
+    "asof_pitcher_middle_rate",
+    "asof_pitcher_ball_rate",
+    "asof_pitcher_strike_rate",
+    "asof_pitcher_prev1_game_success_rate",
+    "asof_pitcher_prev3_game_success_rate",
+    "asof_pitcher_prev5_game_success_rate",
+    "asof_pitcher_prev1_game_middle_rate",
+    "asof_pitcher_prev3_game_middle_rate",
+    "asof_pitcher_prev5_game_middle_rate",
+    "asof_batter_n",
+    "asof_batter_success_rate",
+    "asof_batter_middle_rate",
+    "asof_pitcher_fastball_rate",
+    "asof_pitcher_breaking_rate",
+    "asof_pitcher_offspeed_rate",
+    "pitcher_team_id",
+    "batter_team_id",
+]
+
+REFERENCE_CAT_SMALL = [
+    "game_dayofweek",
     "top_bottom",
     "game_type",
     "base_state",
-    "pitcher_id",
-    "batter_id",
-    "pitcher_team_id",
-    "batter_team_id",
     "pitcher_hand",
     "batter_hand",
-]
-
-
-# =========================================================
-# XGBoost Feature 정책
-# =========================================================
-# train_xgb.py의 low-cardinality categorical 정책을 유지한다.
-XGB_CAT_COLS = [
-    "top_bottom",
-    "game_type",
-    "base_state",
-    "pitcher_hand",
-    "batter_hand",
-]
-
-# 기존 XGBoost와의 비교 가능성을 위해 ID-like dtype 정책은 유지한다.
-XGB_ID_LIKE_COLS = [
-    "pitcher_id",
-    "batter_id",
     "pitcher_team_id",
     "batter_team_id",
 ]
 
-# Specialist 실험:
-# player raw identity는 CatBoost가 담당하고,
-# XGBoost는 pitcher/batter raw ID 대신 temporal representation을 강조한다.
-# 팀 ID는 기존 XGB처럼 numeric 유지한다.
-XGB_DROP_RAW_ID_COLS = [
-    "pitcher_id",
-    "batter_id",
+ENG_COLS = [
+    "eng_recent35",
+    "eng_recent_delta",
+    "eng_sb",
+    "eng_same",
+    "eng_close",
+    "eng_late",
 ]
 
-TEMPORAL_FEATURES = [
-    "tf_success_prev1_vs_career",
-    "tf_success_prev3_vs_career",
-    "tf_success_prev5_vs_career",
-    "tf_success_prev1_vs_prev3",
-    "tf_success_prev3_vs_prev5",
-    "tf_middle_prev1_vs_career",
-    "tf_middle_prev3_vs_career",
-    "tf_middle_prev5_vs_career",
-    "tf_middle_prev1_vs_prev3",
-    "tf_middle_prev3_vs_prev5",
-]
 
-RELIABILITY_FEATURES = [
-    "rf_pitcher_success_eb_rate",
-    "rf_pitcher_success_posterior_std",
-]
-
-# Beta-Binomial population prior fit 설정.
-# Prior는 반드시 각 expanding fold의 train 구간 target만으로 fit한다.
-EB_PRIOR_MIN_PITCHER_TRIALS = 1
-EB_INITIAL_STRENGTHS = [20.0, 100.0, 500.0]
-EB_LOG_PARAM_LOWER = -12.0
-EB_LOG_PARAM_UPPER = 14.0
-
-# denominator audit 결과가 이 임계값을 넘으면 exact count 복원을 중단한다.
-# 성공 count rounding이 모호해지는 절대 한계는 0.5지만,
-# 현재 실제 audit(max≈0.0076)에 맞춰 훨씬 보수적으로 둔다.
-EB_MAX_INTEGER_DISTANCE = 0.05
+# =============================================================================
+# Generic metrics
+# =============================================================================
 
 
-# =========================================================
-# CatBoost 설정 — train_cb.py 적용
-# =========================================================
-CATBOOST_PARAMS = {
-    "iterations": 800,
-    "learning_rate": 0.07,
-    "depth": 8,
-    "loss_function": "Logloss",
-    "l2_leaf_reg": 10.0,
-    "random_strength": 1.0,
-    "random_seed": 42,
-    "max_ctr_complexity": 1,
-    "thread_count": -1,
-    "verbose": 100,
-    "allow_writing_files": False,
-}
-
-CAT_EARLY_STOPPING_ROUNDS = 80
+def brier_score(y_true, y_pred) -> float:
+    y = np.asarray(y_true, dtype=np.float64)
+    p = np.asarray(y_pred, dtype=np.float64)
+    return float(np.mean((y - p) ** 2))
 
 
-# =========================================================
-# XGBoost 설정 — train_xgb.py 적용
-# =========================================================
-XGB_MAX_ITERATIONS = 5000
-XGB_EARLY_STOPPING_ROUNDS = 200
-XGB_RANDOM_STATE = 42
-
-XGBOOST_PARAMS = {
-    "objective": "binary:logistic",
-    "learning_rate": 0.03,
-    "max_depth": 8,
-    "min_child_weight": 10.0,
-    "subsample": 0.85,
-    "colsample_bytree": 0.85,
-    "reg_alpha": 1.0,
-    "reg_lambda": 10.0,
-    "tree_method": "hist",
-    "device": "cpu",
-    "random_state": XGB_RANDOM_STATE,
-    "n_jobs": -1,
-}
+def error_decomposition(y_true, y_pred) -> dict:
+    y = np.asarray(y_true, dtype=np.float64)
+    p = np.asarray(y_pred, dtype=np.float64)
+    err = p - y
+    level = float(np.mean(err) ** 2)
+    total = float(np.mean(err ** 2))
+    shape = float(total - level)
+    return {"total": total, "level": level, "shape": shape}
 
 
-# =========================================================
-# Feature Tag 해석
-# =========================================================
-def validate_feature_tags(feature_tags):
-    feature_tags = set(feature_tags)
+def evaluate_arm(y, base, corr, scale, arm, target_year, source_year, seed):
+    y = np.asarray(y, dtype=np.float64)
+    base = np.asarray(base, dtype=np.float64)
+    corr = np.asarray(corr, dtype=np.float64)
+    pred = np.clip(base + float(scale) * corr, 0.0, 1.0)
 
-    unknown_tags = sorted(
-        feature_tags - SUPPORTED_FEATURE_TAGS
-    )
-    if unknown_tags:
-        raise ValueError(
-            "지원하지 않는 FEATURE_TAGS가 있습니다: "
-            + ", ".join(unknown_tags)
-        )
+    b0 = error_decomposition(y, base)
+    b1 = error_decomposition(y, pred)
+    rate = float(np.mean(y))
+    baseline = rate * (1.0 - rate)
+    if baseline <= 0:
+        raise RuntimeError("R baseline Brier <= 0")
 
-    return feature_tags
-
-
-def resolve_feature_config(feature_tags):
-    """
-    Tag를 실제 Feature 정책으로 해석한다.
-
-    실험 정의는 FEATURE_TAGS만으로 관리하며,
-    Boolean 값은 프로그램 내부에서만 파생한다.
-    """
-    feature_tags = validate_feature_tags(
-        feature_tags
-    )
-
-    return {
-        "cat_use_temporal": (
-            "cat:temporal" in feature_tags
-        ),
-        "xgb_use_temporal": (
-            "xgb:temporal" in feature_tags
-        ),
-        "xgb_use_raw_player_ids": (
-            "xgb:raw-player-id" in feature_tags
-        ),
-        "xgb_use_reliability": (
-            "xgb:reliability" in feature_tags
-        ),
+    gains = {
+        key: 100000.0 * (b0[key] - b1[key]) / baseline
+        for key in ["total", "level", "shape"]
     }
+    if abs(gains["total"] - gains["level"] - gains["shape"]) > 1e-6:
+        raise RuntimeError("Total != Level + Shape")
 
-
-# =========================================================
-# asof denominator Audit
-# =========================================================
-def audit_asof_pitcher_success_denominator(df):
-    """
-    asof_pitcher_n이 asof_pitcher_success_rate의 denominator인지
-    train.csv에서 실증적으로 점검한다.
-
-    검사식:
-        abs(n * rate - round(n * rate))
-
-    이 값이 거의 항상 0에 가까우면
-    n * rate가 실제 과거 성공 count와 일치할 가능성이 높다.
-
-    주의:
-    - train.csv만 사용한다.
-    - Feature 생성이나 모델 학습에 관여하지 않는다.
-    - exact Beta-Binomial 구현 전 사전 검증 용도다.
-    """
-    required = [
-        "asof_pitcher_n",
-        "asof_pitcher_success_rate",
-    ]
-    missing = [
-        col
-        for col in required
-        if col not in df.columns
-    ]
-    if missing:
-        raise ValueError(
-            "asof denominator audit에 필요한 컬럼이 없습니다: "
-            + ", ".join(missing)
-        )
-
-    n = pd.to_numeric(
-        df["asof_pitcher_n"],
-        errors="coerce",
-    )
-    rate = pd.to_numeric(
-        df["asof_pitcher_success_rate"],
-        errors="coerce",
-    )
-
-    valid = (
-        n.notna()
-        & rate.notna()
-        & np.isfinite(n.to_numpy(dtype=float))
-        & np.isfinite(rate.to_numpy(dtype=float))
-        & (n >= 0)
-        & (rate >= 0)
-        & (rate <= 1)
-    )
-
-    n_valid = n.loc[valid].to_numpy(dtype=float)
-    rate_valid = rate.loc[valid].to_numpy(dtype=float)
-
-    product = n_valid * rate_valid
-    integer_distance = np.abs(
-        product - np.rint(product)
-    )
-
-    def _quantile(arr, q):
-        if len(arr) == 0:
-            return float("nan")
-        return float(np.quantile(arr, q))
-
-    thresholds = [
-        1e-8,
-        1e-6,
-        1e-4,
-        1e-3,
-        1e-2,
-    ]
-
-    audit = {
-        "definition_check": (
-            "Tests whether asof_pitcher_n * "
-            "asof_pitcher_success_rate is approximately integer."
-        ),
-        "n_total_rows": int(len(df)),
-        "n_valid_rows": int(len(integer_distance)),
-        "valid_row_share": (
-            float(len(integer_distance) / len(df))
-            if len(df) > 0
-            else float("nan")
-        ),
-        "n_zero_history_rows": int(
-            np.sum(n_valid == 0)
-        ),
-        "integer_distance": {
-            "mean": (
-                float(np.mean(integer_distance))
-                if len(integer_distance) > 0
-                else float("nan")
-            ),
-            "median": _quantile(integer_distance, 0.50),
-            "p90": _quantile(integer_distance, 0.90),
-            "p95": _quantile(integer_distance, 0.95),
-            "p99": _quantile(integer_distance, 0.99),
-            "p999": _quantile(integer_distance, 0.999),
-            "max": (
-                float(np.max(integer_distance))
-                if len(integer_distance) > 0
-                else float("nan")
-            ),
-        },
-        "share_within_tolerance": {
-            f"{threshold:.0e}": (
-                float(
-                    np.mean(
-                        integer_distance <= threshold
-                    )
-                )
-                if len(integer_distance) > 0
-                else float("nan")
-            )
-            for threshold in thresholds
-        },
+    row = {
+        "arm": arm,
+        "validation_year": int(target_year),
+        "source_year": int(source_year),
+        "base_seed": int(seed),
+        "scale": float(scale),
+        "n_R": int(len(y)),
+        "R_total_gain_pt": float(gains["total"]),
+        "R_level_gain_pt": float(gains["level"]),
+        "R_shape_gain_pt": float(gains["shape"]),
+        "total_win": bool(gains["total"] > 1e-8),
+        "shape_win": bool(gains["shape"] > 1e-6),
+        "base_brier": float(b0["total"]),
+        "candidate_brier": float(b1["total"]),
+        "correction_mean": float(np.mean(corr)),
+        "correction_std": float(np.std(corr)),
+        "correction_abs_mean": float(np.mean(np.abs(corr))),
     }
-
-    by_season = []
-    if "season" in df.columns:
-        for season in sorted(
-            df.loc[valid, "season"]
-            .dropna()
-            .unique()
-        ):
-            season_mask = (
-                valid
-                & (df["season"] == season)
-            )
-
-            season_n = pd.to_numeric(
-                df.loc[
-                    season_mask,
-                    "asof_pitcher_n",
-                ],
-                errors="coerce",
-            ).to_numpy(dtype=float)
-
-            season_rate = pd.to_numeric(
-                df.loc[
-                    season_mask,
-                    "asof_pitcher_success_rate",
-                ],
-                errors="coerce",
-            ).to_numpy(dtype=float)
-
-            season_distance = np.abs(
-                season_n * season_rate
-                - np.rint(
-                    season_n * season_rate
-                )
-            )
-
-            by_season.append({
-                "season": int(season),
-                "n": int(len(season_distance)),
-                "median_integer_distance": (
-                    _quantile(
-                        season_distance,
-                        0.50,
-                    )
-                ),
-                "p99_integer_distance": (
-                    _quantile(
-                        season_distance,
-                        0.99,
-                    )
-                ),
-                "share_within_1e-3": (
-                    float(
-                        np.mean(
-                            season_distance <= 1e-3
-                        )
-                    )
-                    if len(season_distance) > 0
-                    else float("nan")
-                ),
-            })
-
-    audit["by_season"] = by_season
-    return audit
+    return row, pred
 
 
-def print_asof_denominator_audit(audit):
-    print()
-    print("=" * 72)
-    print("asof_pitcher_n / success_rate denominator audit")
-    print("=" * 72)
-    print(
-        "Valid rows              :",
-        f"{audit['n_valid_rows']:,}",
-        "/",
-        f"{audit['n_total_rows']:,}",
-    )
-
-    distance = audit["integer_distance"]
-    print(
-        "Median |n*p-round(n*p)| :",
-        f"{distance['median']:.12g}",
-    )
-    print(
-        "P99    |n*p-round(n*p)| :",
-        f"{distance['p99']:.12g}",
-    )
-    print(
-        "Max    |n*p-round(n*p)| :",
-        f"{distance['max']:.12g}",
-    )
-    print(
-        "Share within 1e-3      :",
-        f"{audit['share_within_tolerance']['1e-03']:.6f}",
-    )
-    print(
-        "Share within 1e-2      :",
-        f"{audit['share_within_tolerance']['1e-02']:.6f}",
-    )
-    print(
-        "주의: 이 audit은 denominator 관계 검증용이며 "
-        "Feature 생성에는 사용되지 않습니다."
-    )
-    print("=" * 72)
+def to_jsonable(obj):
+    if isinstance(obj, dict):
+        return {str(k): to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [to_jsonable(v) for v in obj]
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.floating,)):
+        x = float(obj)
+        return None if not np.isfinite(x) else x
+    if isinstance(obj, float):
+        return None if not np.isfinite(obj) else obj
+    if isinstance(obj, Path):
+        return str(obj)
+    return obj
 
 
-# =========================================================
-# Exact count-based Beta-Binomial Empirical Bayes
-# =========================================================
-def validate_exact_count_reconstruction(audit):
-    """
-    denominator audit가 exact count reconstruction에 충분한지 검사한다.
-    """
-    max_distance = float(
-        audit["integer_distance"]["max"]
-    )
-
-    if not np.isfinite(max_distance):
-        raise ValueError(
-            "asof denominator audit 결과가 유효하지 않습니다."
-        )
-
-    if max_distance > EB_MAX_INTEGER_DISTANCE:
-        raise ValueError(
-            "Exact EB count reconstruction을 중단합니다. "
-            f"max |n*p-round(n*p)|={max_distance:.8f} > "
-            f"{EB_MAX_INTEGER_DISTANCE:.8f}"
-        )
+# =============================================================================
+# Exact-ASOF5
+# =============================================================================
 
 
-def reconstruct_pitcher_success_counts(df):
-    """
-    각 row의 공식 asof_* 값만 이용해 과거 성공/실패 count를 복원한다.
-
-    N = asof_pitcher_n
-    p = asof_pitcher_success_rate
-    S = round(N * p)
-    F = N - S
-
-    다른 validation/test row를 참조하지 않는다.
-    """
-    required = [
-        "asof_pitcher_n",
-        "asof_pitcher_success_rate",
-    ]
-    missing = [
-        col
-        for col in required
-        if col not in df.columns
-    ]
-    if missing:
-        raise ValueError(
-            "Reliability Feature 생성에 필요한 컬럼이 없습니다: "
-            + ", ".join(missing)
-        )
-
-    n_raw = pd.to_numeric(
-        df["asof_pitcher_n"],
-        errors="coerce",
-    ).to_numpy(dtype=float)
-
-    rate = pd.to_numeric(
-        df["asof_pitcher_success_rate"],
-        errors="coerce",
-    ).to_numpy(dtype=float)
-
-    valid = (
-        np.isfinite(n_raw)
-        & np.isfinite(rate)
-        & (n_raw >= 0.0)
-        & (rate >= 0.0)
-        & (rate <= 1.0)
-    )
-
-    n = np.full(
-        len(df),
-        np.nan,
-        dtype=float,
-    )
-    success = np.full(
-        len(df),
-        np.nan,
-        dtype=float,
-    )
-    failure = np.full(
-        len(df),
-        np.nan,
-        dtype=float,
-    )
-
-    # asof_pitcher_n은 count이므로 nearest integer로 복원한다.
-    n_valid = np.rint(n_raw[valid])
-    success_valid = np.rint(
-        n_valid * rate[valid]
-    )
-
-    success_valid = np.clip(
-        success_valid,
-        0.0,
-        n_valid,
-    )
-    failure_valid = (
-        n_valid - success_valid
-    )
-
-    n[valid] = n_valid
-    success[valid] = success_valid
-    failure[valid] = failure_valid
-
-    return {
-        "valid": valid,
-        "n": n,
-        "success": success,
-        "failure": failure,
-    }
-
-
-def build_pitcher_binomial_summary(train_df):
-    """
-    Beta population prior 추정용 투수별 binomial summary.
-
-    반드시 현재 fold의 train_df만 입력한다.
-    Validation/Test data는 절대 사용하지 않는다.
-    """
-    required = [
-        "pitcher_id",
-        TARGET,
-    ]
-    missing = [
-        col
-        for col in required
-        if col not in train_df.columns
-    ]
-    if missing:
-        raise ValueError(
-            "Beta prior fit에 필요한 컬럼이 없습니다: "
-            + ", ".join(missing)
-        )
-
-    summary = (
-        train_df[
-            ["pitcher_id", TARGET]
-        ]
-        .dropna(
-            subset=[
-                "pitcher_id",
-                TARGET,
-            ]
-        )
-        .groupby(
-            "pitcher_id",
-            observed=True,
-        )[TARGET]
-        .agg(
-            successes="sum",
-            trials="count",
-        )
+def build_pitcher_season_stats(df_train: pd.DataFrame) -> pd.DataFrame:
+    stats = (
+        df_train.groupby(["pitcher_id", SEASON_COL], dropna=False, sort=False)[TARGET]
+        .agg(n="size", success="sum")
         .reset_index()
     )
+    stats[SEASON_COL] = pd.to_numeric(stats[SEASON_COL], errors="raise").astype(int)
+    stats["n"] = stats["n"].astype(np.float64)
+    stats["success"] = stats["success"].astype(np.float64)
+    return stats
 
-    summary["successes"] = pd.to_numeric(
-        summary["successes"],
-        errors="raise",
-    ).astype(float)
 
-    summary["trials"] = pd.to_numeric(
-        summary["trials"],
-        errors="raise",
-    ).astype(float)
+def add_pitcher_exact_asof_features(df, pitcher_season_stats):
+    out = df.copy()
+    for col in EXACT_FEATURES:
+        out[col] = np.nan
 
-    summary = summary.loc[
-        summary["trials"]
-        >= EB_PRIOR_MIN_PITCHER_TRIALS
-    ].copy()
+    seasons = pd.to_numeric(out[SEASON_COL], errors="raise").astype(int)
+    stats = pitcher_season_stats.copy()
+    stats[SEASON_COL] = pd.to_numeric(stats[SEASON_COL], errors="raise").astype(int)
 
-    if len(summary) < 2:
-        raise ValueError(
-            "Beta prior를 추정할 충분한 투수 수가 없습니다."
+    for target_year in sorted(seasons.unique()):
+        row_mask = seasons.eq(int(target_year))
+        rows = out.loc[row_mask]
+        hist = stats.loc[stats[SEASON_COL] < int(target_year)]
+
+        if len(hist):
+            hist_agg = hist.groupby("pitcher_id", sort=False, dropna=False)[["n", "success"]].sum()
+            hist_n = rows["pitcher_id"].map(hist_agg["n"]).fillna(0.0).to_numpy(np.float64)
+            hist_success = rows["pitcher_id"].map(hist_agg["success"]).fillna(0.0).to_numpy(np.float64)
+        else:
+            hist_n = np.zeros(len(rows), dtype=np.float64)
+            hist_success = np.zeros(len(rows), dtype=np.float64)
+
+        asof_n = (
+            pd.to_numeric(rows["asof_pitcher_n"], errors="coerce")
+            .fillna(0.0).clip(lower=0.0).to_numpy(np.float64)
+        )
+        asof_rate = pd.to_numeric(rows["asof_pitcher_success_rate"], errors="coerce").to_numpy(np.float64)
+        raw_n = asof_n - hist_n
+        current_n = np.maximum(raw_n, 0.0)
+        raw_success = asof_n * asof_rate - hist_success
+        current_success = np.where(
+            np.isfinite(raw_success), np.clip(raw_success, 0.0, current_n), np.nan
         )
 
-    summary["failures"] = (
-        summary["trials"]
-        - summary["successes"]
-    )
+        current_rate = np.full(len(rows), np.nan, dtype=np.float64)
+        ok = (current_n > 0) & np.isfinite(current_success)
+        current_rate[ok] = current_success[ok] / current_n[ok]
 
-    if (
-        (summary["successes"] < 0).any()
-        or (summary["failures"] < 0).any()
-    ):
-        raise ValueError(
-            "Beta prior용 성공/실패 count가 유효하지 않습니다."
-        )
+        past_rate = np.full(len(rows), np.nan, dtype=np.float64)
+        okp = hist_n > 0
+        past_rate[okp] = hist_success[okp] / hist_n[okp]
 
-    return summary
+        idx = rows.index
+        out.loc[idx, "exact_pitcher_season_n"] = current_n
+        out.loc[idx, "exact_pitcher_season_logn"] = np.log1p(current_n)
+        out.loc[idx, "exact_pitcher_season_success_rate"] = current_rate
+        out.loc[idx, "exact_pitcher_past_success_rate"] = past_rate
+        out.loc[idx, "exact_pitcher_season_minus_past"] = current_rate - past_rate
 
+    return out
 
-def beta_binomial_negative_log_likelihood(
-    log_params,
-    successes,
-    failures,
-):
-    """
-    Beta-Binomial marginal likelihood의 negative log likelihood.
 
-    Binomial coefficient는 alpha/beta와 무관하므로
-    최적화 목적함수에서는 생략해도 동일한 MLE를 얻는다.
-    """
-    log_alpha = float(log_params[0])
-    log_beta = float(log_params[1])
-
-    alpha = float(np.exp(log_alpha))
-    beta = float(np.exp(log_beta))
-
-    if (
-        not np.isfinite(alpha)
-        or not np.isfinite(beta)
-        or alpha <= 0.0
-        or beta <= 0.0
-    ):
-        return float("inf")
-
-    ll = (
-        betaln(
-            successes + alpha,
-            failures + beta,
-        )
-        - betaln(
-            alpha,
-            beta,
-        )
-    )
-
-    if not np.all(np.isfinite(ll)):
-        return float("inf")
-
-    return -float(
-        np.sum(ll)
-    )
-
-
-def fit_beta_binomial_prior(train_df):
-    """
-    현재 expanding fold의 train target만 사용해
-    Beta(alpha, beta) population prior를 MLE로 추정한다.
-
-    row-level asof snapshot을 prior fitting 표본으로 사용하지 않고,
-    투수별 실제 training target count를 하나의 binomial observation으로 사용한다.
-    """
-    summary = build_pitcher_binomial_summary(
-        train_df
-    )
-
-    successes = summary[
-        "successes"
-    ].to_numpy(dtype=float)
-
-    failures = summary[
-        "failures"
-    ].to_numpy(dtype=float)
-
-    trials = (
-        successes + failures
-    )
-
-    total_successes = float(
-        np.sum(successes)
-    )
-    total_trials = float(
-        np.sum(trials)
-    )
-
-    if total_trials <= 0.0:
-        raise ValueError(
-            "Beta prior fit용 trial 수가 0입니다."
-        )
-
-    empirical_mean = float(
-        total_successes / total_trials
-    )
-
-    # log(0) 방지
-    empirical_mean = float(
-        np.clip(
-            empirical_mean,
-            1e-6,
-            1.0 - 1e-6,
-        )
-    )
-
-    best_result = None
-
-    bounds = [
-        (
-            EB_LOG_PARAM_LOWER,
-            EB_LOG_PARAM_UPPER,
-        ),
-        (
-            EB_LOG_PARAM_LOWER,
-            EB_LOG_PARAM_UPPER,
-        ),
-    ]
-
-    for initial_strength in EB_INITIAL_STRENGTHS:
-        alpha0 = (
-            empirical_mean
-            * float(initial_strength)
-        )
-        beta0 = (
-            (1.0 - empirical_mean)
-            * float(initial_strength)
-        )
-
-        x0 = np.log(
-            [
-                max(alpha0, 1e-6),
-                max(beta0, 1e-6),
-            ]
-        )
-
-        result = minimize(
-            beta_binomial_negative_log_likelihood,
-            x0=x0,
-            args=(
-                successes,
-                failures,
-            ),
-            method="L-BFGS-B",
-            bounds=bounds,
-        )
-
-        if (
-            result.success
-            and np.isfinite(result.fun)
-        ):
-            if (
-                best_result is None
-                or result.fun < best_result.fun
-            ):
-                best_result = result
-
-    if best_result is None:
-        raise RuntimeError(
-            "Beta-Binomial prior MLE 최적화에 실패했습니다."
-        )
-
-    alpha = float(
-        np.exp(best_result.x[0])
-    )
-    beta = float(
-        np.exp(best_result.x[1])
-    )
-
-    prior_strength = float(
-        alpha + beta
-    )
-    prior_mean = float(
-        alpha / prior_strength
-    )
-
-    prior_variance = float(
-        alpha
-        * beta
-        / (
-            prior_strength ** 2
-            * (prior_strength + 1.0)
-        )
-    )
-    prior_std = float(
-        np.sqrt(prior_variance)
-    )
-
-    return {
-        "alpha": alpha,
-        "beta": beta,
-        "prior_mean": prior_mean,
-        "prior_strength": prior_strength,
-        "prior_std": prior_std,
-        "n_pitchers": int(len(summary)),
-        "n_trials": int(total_trials),
-        "n_successes": int(total_successes),
-        "min_pitcher_trials": int(
-            EB_PRIOR_MIN_PITCHER_TRIALS
-        ),
-        "optimizer": "L-BFGS-B",
-        "optimizer_success": bool(
-            best_result.success
-        ),
-        "optimizer_message": str(
-            best_result.message
-        ),
-        "negative_log_likelihood": float(
-            best_result.fun
-        ),
-    }
-
-
-def apply_reliability_features(
-    df,
-    reliability_state,
-):
-    """
-    Frozen Beta prior와 현재 row 자체의 공식 asof_*만 이용해
-    posterior mean/std를 생성한다.
-
-    다른 validation/test row의 값, 빈도, 순서, 분포를 사용하지 않는다.
-    """
-    df = df.copy()
-
-    alpha = float(
-        reliability_state["alpha"]
-    )
-    beta = float(
-        reliability_state["beta"]
-    )
-
-    if alpha <= 0.0 or beta <= 0.0:
-        raise ValueError(
-            "Reliability prior alpha/beta가 유효하지 않습니다."
-        )
-
-    counts = reconstruct_pitcher_success_counts(
-        df
-    )
-
-    valid = counts["valid"]
-    success = counts["success"]
-    failure = counts["failure"]
-
-    prior_total = float(
-        alpha + beta
-    )
-    prior_mean = float(
-        alpha / prior_total
-    )
-    prior_var = float(
-        alpha
-        * beta
-        / (
-            prior_total ** 2
-            * (prior_total + 1.0)
-        )
-    )
-    prior_std = float(
-        np.sqrt(prior_var)
-    )
-
-    eb_rate = np.full(
-        len(df),
-        prior_mean,
-        dtype=float,
-    )
-    posterior_std = np.full(
-        len(df),
-        prior_std,
-        dtype=float,
-    )
-
-    if np.any(valid):
-        posterior_alpha = (
-            alpha + success[valid]
-        )
-        posterior_beta = (
-            beta + failure[valid]
-        )
-        posterior_total = (
-            posterior_alpha
-            + posterior_beta
-        )
-
-        eb_rate[valid] = (
-            posterior_alpha
-            / posterior_total
-        )
-
-        posterior_var = (
-            posterior_alpha
-            * posterior_beta
-            / (
-                posterior_total ** 2
-                * (posterior_total + 1.0)
-            )
-        )
-
-        posterior_var = np.maximum(
-            posterior_var,
-            0.0,
-        )
-
-        posterior_std[valid] = np.sqrt(
-            posterior_var
-        )
-
-    if not np.all(
-        np.isfinite(eb_rate)
-    ):
-        raise ValueError(
-            "EB posterior mean에 비정상 값이 있습니다."
-        )
-
-    if not np.all(
-        np.isfinite(posterior_std)
-    ):
-        raise ValueError(
-            "EB posterior std에 비정상 값이 있습니다."
-        )
-
-    if (
-        np.any(eb_rate <= 0.0)
-        or np.any(eb_rate >= 1.0)
-        or np.any(posterior_std < 0.0)
-    ):
-        raise ValueError(
-            "EB posterior Feature 범위가 유효하지 않습니다."
-        )
-
-    df[
-        "rf_pitcher_success_eb_rate"
-    ] = eb_rate
-
-    df[
-        "rf_pitcher_success_posterior_std"
-    ] = posterior_std
-
-    return df
-
-
-def summarize_reliability_features(
-    df_before,
-    df_after,
-):
-    """
-    shrinkage mechanism sanity check.
-    모델 선택에는 사용하지 않고 metadata 진단용으로만 기록한다.
-    """
-    n = pd.to_numeric(
-        df_before["asof_pitcher_n"],
-        errors="coerce",
-    ).to_numpy(dtype=float)
-
-    raw_rate = pd.to_numeric(
-        df_before["asof_pitcher_success_rate"],
-        errors="coerce",
-    ).to_numpy(dtype=float)
-
-    eb_rate = df_after[
-        "rf_pitcher_success_eb_rate"
-    ].to_numpy(dtype=float)
-
-    posterior_std = df_after[
-        "rf_pitcher_success_posterior_std"
-    ].to_numpy(dtype=float)
-
-    valid = (
-        np.isfinite(n)
-        & np.isfinite(raw_rate)
-        & np.isfinite(eb_rate)
-        & np.isfinite(posterior_std)
-        & (n >= 0.0)
-        & (raw_rate >= 0.0)
-        & (raw_rate <= 1.0)
-    )
-
-    bins = [
-        (-np.inf, 10.0, "n<=10"),
-        (10.0, 50.0, "10<n<=50"),
-        (50.0, 200.0, "50<n<=200"),
-        (200.0, 1000.0, "200<n<=1000"),
-        (1000.0, np.inf, "n>1000"),
-    ]
-
-    by_count = []
-
-    for lower, upper, label in bins:
-        mask = (
-            valid
-            & (n > lower)
-            & (n <= upper)
-        )
-
-        if not np.any(mask):
-            continue
-
-        by_count.append({
-            "bin": label,
-            "n_rows": int(np.sum(mask)),
-            "mean_abs_shrinkage": float(
-                np.mean(
-                    np.abs(
-                        raw_rate[mask]
-                        - eb_rate[mask]
-                    )
-                )
-            ),
-            "mean_posterior_std": float(
-                np.mean(
-                    posterior_std[mask]
-                )
-            ),
-        })
-
-    return {
-        "n_valid_rows": int(
-            np.sum(valid)
-        ),
-        "n_fallback_rows": int(
-            len(df_before)
-            - np.sum(valid)
-        ),
-        "mean_abs_shrinkage": (
-            float(
-                np.mean(
-                    np.abs(
-                        raw_rate[valid]
-                        - eb_rate[valid]
-                    )
-                )
-            )
-            if np.any(valid)
-            else float("nan")
-        ),
-        "mean_posterior_std": (
-            float(
-                np.mean(
-                    posterior_std[valid]
-                )
-            )
-            if np.any(valid)
-            else float("nan")
-        ),
-        "by_count": by_count,
-    }
-
-
-# =========================================================
-# Metric
-# =========================================================
-def brier_metric(y_true, y_pred):
-    y_true = np.asarray(y_true, dtype=float)
-    y_pred = np.asarray(y_pred, dtype=float)
-    return float(np.mean((y_pred - y_true) ** 2))
-
-
-def calculate_metrics(y_true, y_pred):
-    y_true = np.asarray(y_true, dtype=float)
-    y_pred = np.asarray(y_pred, dtype=float)
-
-    positive_rate = float(np.mean(y_true))
-    brier = float(np.mean((y_pred - y_true) ** 2))
-    baseline_brier = float(positive_rate * (1.0 - positive_rate))
-
-    if baseline_brier <= 0.0:
-        bss_raw = 0.0
-        bss = 0.0
-    else:
-        bss_raw = float(
-            100000.0 * (1.0 - brier / baseline_brier)
-        )
-        bss = max(0.0, bss_raw)
-
-    return {
-        "positive_rate": positive_rate,
-        "brier": brier,
-        "baseline_brier": baseline_brier,
-        "bss_raw": bss_raw,
-        "bss": bss,
-    }
-
-
-def safe_corr(a, b):
-    a = np.asarray(a, dtype=float)
-    b = np.asarray(b, dtype=float)
-
-    if len(a) < 2:
-        return float("nan")
-    if np.std(a) <= 1e-15 or np.std(b) <= 1e-15:
-        return float("nan")
-
-    return float(np.corrcoef(a, b)[0, 1])
-
-
-def residual_covariance(y_true, cat_pred, xgb_pred):
-    y_true = np.asarray(y_true, dtype=float)
-    e_cat = y_true - np.asarray(cat_pred, dtype=float)
-    e_xgb = y_true - np.asarray(xgb_pred, dtype=float)
-
-    if len(y_true) < 2:
-        return float("nan")
-
-    return float(np.cov(e_cat, e_xgb, ddof=1)[0, 1])
-
-
-def optimal_cat_weight(y_true, cat_pred, xgb_pred):
-    """
-    Brier loss를 최소화하는 2-model blend의 CatBoost weight.
-    0~1 범위로 clip한다.
-    """
-    y_true = np.asarray(y_true, dtype=float)
-    cat_pred = np.asarray(cat_pred, dtype=float)
-    xgb_pred = np.asarray(xgb_pred, dtype=float)
-
-    d = cat_pred - xgb_pred
-    denom = float(np.dot(d, d))
-
-    if denom <= 1e-15:
-        return 0.5
-
-    weight = float(np.dot(d, y_true - xgb_pred) / denom)
-    return float(np.clip(weight, 0.0, 1.0))
-
-
-def blend_predictions(cat_pred, xgb_pred, cat_weight):
+def exact5_matrix(rows, pitcher_season_stats):
+    t = add_pitcher_exact_asof_features(rows, pitcher_season_stats)
     return (
-        float(cat_weight) * np.asarray(cat_pred, dtype=float)
-        + (1.0 - float(cat_weight))
-        * np.asarray(xgb_pred, dtype=float)
+        t[EXACT_FEATURES]
+        .apply(pd.to_numeric, errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+        .astype(np.float64)
+        .reset_index(drop=True)
     )
 
 
-# =========================================================
-# Temporal Feature
-# =========================================================
-def add_temporal_features(df):
-    """
-    현재 행의 공식 asof_* 값끼리만 연산한다.
-
-    다른 validation/test row에 대한 groupby / rolling / lag /
-    expanding / frequency / aggregate를 사용하지 않는다.
-    """
-    df = df.copy()
-
-    required = [
-        "asof_pitcher_success_rate",
-        "asof_pitcher_middle_rate",
-        "asof_pitcher_prev1_game_success_rate",
-        "asof_pitcher_prev3_game_success_rate",
-        "asof_pitcher_prev5_game_success_rate",
-        "asof_pitcher_prev1_game_middle_rate",
-        "asof_pitcher_prev3_game_middle_rate",
-        "asof_pitcher_prev5_game_middle_rate",
-    ]
-
-    missing = [
-        col
-        for col in required
-        if col not in df.columns
-    ]
-    if missing:
-        raise ValueError(
-            "Temporal Feature 생성에 필요한 컬럼이 없습니다: "
-            + ", ".join(missing)
-        )
-
-    career_s = df["asof_pitcher_success_rate"]
-    prev1_s = df["asof_pitcher_prev1_game_success_rate"]
-    prev3_s = df["asof_pitcher_prev3_game_success_rate"]
-    prev5_s = df["asof_pitcher_prev5_game_success_rate"]
-
-    career_m = df["asof_pitcher_middle_rate"]
-    prev1_m = df["asof_pitcher_prev1_game_middle_rate"]
-    prev3_m = df["asof_pitcher_prev3_game_middle_rate"]
-    prev5_m = df["asof_pitcher_prev5_game_middle_rate"]
-
-    df["tf_success_prev1_vs_career"] = prev1_s - career_s
-    df["tf_success_prev3_vs_career"] = prev3_s - career_s
-    df["tf_success_prev5_vs_career"] = prev5_s - career_s
-    df["tf_success_prev1_vs_prev3"] = prev1_s - prev3_s
-    df["tf_success_prev3_vs_prev5"] = prev3_s - prev5_s
-
-    df["tf_middle_prev1_vs_career"] = prev1_m - career_m
-    df["tf_middle_prev3_vs_career"] = prev3_m - career_m
-    df["tf_middle_prev5_vs_career"] = prev5_m - career_m
-    df["tf_middle_prev1_vs_prev3"] = prev1_m - prev3_m
-    df["tf_middle_prev3_vs_prev5"] = prev3_m - prev5_m
-
-    return df
+# =============================================================================
+# Existing adapter matrix (coded-49 reference)
+# =============================================================================
 
 
-# =========================================================
-# CatBoost 전처리 — train_cb.py 적용
-# =========================================================
-def prepare_cat_features(df, features, cat_cols):
-    X = df[features].copy()
+def numeric_series(frame, col, default=np.nan):
+    if col not in frame.columns:
+        return pd.Series(np.full(len(frame), default, dtype=np.float64), index=frame.index)
+    return pd.to_numeric(frame[col], errors="coerce")
 
+
+def add_eng(frame):
+    x = frame.copy()
+    career = numeric_series(x, "asof_pitcher_success_rate", 0.5)
+    p1 = numeric_series(x, "asof_pitcher_prev1_game_success_rate", np.nan).fillna(career)
+    p3 = numeric_series(x, "asof_pitcher_prev3_game_success_rate", np.nan).fillna(p1)
+    p5 = numeric_series(x, "asof_pitcher_prev5_game_success_rate", np.nan).fillna(p3)
+    x["eng_recent35"] = 0.5 * p1 + 0.3 * p3 + 0.2 * p5
+    x["eng_recent_delta"] = x["eng_recent35"] - career
+    x["eng_sb"] = numeric_series(x, "asof_pitcher_strike_rate") - numeric_series(x, "asof_pitcher_ball_rate")
+    x["eng_same"] = x["pitcher_hand"].astype(str).eq(x["batter_hand"].astype(str)).astype(np.float64)
+    x["eng_close"] = numeric_series(x, "score_diff_pitcher_team").abs().le(1).astype(np.float64)
+    x["eng_late"] = numeric_series(x, "inning").ge(7).astype(np.float64)
+    return x
+
+
+def fit_adapter_prep(rows):
+    m = add_eng(rows.reset_index(drop=True))
+    numeric_cols = [c for c in REFERENCE_RAWNUM if c in m.columns] + ENG_COLS
+    med = (
+        m[numeric_cols].apply(pd.to_numeric, errors="coerce")
+        .replace([np.inf, -np.inf], np.nan).median().fillna(0.0).to_dict()
+    )
+    cat_cols = [c for c in REFERENCE_CAT_SMALL if c in m.columns]
+    maps = {}
     for col in cat_cols:
-        if col in X.columns:
-            X[col] = (
-                X[col]
-                .fillna("__MISSING__")
-                .astype(str)
-            )
-
-    return X
+        s = m[col].astype("string").fillna("<NA>").astype(str)
+        maps[col] = {v: i for i, v in enumerate(pd.Index(s.unique()))}
+    return {"numeric_cols": numeric_cols, "med": med, "maps": maps}
 
 
-# =========================================================
-# XGBoost 전처리 — train_xgb.py 적용
-# =========================================================
-def prepare_xgb_raw_features(
-    df,
-    features,
-    id_like_cols,
-):
-    missing_features = [
-        col
-        for col in features
-        if col not in df.columns
+def transform_adapter_core(prep, rows, base_pred):
+    r = add_eng(rows.reset_index(drop=True))
+    A = r[prep["numeric_cols"]].apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan).copy()
+    for col in prep["numeric_cols"]:
+        A[col] = A[col].fillna(float(prep["med"].get(col, 0.0))).astype(np.float64)
+    for col, mapping in prep["maps"].items():
+        A["code_" + col] = (
+            r[col].astype("string").fillna("<NA>").astype(str)
+            .map(mapping).fillna(-1).astype(np.float64)
+        )
+    A["base_pred"] = np.asarray(base_pred, dtype=np.float64)
+    return A.reset_index(drop=True)
+
+
+def coded49_matrices(source_rows, target_rows, source_base, target_base, pitcher_stats):
+    prep = fit_adapter_prep(source_rows)
+    cs = transform_adapter_core(prep, source_rows, source_base)
+    ct = transform_adapter_core(prep, target_rows, target_base)
+    es = exact5_matrix(source_rows, pitcher_stats)
+    et = exact5_matrix(target_rows, pitcher_stats)
+    Xs = pd.concat([cs, es], axis=1)
+    Xt = pd.concat([ct, et], axis=1)
+    if list(Xs.columns) != list(Xt.columns) or Xs.shape[1] != 49:
+        raise RuntimeError(f"coded49 mismatch: {Xs.shape}, {Xt.shape}")
+    return Xs, Xt
+
+
+def fit_predict_ridge_coded49(Xs, residual, Xt):
+    y = np.asarray(residual, dtype=np.float64)
+    yc = y - y.mean()
+    scaler = StandardScaler()
+    Az = scaler.fit_transform(Xs.to_numpy(np.float64))
+    Bz = scaler.transform(Xt.to_numpy(np.float64))
+    model = Ridge(alpha=RIDGE_ALPHA, fit_intercept=False, solver="lsqr", max_iter=200, tol=1e-5)
+    model.fit(Az, yc)
+    return np.asarray(model.predict(Bz), np.float64), {
+        "n_features": int(Az.shape[1]),
+        "source_corr_mean": float(np.mean(model.predict(Az))),
+        "coef_l2": float(np.linalg.norm(model.coef_)),
+    }
+
+
+# =============================================================================
+# Ridge-native OHE representation of the adapter information
+# =============================================================================
+
+
+def _make_ohe(*, dense=True):
+    # sklearn >=1.2 uses sparse_output; fallback keeps this script portable.
+    try:
+        return OneHotEncoder(handle_unknown="ignore", sparse_output=not dense, dtype=np.float64)
+    except TypeError:
+        return OneHotEncoder(handle_unknown="ignore", sparse=not dense, dtype=np.float64)
+
+
+def ohe_ridge_matrices(source_rows, target_rows, source_base, target_base, pitcher_stats):
+    """Same adapter information, but categorical variables are not ordinal-coded.
+
+    Columns that are categorical (including team IDs) are removed from the numeric
+    branch to avoid giving Ridge an artificial numeric ordering. One-hot columns
+    are source-centered/scaled so fit_intercept=False cannot simply reconstruct a
+    source-season constant through a complete dummy partition.
+    """
+    rs = add_eng(source_rows.reset_index(drop=True))
+    rt = add_eng(target_rows.reset_index(drop=True))
+
+    cat_cols = [c for c in REFERENCE_CAT_SMALL if c in rs.columns and c in rt.columns]
+    numeric_cols = [
+        c for c in ([c for c in REFERENCE_RAWNUM if c in rs.columns] + ENG_COLS)
+        if c not in set(cat_cols)
     ]
 
-    if missing_features:
-        raise ValueError(
-            "입력 데이터에 XGBoost Feature가 없습니다: "
-            + ", ".join(missing_features)
-        )
-
-    X = df[features].copy()
-
-    for col in id_like_cols:
-        if col in X.columns:
-            X[col] = pd.to_numeric(
-                X[col],
-                errors="coerce",
-            )
-
-    return X
-
-
-def create_xgb_preprocessor(
-    cat_cols,
-    num_cols,
-):
-    """
-    train_xgb.py와 동일:
-    - low-cardinality categorical -> OrdinalEncoder
-    - unseen/missing category -> -1
-    - numeric -> passthrough
-    - numeric NaN -> XGBoost가 직접 처리
-    """
-    return ColumnTransformer(
-        transformers=[
-            (
-                "cat",
-                OrdinalEncoder(
-                    handle_unknown="use_encoded_value",
-                    unknown_value=-1,
-                    encoded_missing_value=-1,
-                ),
-                cat_cols,
-            ),
-            (
-                "num",
-                "passthrough",
-                num_cols,
-            ),
-        ],
-        remainder="drop",
+    med = (
+        rs[numeric_cols].apply(pd.to_numeric, errors="coerce")
+        .replace([np.inf, -np.inf], np.nan).median().fillna(0.0)
     )
+    Ns = rs[numeric_cols].apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(med)
+    Nt = rt[numeric_cols].apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(med)
 
+    Ns = Ns.reset_index(drop=True)
+    Nt = Nt.reset_index(drop=True)
+    Ns["base_pred"] = np.asarray(source_base, dtype=np.float64)
+    Nt["base_pred"] = np.asarray(target_base, dtype=np.float64)
 
-# =========================================================
-# 모델 생성
-# =========================================================
-def create_cat_validation_model():
-    return CatBoostClassifier(
-        **CATBOOST_PARAMS
-    )
+    Es = exact5_matrix(source_rows, pitcher_stats)
+    Et = exact5_matrix(target_rows, pitcher_stats)
+    Ns = pd.concat([Ns, Es], axis=1)
+    Nt = pd.concat([Nt, Et], axis=1)
 
+    nsc = StandardScaler()
+    A_num = nsc.fit_transform(Ns.to_numpy(np.float64))
+    B_num = nsc.transform(Nt.to_numpy(np.float64))
 
-def create_cat_final_model(n_iterations):
-    params = {
-        **CATBOOST_PARAMS,
-        "iterations": int(n_iterations),
-    }
-    return CatBoostClassifier(**params), params
+    Cs = rs[cat_cols].astype("string").fillna("<NA>").astype(str)
+    Ct = rt[cat_cols].astype("string").fillna("<NA>").astype(str)
+    enc = _make_ohe(dense=True)
+    A_cat_raw = np.asarray(enc.fit_transform(Cs), dtype=np.float64)
+    B_cat_raw = np.asarray(enc.transform(Ct), dtype=np.float64)
 
+    # Center/scale one-hot columns on source. This preserves category-specific
+    # contrasts while enforcing zero source-column means for no-intercept Ridge.
+    csc = StandardScaler(with_mean=True, with_std=True)
+    A_cat = csc.fit_transform(A_cat_raw)
+    B_cat = csc.transform(B_cat_raw)
 
-def create_xgb_validation_model():
-    return XGBClassifier(
-        n_estimators=XGB_MAX_ITERATIONS,
-        eval_metric=brier_metric,
-        early_stopping_rounds=XGB_EARLY_STOPPING_ROUNDS,
-        **XGBOOST_PARAMS,
-    )
+    A = np.concatenate([A_num, A_cat], axis=1)
+    B = np.concatenate([B_num, B_cat], axis=1)
+    if not np.isfinite(A).all() or not np.isfinite(B).all():
+        raise RuntimeError("OHE Ridge matrix contains NaN/Inf")
 
-
-def create_xgb_final_model(n_estimators):
-    return XGBClassifier(
-        n_estimators=int(n_estimators),
-        **XGBOOST_PARAMS,
-    )
-
-
-# =========================================================
-# Fold 평가
-# =========================================================
-def evaluate_pair(
-    y_true,
-    cat_pred,
-    xgb_pred,
-    walk_forward_cat_weight,
-):
-    y_true = np.asarray(y_true, dtype=float)
-    cat_pred = np.asarray(cat_pred, dtype=float)
-    xgb_pred = np.asarray(xgb_pred, dtype=float)
-
-    e_cat = y_true - cat_pred
-    e_xgb = y_true - xgb_pred
-
-    diagnostic_weight = optimal_cat_weight(
-        y_true,
-        cat_pred,
-        xgb_pred,
-    )
-
-    fixed_pred = blend_predictions(
-        cat_pred,
-        xgb_pred,
-        BASE_CAT_WEIGHT,
-    )
-    walk_forward_pred = blend_predictions(
-        cat_pred,
-        xgb_pred,
-        walk_forward_cat_weight,
-    )
-    diagnostic_pred = blend_predictions(
-        cat_pred,
-        xgb_pred,
-        diagnostic_weight,
-    )
-
-    return {
-        "cat_brier": calculate_metrics(
-            y_true,
-            cat_pred,
-        )["brier"],
-        "xgb_brier": calculate_metrics(
-            y_true,
-            xgb_pred,
-        )["brier"],
-        "prediction_corr": safe_corr(
-            cat_pred,
-            xgb_pred,
-        ),
-        "residual_corr": safe_corr(
-            e_cat,
-            e_xgb,
-        ),
-        "residual_covariance": residual_covariance(
-            y_true,
-            cat_pred,
-            xgb_pred,
-        ),
-        "fixed_cat_weight": float(BASE_CAT_WEIGHT),
-        "fixed_ensemble_brier": calculate_metrics(
-            y_true,
-            fixed_pred,
-        )["brier"],
-        "walk_forward_cat_weight": float(
-            walk_forward_cat_weight
-        ),
-        "walk_forward_ensemble_brier": calculate_metrics(
-            y_true,
-            walk_forward_pred,
-        )["brier"],
-        # 같은 fold target으로 찾은 weight라 진단용이다.
-        "diagnostic_opt_cat_weight": float(
-            diagnostic_weight
-        ),
-        "diagnostic_opt_ensemble_brier": calculate_metrics(
-            y_true,
-            diagnostic_pred,
-        )["brier"],
-        "best_base_brier": min(
-            calculate_metrics(y_true, cat_pred)["brier"],
-            calculate_metrics(y_true, xgb_pred)["brier"],
-        ),
-        "fixed_blend_gain": min(
-            calculate_metrics(y_true, cat_pred)["brier"],
-            calculate_metrics(y_true, xgb_pred)["brier"],
-        ) - calculate_metrics(y_true, fixed_pred)["brier"],
-        "walk_forward_blend_gain": min(
-            calculate_metrics(y_true, cat_pred)["brier"],
-            calculate_metrics(y_true, xgb_pred)["brier"],
-        ) - calculate_metrics(y_true, walk_forward_pred)["brier"],
-        "diagnostic_opt_blend_gain": min(
-            calculate_metrics(y_true, cat_pred)["brier"],
-            calculate_metrics(y_true, xgb_pred)["brier"],
-        ) - calculate_metrics(y_true, diagnostic_pred)["brier"],
+    return A, B, {
+        "numeric_cols": list(Ns.columns),
+        "categorical_cols": cat_cols,
+        "ohe_feature_count": int(A_cat.shape[1]),
+        "total_feature_count": int(A.shape[1]),
     }
 
 
-# =========================================================
-# Final iteration 선택
-# =========================================================
-def select_final_iterations(
-    fold_results,
-    key,
-):
-    if FINAL_ITERATION_STRATEGY != "latest_fold":
-        raise ValueError(
-            "지원하지 않는 FINAL_ITERATION_STRATEGY: "
-            f"{FINAL_ITERATION_STRATEGY}"
-        )
+def fit_predict_ridge_ohe(A, residual, B):
+    y = np.asarray(residual, dtype=np.float64)
+    yc = y - y.mean()
+    model = Ridge(alpha=RIDGE_ALPHA, fit_intercept=False, solver="lsqr", max_iter=200, tol=1e-5)
+    model.fit(A, yc)
+    return np.asarray(model.predict(B), np.float64), {
+        "n_features": int(A.shape[1]),
+        "source_corr_mean": float(np.mean(model.predict(A))),
+        "coef_l2": float(np.linalg.norm(model.coef_)),
+    }
 
-    latest_fold = max(
-        fold_results,
-        key=lambda x: x["validation_season"],
+
+# =============================================================================
+# shift_v002/v003 sensitivity 25 representation
+# =============================================================================
+
+
+def _pressure_frame(frame):
+    r = frame.copy()
+    balls = pd.to_numeric(r["balls_before"], errors="coerce").fillna(0).astype(int)
+    strikes = pd.to_numeric(r["strikes_before"], errors="coerce").fillna(0).astype(int)
+    r["sens_pressure"] = np.where(
+        (balls == 3) & (strikes == 2),
+        "full",
+        np.where(balls == 3, "3ball", np.where(strikes == 2, "2strike", "normal")),
+    )
+    r["sens_pressure_bhand"] = r["sens_pressure"].astype(str) + "|" + r["batter_hand"].astype(str)
+    return r
+
+
+def _weighted_sensitivity_table(history, ctx, strength, cutoff_year):
+    h = _pressure_frame(history.reset_index(drop=True))
+    h["_w"] = np.power(
+        SENS_DECAY,
+        np.maximum(int(cutoff_year) - 1 - pd.to_numeric(h[SEASON_COL], errors="raise").astype(int), 0),
+    ).astype(np.float64)
+    h["_wy"] = h["_w"] * pd.to_numeric(h[TARGET], errors="coerce").to_numpy(np.float64)
+    mu = float(np.average(h[TARGET].to_numpy(np.float64), weights=h["_w"]))
+
+    pg = h.groupby("pitcher_id", sort=False).agg(sw=("_w", "sum"), sy=("_wy", "sum")).reset_index()
+    pg["parent_rate"] = (pg["sy"] + SENS_PARENT_STRENGTH * mu) / (pg["sw"] + SENS_PARENT_STRENGTH)
+
+    g = (
+        h.groupby(["pitcher_id", ctx], sort=False)
+        .agg(sw=("_w", "sum"), sy=("_wy", "sum"))
+        .reset_index()
+        .merge(pg[["pitcher_id", "parent_rate"]], on="pitcher_id", how="left")
+    )
+    g["rate"] = (g["sy"] + float(strength) * g["parent_rate"]) / (g["sw"] + float(strength))
+    g["delta"] = g["rate"] - g["parent_rate"]
+    g["reliability"] = g["sw"] / (g["sw"] + float(strength))
+    return g[["pitcher_id", ctx, "delta", "reliability"]]
+
+
+def build_sensitivity_specs(train, cutoff_year):
+    min_year = int(pd.to_numeric(train[SEASON_COL], errors="raise").min())
+    lo = max(min_year, int(cutoff_year) - SENS_HISTORY_YEARS)
+    seasons = pd.to_numeric(train[SEASON_COL], errors="raise").astype(int)
+    h = train.loc[seasons.lt(int(cutoff_year)) & seasons.ge(lo)].reset_index(drop=True)
+    if h.empty:
+        raise RuntimeError(f"no sensitivity history for cutoff={cutoff_year}")
+
+    specs = []
+    for ctx, strength, prefix in [
+        ("batter_hand", SENS_HAND_STRENGTH, "sens__batter_hand"),
+        ("sens_pressure_bhand", SENS_PRESSURE_HAND_STRENGTH, "sens__pressure_bhand"),
+    ]:
+        specs.append({
+            "ctx": ctx,
+            "prefix": prefix,
+            "table": _weighted_sensitivity_table(h, ctx, strength, cutoff_year),
+        })
+    return specs
+
+
+def _lookup(table, rows, keys, field, default=0.0):
+    if len(table) == 0:
+        return np.full(len(rows), default, dtype=np.float64)
+    if len(keys) == 1:
+        s = table.set_index(keys[0])[field]
+        return rows[keys[0]].map(s).fillna(default).to_numpy(np.float64)
+    idx = pd.MultiIndex.from_frame(rows[keys])
+    s = table.set_index(keys)[field]
+    return s.reindex(idx).fillna(default).to_numpy(np.float64)
+
+
+def transform_sensitivity_specs(specs, rows):
+    r = _pressure_frame(rows.reset_index(drop=True))
+    z = pd.DataFrame(index=np.arange(len(r)))
+    for spec in specs:
+        de = _lookup(spec["table"], r, ["pitcher_id", spec["ctx"]], "delta", 0.0)
+        re = _lookup(spec["table"], r, ["pitcher_id", spec["ctx"]], "reliability", 0.0)
+        z[spec["prefix"] + "__delta"] = de
+        z[spec["prefix"] + "__weighted_delta"] = de * re
+        z[spec["prefix"] + "__reliability"] = re
+
+    balls = pd.to_numeric(r["balls_before"], errors="coerce").fillna(0).astype(int).to_numpy()
+    strikes = pd.to_numeric(r["strikes_before"], errors="coerce").fillna(0).astype(int).to_numpy()
+    for b in range(4):
+        z[f"ctx__ball_{b}"] = (balls == b).astype(np.float64)
+    for s in range(3):
+        z[f"ctx__strike_{s}"] = (strikes == s).astype(np.float64)
+    for b in range(4):
+        for s in range(3):
+            z[f"ctx__count_{b}_{s}"] = ((balls == b) & (strikes == s)).astype(np.float64)
+
+    z = z.replace([np.inf, -np.inf], np.nan).fillna(0.0).astype(np.float64)
+    if z.shape[1] != 25:
+        raise RuntimeError(f"sensitivity feature count !=25: {z.shape}")
+    return z
+
+
+def sensitivity25_matrices(train, source_year, target_year, source_rows, target_rows):
+    # Faithful to shift_v002/v003: specs are constructed separately for each
+    # cutoff year from official labeled history strictly before that year.
+    ss = build_sensitivity_specs(train, source_year)
+    st = build_sensitivity_specs(train, target_year)
+    A = transform_sensitivity_specs(ss, source_rows).to_numpy(np.float64)
+    B = transform_sensitivity_specs(st, target_rows).to_numpy(np.float64)
+
+    mu = A.mean(axis=0)
+    sd = A.std(axis=0)
+    sd = np.where(sd > 1e-6, sd, 1.0)
+    Az = np.clip((A - mu) / sd, -8.0, 8.0)
+    Bz = np.clip((B - mu) / sd, -8.0, 8.0)
+    return Az, Bz
+
+
+def fit_predict_sens25_pair(Az, residual, Bz):
+    y = np.asarray(residual, dtype=np.float64)  # raw residual, shift-faithful
+    ref = Ridge(alpha=RIDGE_ALPHA, solver="lsqr", max_iter=200, tol=1e-5, fit_intercept=True)
+    sh = Ridge(alpha=RIDGE_ALPHA, solver="lsqr", max_iter=200, tol=1e-5, fit_intercept=False)
+    ref.fit(Az, y)
+    sh.fit(Az, y)
+    return (
+        np.asarray(sh.predict(Bz), np.float64),
+        np.asarray(ref.predict(Bz), np.float64),
+        {
+            "shift_source_corr_mean": float(np.mean(sh.predict(Az))),
+            "reference_intercept": float(np.asarray(ref.intercept_).reshape(-1)[0]),
+            "coef_gap_max": float(np.max(np.abs(np.asarray(ref.coef_) - np.asarray(sh.coef_)))),
+            "shift_coef_l2": float(np.linalg.norm(sh.coef_)),
+        },
     )
 
-    return int(latest_fold[key])
+
+# =============================================================================
+# Summaries
+# =============================================================================
 
 
-# =========================================================
+def build_year_summary(metrics):
+    return (
+        metrics.groupby(["arm", "validation_year"], as_index=False)
+        .agg(
+            seed_count=("base_seed", "size"),
+            total_win_count=("total_win", "sum"),
+            shape_win_count=("shape_win", "sum"),
+            mean_R_total_gain_pt=("R_total_gain_pt", "mean"),
+            std_R_total_gain_pt=("R_total_gain_pt", "std"),
+            min_R_total_gain_pt=("R_total_gain_pt", "min"),
+            mean_R_level_gain_pt=("R_level_gain_pt", "mean"),
+            mean_R_shape_gain_pt=("R_shape_gain_pt", "mean"),
+            std_R_shape_gain_pt=("R_shape_gain_pt", "std"),
+            min_R_shape_gain_pt=("R_shape_gain_pt", "min"),
+        )
+    )
+
+
+def build_seed_summary(metrics):
+    return (
+        metrics.groupby(["arm", "base_seed"], as_index=False)
+        .agg(
+            fold_count=("validation_year", "size"),
+            total_fold_wins=("total_win", "sum"),
+            shape_fold_wins=("shape_win", "sum"),
+            mean_R_total_gain_pt=("R_total_gain_pt", "mean"),
+            mean_R_level_gain_pt=("R_level_gain_pt", "mean"),
+            mean_R_shape_gain_pt=("R_shape_gain_pt", "mean"),
+            worst_R_total_gain_pt=("R_total_gain_pt", "min"),
+            worst_R_shape_gain_pt=("R_shape_gain_pt", "min"),
+        )
+    )
+
+
+# =============================================================================
 # Main
-# =========================================================
-def main():
+# =============================================================================
 
-    # -----------------------------------------------------
-    # 덮어쓰기 방지
-    # -----------------------------------------------------
+
+def main():
+    t0 = time.time()
+
+    print("=" * 118)
+    print(EXPERIMENT_NAME)
+    print("=" * 118)
+    print("Purpose      : Ridge representation retest on frozen Treatment OOF residual bank")
+    print(f"Bank source  : {BANK_SOURCE_PATH}")
+    print("Eval years   :", EVAL_YEARS)
+    print(f"Ridge alpha  : {RIDGE_ALPHA}")
+    print(f"Adapter/OHE  : scale={COMMON_SHRINK}")
+    print(f"Shift Sens25 : scale={SHIFT_SCALE}, fit_intercept=False, raw residual")
+    print("Final model  : NOT TRAINED")
+    print("=" * 118)
+
+    if not TRAIN_PATH.exists():
+        raise FileNotFoundError(TRAIN_PATH)
+    if not BANK_SOURCE_PATH.exists():
+        raise FileNotFoundError(
+            f"Residual bank missing: {BANK_SOURCE_PATH}\n"
+            "Run rresid_v001 once, or set RRESID_BANK_SOURCE to its residual_bank.csv."
+        )
     if VALIDATION_DIR.exists():
         raise FileExistsError(
-            "Validation experiment already exists: "
-            f"{VALIDATION_DIR}\n"
-            "새 EXPERIMENT_NAME을 사용하세요."
+            f"기존 validation 보호를 위해 중단: {VALIDATION_DIR}\n"
+            "기존 폴더를 이동/삭제 후 다시 실행하세요."
         )
+    VALIDATION_DIR.mkdir(parents=True, exist_ok=False)
 
-    if MODEL_DIR.exists():
-        raise FileExistsError(
-            "Model experiment already exists: "
-            f"{MODEL_DIR}\n"
-            "새 EXPERIMENT_NAME을 사용하세요."
-        )
+    train = pd.read_csv(TRAIN_PATH, encoding="utf-8-sig", low_memory=False)
+    train[SEASON_COL] = pd.to_numeric(train[SEASON_COL], errors="raise").astype(int)
 
-    # -----------------------------------------------------
-    # 파일 검증
-    # -----------------------------------------------------
-    if not TRAIN_PATH.exists():
-        raise FileNotFoundError(
-            f"train.csv를 찾을 수 없습니다: {TRAIN_PATH}"
-        )
-
-    if not TEST_PATH.exists():
-        raise FileNotFoundError(
-            f"test.csv를 찾을 수 없습니다: {TEST_PATH}"
-        )
-
-    # -----------------------------------------------------
-    # test schema만 이용해 공식 Raw Feature 결정
-    # test의 값/분포/다른 row 정보는 사용하지 않는다.
-    # -----------------------------------------------------
-    test_cols = pd.read_csv(
-        TEST_PATH,
-        encoding="utf-8-sig",
-        nrows=0,
-    ).columns.tolist()
-
-    if ID not in test_cols:
-        raise ValueError(
-            f"test.csv에 ID 컬럼 '{ID}'가 없습니다."
-        )
-
-    raw_features = [
-        col
-        for col in test_cols
-        if col != ID
-    ]
-
-    # -----------------------------------------------------
-    # Feature Tag Mode 해석
-    # -----------------------------------------------------
-    # Temporal Feature는 현재 행의 공식 asof_* 값만으로 생성되므로
-    # 평가 데이터의 다른 row에 의존하지 않는다.
-    feature_tags = validate_feature_tags(
-        FEATURE_TAGS
-    )
-    resolved_feature_config = (
-        resolve_feature_config(
-            feature_tags
-        )
-    )
-
-    cat_use_temporal = (
-        resolved_feature_config[
-            "cat_use_temporal"
-        ]
-    )
-    xgb_use_temporal = (
-        resolved_feature_config[
-            "xgb_use_temporal"
-        ]
-    )
-    xgb_use_raw_player_ids = (
-        resolved_feature_config[
-            "xgb_use_raw_player_ids"
-        ]
-    )
-    xgb_use_reliability = (
-        resolved_feature_config[
-            "xgb_use_reliability"
-        ]
-    )
-
-    cat_features = raw_features.copy()
-    if cat_use_temporal:
-        cat_features += TEMPORAL_FEATURES
-
-    if xgb_use_raw_player_ids:
-        xgb_dropped_raw_id_cols = []
-        xgb_features = raw_features.copy()
-    else:
-        xgb_dropped_raw_id_cols = (
-            XGB_DROP_RAW_ID_COLS.copy()
-        )
-        xgb_features = [
-            col
-            for col in raw_features
-            if col not in xgb_dropped_raw_id_cols
-        ]
-
-    if xgb_use_temporal:
-        xgb_features += TEMPORAL_FEATURES
-
-    if xgb_use_reliability:
-        xgb_features += RELIABILITY_FEATURES
-
-    cat_cols = [
-        col
-        for col in CAT_COLS
-        if col in cat_features
-    ]
-
-    xgb_cat_cols = [
-        col
-        for col in XGB_CAT_COLS
-        if col in xgb_features
-    ]
-
-    xgb_id_like_cols = [
-        col
-        for col in XGB_ID_LIKE_COLS
-        if col in xgb_features
-    ]
-
-    xgb_num_cols = [
-        col
-        for col in xgb_features
-        if col not in xgb_cat_cols
-    ]
-
-    # -----------------------------------------------------
-    # Train load
-    # -----------------------------------------------------
-    train = pd.read_csv(
-        TRAIN_PATH,
-        encoding="utf-8-sig",
-        usecols=[
-            ID,
-            *raw_features,
-            TARGET,
-        ],
-    )
-
-    required_cols = {
-        ID,
-        TARGET,
-        "season",
+    required_train = {
+        ID, TARGET, SEASON_COL, GAME_TYPE_COL, "pitcher_id", "batter_hand",
+        "balls_before", "strikes_before", "asof_pitcher_n",
+        "asof_pitcher_success_rate",
     }
-    missing_cols = required_cols - set(train.columns)
+    missing = sorted(required_train - set(train.columns))
+    if missing:
+        raise KeyError(f"train required columns missing: {missing}")
 
-    if missing_cols:
-        raise ValueError(
-            "train.csv에 필요한 컬럼이 없습니다: "
-            + ", ".join(sorted(missing_cols))
-        )
-
-    if train[TARGET].isna().any():
-        raise ValueError(
-            f"타깃 컬럼 '{TARGET}'에 결측값이 있습니다."
-        )
-
-    if cat_use_temporal or xgb_use_temporal:
-        train = add_temporal_features(train)
-
-    # -----------------------------------------------------
-    # 공식 asof 통계 denominator audit
-    # -----------------------------------------------------
-    # train.csv만 사용한다. test 값/분포는 보지 않는다.
-    asof_denominator_audit = (
-        audit_asof_pitcher_success_denominator(
-            train
-        )
+    bank = pd.read_csv(
+        BANK_SOURCE_PATH,
+        encoding="utf-8-sig",
+        usecols=[ID, "validation_year", "base_seed", "y_true", "treatment_pred", "residual"],
     )
-    print_asof_denominator_audit(
-        asof_denominator_audit
-    )
+    bank["validation_year"] = pd.to_numeric(bank["validation_year"], errors="raise").astype(int)
+    bank["base_seed"] = pd.to_numeric(bank["base_seed"], errors="raise").astype(int)
+    seeds = sorted(bank["base_seed"].unique().tolist())
 
-    if xgb_use_reliability:
-        validate_exact_count_reconstruction(
-            asof_denominator_audit
+    needed_years = sorted(set([y - 1 for y in EVAL_YEARS] + EVAL_YEARS))
+    missing_years = sorted(set(needed_years) - set(bank["validation_year"].unique().tolist()))
+    if missing_years:
+        raise RuntimeError(f"bank missing OOF years: {missing_years}")
+
+    pitcher_stats = build_pitcher_season_stats(train)
+    metrics_rows = []
+    pred_parts = []
+    diag_rows = []
+
+    for target_year in EVAL_YEARS:
+        source_year = target_year - 1
+        raw_source = train.loc[
+            train[SEASON_COL].eq(source_year) & ~train[GAME_TYPE_COL].fillna("__MISSING__").astype(str).eq("F")
+        ].copy().reset_index(drop=True)
+        raw_target = train.loc[
+            train[SEASON_COL].eq(target_year) & ~train[GAME_TYPE_COL].fillna("__MISSING__").astype(str).eq("F")
+        ].copy().reset_index(drop=True)
+
+        print("\n" + "#" * 118)
+        print(f"TARGET YEAR={target_year} | SOURCE={source_year} | source_R={len(raw_source):,} target_R={len(raw_target):,}")
+        print("#" * 118)
+
+        # Sensitivity rows do not depend on CatBoost seed: build once per transition.
+        sens_A, sens_B = sensitivity25_matrices(
+            train=train,
+            source_year=source_year,
+            target_year=target_year,
+            source_rows=raw_source,
+            target_rows=raw_target,
         )
 
-    print("=" * 72)
-    print("Dual Model Feature-Diverse Ensemble")
-    print("=" * 72)
-    print("Experiment              :", EXPERIMENT_NAME)
-    print("XGBoost version         :", xgb.__version__)
-    print("Train shape             :", train.shape)
-    print("Raw Feature 수          :", len(raw_features))
-    print("CatBoost Feature 수     :", len(cat_features))
-    print("CatBoost categorical 수 :", len(cat_cols))
-    print("XGBoost Feature 수      :", len(xgb_features))
-    print("XGBoost categorical 수  :", len(xgb_cat_cols))
-    print(
-        "Feature Tags            :",
-        sorted(feature_tags),
-    )
-    print(
-        "Resolved Cat Temporal   :",
-        cat_use_temporal,
-    )
-    print(
-        "Resolved XGB Temporal   :",
-        xgb_use_temporal,
-    )
-    print(
-        "Resolved XGB Raw IDs    :",
-        xgb_use_raw_player_ids,
-    )
-    print(
-        "Resolved XGB Reliability:",
-        xgb_use_reliability,
-    )
-    print(
-        "Cat Temporal Feature 수 :",
-        len(TEMPORAL_FEATURES) if cat_use_temporal else 0,
-    )
-    print(
-        "XGB Temporal Feature 수 :",
-        len(TEMPORAL_FEATURES) if xgb_use_temporal else 0,
-    )
-    print(
-        "XGB Reliability Feature 수:",
-        len(RELIABILITY_FEATURES) if xgb_use_reliability else 0,
-    )
-    print("XGB 제거 Raw ID         :", xgb_dropped_raw_id_cols)
-    print(
-        "Season                  :",
-        train["season"].min(),
-        "~",
-        train["season"].max(),
-    )
-    print(
-        "Target mean             :",
-        f"{train[TARGET].mean():.6f}",
-    )
-    print("=" * 72)
+        for seed in seeds:
+            sb = bank.loc[(bank["validation_year"] == source_year) & (bank["base_seed"] == seed)].set_index(ID)
+            tb = bank.loc[(bank["validation_year"] == target_year) & (bank["base_seed"] == seed)].set_index(ID)
 
-    # -----------------------------------------------------
-    # 디렉터리 생성
-    # -----------------------------------------------------
-    MODEL_DIR.mkdir(
-        parents=True,
-        exist_ok=False,
-    )
-    VALIDATION_DIR.mkdir(
-        parents=True,
-        exist_ok=False,
-    )
+            if not raw_source[ID].isin(sb.index).all() or not raw_target[ID].isin(tb.index).all():
+                raise RuntimeError(f"residual bank alignment failed {source_year}->{target_year} seed={seed}")
 
-    with open(
-        VALIDATION_DIR / "asof_denominator_audit.json",
-        "w",
-        encoding="utf-8",
-    ) as f:
-        json.dump(
-            asof_denominator_audit,
-            f,
-            indent=2,
-            ensure_ascii=False,
-        )
+            source_base = raw_source[ID].map(sb["treatment_pred"]).to_numpy(np.float64)
+            source_y = raw_source[ID].map(sb["y_true"]).to_numpy(np.float64)
+            source_resid = source_y - source_base
 
-    # -----------------------------------------------------
-    # Expanding Window
-    # -----------------------------------------------------
-    fold_results = []
-    oof_frames = []
+            target_base = raw_target[ID].map(tb["treatment_pred"]).to_numpy(np.float64)
+            target_y = raw_target[ID].map(tb["y_true"]).to_numpy(np.float64)
 
-    previous_y = []
-    previous_cat_pred = []
-    previous_xgb_pred = []
-
-    for fold_config in EXPANDING_FOLDS:
-
-        fold = fold_config["fold"]
-        train_seasons = fold_config["train_seasons"]
-        validation_season = (
-            fold_config["validation_season"]
-        )
-
-        train_mask = train["season"].isin(
-            train_seasons
-        )
-        val_mask = (
-            train["season"]
-            == validation_season
-        )
-
-        if not train_mask.any():
-            raise ValueError(
-                f"Fold {fold} 학습 데이터가 없습니다."
-            )
-
-        if not val_mask.any():
-            raise ValueError(
-                f"Fold {fold} Validation 데이터가 없습니다."
-            )
-
-        train_df = train.loc[
-            train_mask
-        ].copy()
-
-        val_df = train.loc[
-            val_mask
-        ].copy()
-
-        y_train = train_df[
-            TARGET
-        ].copy()
-
-        y_val = val_df[
-            TARGET
-        ].copy()
-
-        val_row_id = val_df[
-            ID
-        ].copy()
-
-        # =================================================
-        # XGBoost Reliability — Fold-safe Beta prior
-        # =================================================
-        reliability_state = None
-        reliability_train_summary = None
-        reliability_val_summary = None
-
-        if xgb_use_reliability:
-            reliability_state = (
-                fit_beta_binomial_prior(
-                    train_df
-                )
-            )
-
-            train_df_before_reliability = (
-                train_df.copy()
-            )
-            val_df_before_reliability = (
-                val_df.copy()
-            )
-
-            train_df = (
-                apply_reliability_features(
-                    train_df,
-                    reliability_state,
-                )
-            )
-            val_df = (
-                apply_reliability_features(
-                    val_df,
-                    reliability_state,
-                )
-            )
-
-            reliability_train_summary = (
-                summarize_reliability_features(
-                    train_df_before_reliability,
-                    train_df,
-                )
-            )
-            reliability_val_summary = (
-                summarize_reliability_features(
-                    val_df_before_reliability,
-                    val_df,
-                )
-            )
-
-        print()
-        print("=" * 72)
-        print(
-            f"Fold {fold}: "
-            f"{train_seasons[0]}~{train_seasons[-1]} "
-            f"-> {validation_season}"
-        )
-        print(
-            f"Train={len(train_df):,}, "
-            f"Valid={len(val_df):,}"
-        )
-        print("=" * 72)
-
-        # =================================================
-        # CatBoost
-        # =================================================
-        X_cat_train = prepare_cat_features(
-            train_df,
-            cat_features,
-            cat_cols,
-        )
-
-        X_cat_val = prepare_cat_features(
-            val_df,
-            cat_features,
-            cat_cols,
-        )
-
-        cat_model = create_cat_validation_model()
-
-        cat_start = time.time()
-
-        cat_model.fit(
-            X_cat_train,
-            y_train,
-            cat_features=cat_cols,
-            eval_set=(
-                X_cat_val,
-                y_val,
-            ),
-            early_stopping_rounds=(
-                CAT_EARLY_STOPPING_ROUNDS
-            ),
-            use_best_model=True,
-        )
-
-        cat_elapsed = (
-            time.time() - cat_start
-        )
-
-        cat_pred = (
-            cat_model.predict_proba(
-                X_cat_val
-            )[:, 1]
-        )
-
-        cat_best_iteration = (
-            cat_model.get_best_iteration()
-        )
-
-        if (
-            cat_best_iteration is None
-            or cat_best_iteration < 0
-        ):
-            cat_final_iterations = (
-                CATBOOST_PARAMS["iterations"]
-            )
-        else:
-            cat_final_iterations = (
-                int(cat_best_iteration) + 1
-            )
-
-        # =================================================
-        # XGBoost
-        # =================================================
-        X_xgb_train_raw = prepare_xgb_raw_features(
-            train_df,
-            xgb_features,
-            xgb_id_like_cols,
-        )
-
-        X_xgb_val_raw = prepare_xgb_raw_features(
-            val_df,
-            xgb_features,
-            xgb_id_like_cols,
-        )
-
-        # Fold마다 train 구간에만 fit되는 독립 Encoder.
-        xgb_preprocessor = create_xgb_preprocessor(
-            xgb_cat_cols,
-            xgb_num_cols,
-        )
-
-        X_xgb_train = (
-            xgb_preprocessor
-            .fit_transform(
-                X_xgb_train_raw
-            )
-        )
-
-        X_xgb_val = (
-            xgb_preprocessor
-            .transform(
-                X_xgb_val_raw
-            )
-        )
-
-        xgb_model = create_xgb_validation_model()
-
-        xgb_start = time.time()
-
-        xgb_model.fit(
-            X_xgb_train,
-            y_train,
-            eval_set=[
-                (
-                    X_xgb_val,
-                    y_val,
-                ),
-            ],
-            verbose=100,
-        )
-
-        xgb_elapsed = (
-            time.time() - xgb_start
-        )
-
-        xgb_pred = (
-            xgb_model
-            .predict_proba(
-                X_xgb_val
-            )[:, 1]
-        )
-
-        xgb_best_iteration = getattr(
-            xgb_model,
-            "best_iteration",
-            None,
-        )
-
-        if (
-            xgb_best_iteration is None
-            or xgb_best_iteration < 0
-        ):
-            xgb_best_iteration = (
-                XGB_MAX_ITERATIONS - 1
-            )
-
-        xgb_final_iterations = (
-            int(xgb_best_iteration) + 1
-        )
-
-        # =================================================
-        # Ensemble / Diversity
-        # =================================================
-        if previous_y:
-            previous_y_all = np.concatenate(
-                previous_y
-            )
-            previous_cat_all = np.concatenate(
-                previous_cat_pred
-            )
-            previous_xgb_all = np.concatenate(
-                previous_xgb_pred
-            )
-
-            walk_forward_cat_weight = (
-                optimal_cat_weight(
-                    previous_y_all,
-                    previous_cat_all,
-                    previous_xgb_all,
-                )
-            )
-        else:
-            walk_forward_cat_weight = (
-                BASE_CAT_WEIGHT
-            )
-
-        pair_metrics = evaluate_pair(
-            y_val,
-            cat_pred,
-            xgb_pred,
-            walk_forward_cat_weight,
-        )
-
-        cat_metrics = calculate_metrics(
-            y_val,
-            cat_pred,
-        )
-        xgb_metrics = calculate_metrics(
-            y_val,
-            xgb_pred,
-        )
-
-        fixed_pred = blend_predictions(
-            cat_pred,
-            xgb_pred,
-            BASE_CAT_WEIGHT,
-        )
-
-        walk_forward_pred = blend_predictions(
-            cat_pred,
-            xgb_pred,
-            walk_forward_cat_weight,
-        )
-
-        fold_result = {
-            "fold": int(fold),
-            "train_seasons": [
-                int(x)
-                for x in train_seasons
-            ],
-            "validation_season": int(
-                validation_season
-            ),
-            "n_train": int(len(train_df)),
-            "n_validation": int(len(val_df)),
-            "cat_brier": float(
-                cat_metrics["brier"]
-            ),
-            "cat_bss": float(
-                cat_metrics["bss"]
-            ),
-            "cat_best_iteration": int(
-                cat_best_iteration
-            ),
-            "cat_final_iterations": int(
-                cat_final_iterations
-            ),
-            "cat_elapsed_seconds": float(
-                cat_elapsed
-            ),
-            "xgb_brier": float(
-                xgb_metrics["brier"]
-            ),
-            "xgb_bss": float(
-                xgb_metrics["bss"]
-            ),
-            "xgb_best_iteration": int(
-                xgb_best_iteration
-            ),
-            "xgb_final_iterations": int(
-                xgb_final_iterations
-            ),
-            "xgb_elapsed_seconds": float(
-                xgb_elapsed
-            ),
-            "reliability_state": (
-                reliability_state
-            ),
-            "reliability_train_summary": (
-                reliability_train_summary
-            ),
-            "reliability_validation_summary": (
-                reliability_val_summary
-            ),
-            **pair_metrics,
-        }
-
-        fold_results.append(
-            fold_result
-        )
-
-        pred_df = pd.DataFrame({
-            ID: val_row_id.to_numpy(),
-            "target": y_val.to_numpy(),
-            "validation_season": (
-                validation_season
-            ),
-            "cat_prediction": cat_pred,
-            "xgb_prediction": xgb_pred,
-            "fixed_ensemble_prediction": (
-                fixed_pred
-            ),
-            "walk_forward_ensemble_prediction": (
-                walk_forward_pred
-            ),
-        })
-
-        oof_frames.append(
-            pred_df
-        )
-
-        fold_dir = (
-            VALIDATION_DIR
-            / f"fold_{validation_season}"
-        )
-        fold_dir.mkdir(
-            parents=True,
-            exist_ok=False,
-        )
-
-        pred_df.to_csv(
-            fold_dir / "pred.csv",
-            index=False,
-            encoding="utf-8-sig",
-        )
-
-        with open(
-            fold_dir / "metadata.json",
-            "w",
-            encoding="utf-8",
-        ) as f:
-            json.dump(
-                fold_result,
-                f,
-                indent=2,
-                ensure_ascii=False,
-            )
-
-        print(
-            f"Cat Brier              : "
-            f"{pair_metrics['cat_brier']:.8f}"
-        )
-        print(
-            f"XGB Brier              : "
-            f"{pair_metrics['xgb_brier']:.8f}"
-        )
-        print(
-            f"Prediction Corr        : "
-            f"{pair_metrics['prediction_corr']:.8f}"
-        )
-        print(
-            f"Residual Corr          : "
-            f"{pair_metrics['residual_corr']:.8f}"
-        )
-        print(
-            f"Residual Covariance    : "
-            f"{pair_metrics['residual_covariance']:.10f}"
-        )
-        print(
-            f"Fixed Ensemble Brier   : "
-            f"{pair_metrics['fixed_ensemble_brier']:.8f}"
-        )
-        print(
-            f"Walk-forward Brier     : "
-            f"{pair_metrics['walk_forward_ensemble_brier']:.8f} "
-            f"(Cat={walk_forward_cat_weight:.6f})"
-        )
-        print(
-            f"Diagnostic Opt Brier   : "
-            f"{pair_metrics['diagnostic_opt_ensemble_brier']:.8f} "
-            f"(Cat={pair_metrics['diagnostic_opt_cat_weight']:.6f})"
-        )
-        print(
-            f"Walk-forward Blend Gain: "
-            f"{pair_metrics['walk_forward_blend_gain']:+.8f}"
-        )
-        print(
-            f"Cat best/final iter    : "
-            f"{cat_best_iteration} / {cat_final_iterations}"
-        )
-        print(
-            f"XGB best/final iter    : "
-            f"{xgb_best_iteration} / {xgb_final_iterations}"
-        )
-        if reliability_state is not None:
             print(
-                "EB prior               : "
-                f"alpha={reliability_state['alpha']:.6f}, "
-                f"beta={reliability_state['beta']:.6f}, "
-                f"mean={reliability_state['prior_mean']:.6f}, "
-                f"strength={reliability_state['prior_strength']:.3f}"
+                f"\n[TRANSITION] {source_year}->{target_year} seed={seed} "
+                f"source residual mean={source_resid.mean():+.8f} std={source_resid.std():.8f}"
             )
 
-        previous_y.append(
-            y_val.to_numpy(dtype=float)
-        )
-        previous_cat_pred.append(
-            np.asarray(cat_pred, dtype=float)
-        )
-        previous_xgb_pred.append(
-            np.asarray(xgb_pred, dtype=float)
-        )
+            # Constant level reference
+            constant_corr = np.full(len(target_y), float(source_resid.mean()), dtype=np.float64)
 
-    # -----------------------------------------------------
-    # Pooled OOF
-    # -----------------------------------------------------
-    oof = pd.concat(
-        oof_frames,
-        ignore_index=True,
-    )
-
-    y_oof = oof[
-        "target"
-    ].to_numpy(dtype=float)
-
-    cat_oof = oof[
-        "cat_prediction"
-    ].to_numpy(dtype=float)
-
-    xgb_oof = oof[
-        "xgb_prediction"
-    ].to_numpy(dtype=float)
-
-    pooled_cat_weight = optimal_cat_weight(
-        y_oof,
-        cat_oof,
-        xgb_oof,
-    )
-
-    if FINAL_WEIGHT_MODE == "pooled_oof":
-        final_cat_weight = pooled_cat_weight
-    elif FINAL_WEIGHT_MODE == "fixed":
-        final_cat_weight = BASE_CAT_WEIGHT
-    else:
-        raise ValueError(
-            "지원하지 않는 FINAL_WEIGHT_MODE: "
-            f"{FINAL_WEIGHT_MODE}"
-        )
-
-    final_xgb_weight = (
-        1.0 - final_cat_weight
-    )
-
-    pooled_pred = blend_predictions(
-        cat_oof,
-        xgb_oof,
-        pooled_cat_weight,
-    )
-
-    pooled_fixed_pred = blend_predictions(
-        cat_oof,
-        xgb_oof,
-        BASE_CAT_WEIGHT,
-    )
-
-    pooled_metrics = {
-        "n_oof": int(len(oof)),
-        "cat_brier": float(
-            calculate_metrics(
-                y_oof,
-                cat_oof,
-            )["brier"]
-        ),
-        "xgb_brier": float(
-            calculate_metrics(
-                y_oof,
-                xgb_oof,
-            )["brier"]
-        ),
-        "prediction_corr": float(
-            safe_corr(
-                cat_oof,
-                xgb_oof,
+            # v001 coded-49 reference
+            X49s, X49t = coded49_matrices(
+                raw_source, raw_target, source_base, target_base, pitcher_stats
             )
-        ),
-        "residual_corr": float(
-            safe_corr(
-                y_oof - cat_oof,
-                y_oof - xgb_oof,
-            )
-        ),
-        "residual_covariance": float(
-            residual_covariance(
-                y_oof,
-                cat_oof,
-                xgb_oof,
-            )
-        ),
-        "fixed_cat_weight": float(
-            BASE_CAT_WEIGHT
-        ),
-        "fixed_ensemble_brier": float(
-            calculate_metrics(
-                y_oof,
-                pooled_fixed_pred,
-            )["brier"]
-        ),
-        "pooled_opt_cat_weight": float(
-            pooled_cat_weight
-        ),
-        "pooled_opt_xgb_weight": float(
-            1.0 - pooled_cat_weight
-        ),
-        # 전체 OOF를 이용해 weight를 찾았으므로
-        # 모델 선택용 지표이며 독립 test score가 아니다.
-        "pooled_opt_ensemble_brier": float(
-            calculate_metrics(
-                y_oof,
-                pooled_pred,
-            )["brier"]
-        ),
-        "walk_forward_ensemble_brier": float(
-            calculate_metrics(
-                y_oof,
-                oof[
-                    "walk_forward_ensemble_prediction"
-                ].to_numpy(dtype=float),
-            )["brier"]
-        ),
-        "best_base_brier": float(
-            min(
-                calculate_metrics(y_oof, cat_oof)["brier"],
-                calculate_metrics(y_oof, xgb_oof)["brier"],
-            )
-        ),
-        "fixed_blend_gain": float(
-            min(
-                calculate_metrics(y_oof, cat_oof)["brier"],
-                calculate_metrics(y_oof, xgb_oof)["brier"],
-            )
-            - calculate_metrics(y_oof, pooled_fixed_pred)["brier"]
-        ),
-        "pooled_opt_blend_gain": float(
-            min(
-                calculate_metrics(y_oof, cat_oof)["brier"],
-                calculate_metrics(y_oof, xgb_oof)["brier"],
-            )
-            - calculate_metrics(y_oof, pooled_pred)["brier"]
-        ),
-        "walk_forward_blend_gain": float(
-            min(
-                calculate_metrics(y_oof, cat_oof)["brier"],
-                calculate_metrics(y_oof, xgb_oof)["brier"],
-            )
-            - calculate_metrics(
-                y_oof,
-                oof[
-                    "walk_forward_ensemble_prediction"
-                ].to_numpy(dtype=float),
-            )["brier"]
-        ),
-    }
+            coded_corr, coded_diag = fit_predict_ridge_coded49(X49s, source_resid, X49t)
 
-    diagnostic_weights = np.asarray(
-        [
-            fold[
-                "diagnostic_opt_cat_weight"
+            # Ridge-native OHE adapter information
+            Aohe, Bohe, ohe_schema = ohe_ridge_matrices(
+                raw_source, raw_target, source_base, target_base, pitcher_stats
+            )
+            ohe_corr, ohe_diag = fit_predict_ridge_ohe(Aohe, source_resid, Bohe)
+
+            # shift-v002/v003 25-col sensitivity pair
+            sens_shift_corr, sens_ref_corr, sens_diag = fit_predict_sens25_pair(
+                sens_A, source_resid, sens_B
+            )
+
+            arm_specs = [
+                ("CONSTANT_S05", constant_corr, COMMON_SHRINK),
+                ("RIDGE_CODED49_S05", coded_corr, COMMON_SHRINK),
+                ("RIDGE_OHE_S05", ohe_corr, COMMON_SHRINK),
+                ("RIDGE_SENS25_SHIFT_ALLR_S075", sens_shift_corr, SHIFT_SCALE),
+                ("RIDGE_SENS25_REFERENCE_ALLR_S075", sens_ref_corr, SHIFT_SCALE),
             ]
-            for fold in fold_results
-        ],
-        dtype=float,
-    )
 
-    pooled_metrics[
-        "diagnostic_weight_mean"
-    ] = float(
-        np.mean(diagnostic_weights)
-    )
+            payload = {
+                ID: raw_target[ID].to_numpy(),
+                "validation_year": int(target_year),
+                "source_year": int(source_year),
+                "base_seed": int(seed),
+                "y_true": target_y,
+                "treatment_pred": target_base,
+            }
 
-    pooled_metrics[
-        "diagnostic_weight_std"
-    ] = float(
-        np.std(
-            diagnostic_weights,
-            ddof=1,
-        )
-    )
+            for arm, corr, scale in arm_specs:
+                m, p = evaluate_arm(
+                    target_y, target_base, corr, scale, arm, target_year, source_year, seed
+                )
+                metrics_rows.append(m)
+                payload[arm.lower() + "__correction"] = corr
+                payload[arm.lower() + "__prediction"] = p
+                print(
+                    f"{arm:<40} Total={m['R_total_gain_pt']:+9.3f} "
+                    f"Level={m['R_level_gain_pt']:+9.3f} Shape={m['R_shape_gain_pt']:+9.3f}"
+                )
 
-    oof["pooled_opt_ensemble_prediction"] = (
-        pooled_pred
-    )
+            diag_rows.append({
+                "validation_year": int(target_year),
+                "source_year": int(source_year),
+                "base_seed": int(seed),
+                "source_residual_mean": float(source_resid.mean()),
+                "coded49": coded_diag,
+                "ohe": {**ohe_schema, **ohe_diag},
+                "sens25": sens_diag,
+            })
+            pred_parts.append(pd.DataFrame(payload))
 
-    oof.to_csv(
-        VALIDATION_DIR / "oof_pred.csv",
-        index=False,
-        encoding="utf-8-sig",
-    )
+            del X49s, X49t, Aohe, Bohe
 
-    pd.DataFrame(
-        fold_results
-    ).to_csv(
-        VALIDATION_DIR / "fold_metrics.csv",
-        index=False,
-        encoding="utf-8-sig",
-    )
+    metrics = pd.DataFrame(metrics_rows)
+    preds = pd.concat(pred_parts, ignore_index=True)
+    ys = build_year_summary(metrics)
+    ss = build_seed_summary(metrics)
 
-    # -----------------------------------------------------
-    # Final iterations
-    # -----------------------------------------------------
-    cat_final_iterations = (
-        select_final_iterations(
-            fold_results,
-            "cat_final_iterations",
-        )
-    )
-
-    xgb_final_iterations = (
-        select_final_iterations(
-            fold_results,
-            "xgb_final_iterations",
-        )
-    )
-
-    print()
-    print("=" * 72)
-    print("Pooled OOF")
-    print("=" * 72)
-    print(
-        "Cat Brier              :",
-        f"{pooled_metrics['cat_brier']:.8f}",
-    )
-    print(
-        "XGB Brier              :",
-        f"{pooled_metrics['xgb_brier']:.8f}",
-    )
-    print(
-        "Prediction Corr        :",
-        f"{pooled_metrics['prediction_corr']:.8f}",
-    )
-    print(
-        "Residual Corr          :",
-        f"{pooled_metrics['residual_corr']:.8f}",
-    )
-    print(
-        "Residual Covariance    :",
-        f"{pooled_metrics['residual_covariance']:.10f}",
-    )
-    print(
-        "Fixed Ensemble Brier   :",
-        f"{pooled_metrics['fixed_ensemble_brier']:.8f}",
-    )
-    print(
-        "Walk-forward Brier     :",
-        f"{pooled_metrics['walk_forward_ensemble_brier']:.8f}",
-    )
-    print(
-        "Pooled Opt Brier       :",
-        f"{pooled_metrics['pooled_opt_ensemble_brier']:.8f}",
-    )
-    print(
-        "Pooled Opt Blend Gain  :",
-        f"{pooled_metrics['pooled_opt_blend_gain']:+.8f}",
-    )
-    print(
-        "Final weight           :",
-        f"Cat={final_cat_weight:.8f}, "
-        f"XGB={final_xgb_weight:.8f}",
-    )
-    print(
-        "Diagnostic weight std  :",
-        f"{pooled_metrics['diagnostic_weight_std']:.8f}",
-    )
-    print(
-        "Final Cat iterations   :",
-        cat_final_iterations,
-    )
-    print(
-        "Final XGB iterations   :",
-        xgb_final_iterations,
-    )
-    print("=" * 72)
-
-    # -----------------------------------------------------
-    # 전체 데이터 Final CatBoost
-    # -----------------------------------------------------
-    X_cat_full = prepare_cat_features(
-        train,
-        cat_features,
-        cat_cols,
-    )
-
-    y_full = train[
-        TARGET
-    ].copy()
-
-    (
-        final_cat_model,
-        final_cat_params,
-    ) = create_cat_final_model(
-        cat_final_iterations
-    )
-
-    cat_final_start = time.time()
-
-    final_cat_model.fit(
-        X_cat_full,
-        y_full,
-        cat_features=cat_cols,
-    )
-
-    cat_final_elapsed = (
-        time.time() - cat_final_start
-    )
-
-    # -----------------------------------------------------
-    # 전체 데이터 Final XGBoost
-    # -----------------------------------------------------
-    final_reliability_state = None
-    final_reliability_summary = None
-    xgb_final_train = train
-
-    if xgb_use_reliability:
-        final_reliability_state = (
-            fit_beta_binomial_prior(
-                train
-            )
-        )
-
-        xgb_final_train = (
-            apply_reliability_features(
-                train,
-                final_reliability_state,
-            )
-        )
-
-        final_reliability_summary = (
-            summarize_reliability_features(
-                train,
-                xgb_final_train,
-            )
-        )
-
-    X_xgb_full_raw = prepare_xgb_raw_features(
-        xgb_final_train,
-        xgb_features,
-        xgb_id_like_cols,
-    )
-
-    final_xgb_preprocessor = (
-        create_xgb_preprocessor(
-            xgb_cat_cols,
-            xgb_num_cols,
-        )
-    )
-
-    X_xgb_full = (
-        final_xgb_preprocessor
-        .fit_transform(
-            X_xgb_full_raw
-        )
-    )
-
-    final_xgb_model = create_xgb_final_model(
-        xgb_final_iterations
-    )
-
-    xgb_final_start = time.time()
-
-    final_xgb_model.fit(
-        X_xgb_full,
-        y_full,
-        verbose=100,
-    )
-
-    xgb_final_elapsed = (
-        time.time() - xgb_final_start
-    )
-
-    # -----------------------------------------------------
-    # Ensemble Artifact
-    # -----------------------------------------------------
-    artifact = {
-        "experiment_name": EXPERIMENT_NAME,
-        "model_type": (
-            "CatBoostClassifier + "
-            "XGBClassifier tag-ablation ensemble with exact Beta-Binomial EB"
-        ),
-        "catboost_model": final_cat_model,
-        "xgboost_model": final_xgb_model,
-        "xgboost_preprocessor": (
-            final_xgb_preprocessor
-        ),
-        "cat_features": cat_features,
-        "cat_categorical_features": cat_cols,
-        "xgb_features": xgb_features,
-        "xgb_categorical_features": (
-            xgb_cat_cols
-        ),
-        "xgb_numeric_features": (
-            xgb_num_cols
-        ),
-        "xgb_id_like_features": (
-            xgb_id_like_cols
-        ),
-        "xgb_dropped_raw_id_features": (
-            xgb_dropped_raw_id_cols
-        ),
-        "feature_tags": sorted(
-            feature_tags
-        ),
-        "resolved_feature_config": {
-            "cat_use_temporal": bool(
-                cat_use_temporal
-            ),
-            "xgb_use_temporal": bool(
-                xgb_use_temporal
-            ),
-            "xgb_use_raw_player_ids": bool(
-                xgb_use_raw_player_ids
-            ),
-            "xgb_use_reliability": bool(
-                xgb_use_reliability
-            ),
-        },
-        "cat_temporal_features": (
-            TEMPORAL_FEATURES if cat_use_temporal else []
-        ),
-        "xgb_temporal_features": (
-            TEMPORAL_FEATURES if xgb_use_temporal else []
-        ),
-        "temporal_features": (
-            TEMPORAL_FEATURES
-        ),
-        "xgb_reliability_features": (
-            RELIABILITY_FEATURES
-            if xgb_use_reliability
-            else []
-        ),
-        "reliability_state": (
-            final_reliability_state
-        ),
-        "reliability_summary": (
-            final_reliability_summary
-        ),
-        "cat_weight": float(
-            final_cat_weight
-        ),
-        "xgb_weight": float(
-            final_xgb_weight
-        ),
-        "weight_mode": FINAL_WEIGHT_MODE,
-        "asof_denominator_audit": (
-            asof_denominator_audit
-        ),
-        "catboost_params": (
-            final_cat_params
-        ),
-        "xgboost_params": {
-            **XGBOOST_PARAMS,
-            "n_estimators": int(
-                xgb_final_iterations
-            ),
-        },
-        "cat_final_iterations": int(
-            cat_final_iterations
-        ),
-        "xgb_final_iterations": int(
-            xgb_final_iterations
-        ),
-    }
-
-    joblib.dump(
-        artifact,
-        MODEL_PATH,
-        compress=3,
-    )
+    metrics.to_csv(RIDGE_METRICS_PATH, index=False, encoding="utf-8-sig")
+    preds.to_csv(RIDGE_PREDICTIONS_PATH, index=False, encoding="utf-8-sig")
+    ys.to_csv(YEAR_SUMMARY_PATH, index=False, encoding="utf-8-sig")
+    ss.to_csv(SEED_SUMMARY_PATH, index=False, encoding="utf-8-sig")
 
     metadata = {
         "experiment_name": EXPERIMENT_NAME,
-        "training_seasons": sorted(
-            [
-                int(x)
-                for x in train[
-                    "season"
-                ].unique()
-            ]
-        ),
-        "n_train": int(len(train)),
-        "raw_features": raw_features,
-        "cat_features": cat_features,
-        "cat_categorical_features": cat_cols,
-        "xgb_features": xgb_features,
-        "xgb_categorical_features": (
-            xgb_cat_cols
-        ),
-        "xgb_numeric_features": (
-            xgb_num_cols
-        ),
-        "xgb_id_like_features": (
-            xgb_id_like_cols
-        ),
-        "xgb_dropped_raw_id_features": (
-            xgb_dropped_raw_id_cols
-        ),
-        "feature_tags": sorted(
-            feature_tags
-        ),
-        "resolved_feature_config": {
-            "cat_use_temporal": bool(
-                cat_use_temporal
-            ),
-            "xgb_use_temporal": bool(
-                xgb_use_temporal
-            ),
-            "xgb_use_raw_player_ids": bool(
-                xgb_use_raw_player_ids
-            ),
-            "xgb_use_reliability": bool(
-                xgb_use_reliability
-            ),
+        "purpose": "Ridge representation retest after rresid_v001",
+        "validation_only": True,
+        "final_model_saved": False,
+        "bank_source": str(BANK_SOURCE_PATH),
+        "base_seeds": seeds,
+        "eval_years": EVAL_YEARS,
+        "temporal_protocol": "source year t-1 Treatment OOF residual -> target year t",
+        "arms": {
+            "CONSTANT_S05": "previous-year R residual mean * 0.50",
+            "RIDGE_CODED49_S05": "rresid_v001 coded 49 features, standardized, centered target, no intercept, scale .50",
+            "RIDGE_OHE_S05": "numeric+Exact standardized; small categoricals source-centered one-hot; centered target; no intercept; scale .50",
+            "RIDGE_SENS25_SHIFT_ALLR_S075": {
+                "source": "shift_v002/v003 sensitivity feature construction",
+                "n_features": 25,
+                "history_years": SENS_HISTORY_YEARS,
+                "decay": SENS_DECAY,
+                "parent_strength": SENS_PARENT_STRENGTH,
+                "hand_strength": SENS_HAND_STRENGTH,
+                "pressure_hand_strength": SENS_PRESSURE_HAND_STRENGTH,
+                "alpha": RIDGE_ALPHA,
+                "fit_intercept": False,
+                "target": "raw previous-year Treatment OOF residual",
+                "scale": SHIFT_SCALE,
+                "routing_note": "applied to all current R rows; original shift applied only CORE",
+            },
+            "RIDGE_SENS25_REFERENCE_ALLR_S075": "same Sens25 but fit_intercept=True, scale .75",
         },
-        "cat_temporal_features": (
-            TEMPORAL_FEATURES if cat_use_temporal else []
-        ),
-        "xgb_temporal_features": (
-            TEMPORAL_FEATURES if xgb_use_temporal else []
-        ),
-        "temporal_features": (
-            TEMPORAL_FEATURES
-        ),
-        "xgb_reliability_features": (
-            RELIABILITY_FEATURES
-            if xgb_use_reliability
-            else []
-        ),
-        "final_reliability_state": (
-            final_reliability_state
-        ),
-        "final_reliability_summary": (
-            final_reliability_summary
-        ),
-        "catboost_validation_params": (
-            CATBOOST_PARAMS
-        ),
-        "xgboost_validation_params": (
-            XGBOOST_PARAMS
-        ),
-        "cat_early_stopping_rounds": (
-            CAT_EARLY_STOPPING_ROUNDS
-        ),
-        "xgb_early_stopping_rounds": (
-            XGB_EARLY_STOPPING_ROUNDS
-        ),
-        "final_iteration_strategy": (
-            FINAL_ITERATION_STRATEGY
-        ),
-        "final_weight_mode": (
-            FINAL_WEIGHT_MODE
-        ),
-        "asof_denominator_audit": (
-            asof_denominator_audit
-        ),
-        "final_cat_weight": float(
-            final_cat_weight
-        ),
-        "final_xgb_weight": float(
-            final_xgb_weight
-        ),
-        "cat_final_iterations": int(
-            cat_final_iterations
-        ),
-        "xgb_final_iterations": int(
-            xgb_final_iterations
-        ),
-        "cat_final_elapsed_seconds": float(
-            cat_final_elapsed
-        ),
-        "xgb_final_elapsed_seconds": float(
-            xgb_final_elapsed
-        ),
-        "folds": fold_results,
-        "pooled_oof": pooled_metrics,
-        "model_path": str(MODEL_PATH),
-    }
-
-    with open(
-        VALIDATION_DIR / "metadata.json",
-        "w",
-        encoding="utf-8",
-    ) as f:
-        json.dump(
-            metadata,
-            f,
-            indent=2,
-            ensure_ascii=False,
-        )
-
-    with open(
-        MODEL_DIR / "metadata.json",
-        "w",
-        encoding="utf-8",
-    ) as f:
-        json.dump(
-            metadata,
-            f,
-            indent=2,
-            ensure_ascii=False,
-        )
-
-    feature_manifest = {
-        "experiment_name": EXPERIMENT_NAME,
-        "feature_tags": sorted(
-            feature_tags
-        ),
-        "resolved_feature_config": {
-            "cat_use_temporal": bool(
-                cat_use_temporal
-            ),
-            "xgb_use_temporal": bool(
-                xgb_use_temporal
-            ),
-            "xgb_use_raw_player_ids": bool(
-                xgb_use_raw_player_ids
-            ),
-            "xgb_use_reliability": bool(
-                xgb_use_reliability
-            ),
+        "diagnostics": diag_rows,
+        "rule_compliance": {
+            "official_train_labels_only": True,
+            "test_rows_used": False,
+            "test_row_aggregation": False,
+            "residual_source": "strictly previous OOF season only",
+            "sensitivity_history": "official labeled seasons strictly before each row year",
         },
-        "raw_features": raw_features,
-        "cat_features": cat_features,
-        "cat_categorical_features": cat_cols,
-        "xgb_features": xgb_features,
-        "xgb_categorical_features": xgb_cat_cols,
-        "xgb_numeric_features": xgb_num_cols,
-        "xgb_dropped_raw_id_features": xgb_dropped_raw_id_cols,
-        "cat_temporal_features": (
-            TEMPORAL_FEATURES if cat_use_temporal else []
-        ),
-        "xgb_temporal_features": (
-            TEMPORAL_FEATURES if xgb_use_temporal else []
-        ),
-        "xgb_reliability_features": (
-            RELIABILITY_FEATURES
-            if xgb_use_reliability
-            else []
-        ),
-        "reliability_definition": (
-            "Exact count-based Beta-Binomial EB: "
-            "S=round(asof_pitcher_n*asof_pitcher_success_rate), "
-            "F=N-S; alpha/beta are fitted only on each fold's "
-            "training targets grouped by pitcher_id; validation/test "
-            "rows use the frozen prior and their own asof_* values only."
-        ),
-        "asof_denominator_audit": (
-            asof_denominator_audit
-        ),
-        "independent_test_row_rule": (
-            "Temporal and Reliability row transforms use only values "
-            "from the current row's official asof_* columns. Reliability "
-            "prior parameters are fitted from official training targets "
-            "and frozen before validation/test inference. No cross-test "
-            "aggregation, rolling, lag, frequency, rank, distribution, "
-            "or test-row state update is used."
-        ),
+        "outputs": {
+            "ridge_metrics": str(RIDGE_METRICS_PATH),
+            "ridge_predictions": str(RIDGE_PREDICTIONS_PATH),
+            "year_summary": str(YEAR_SUMMARY_PATH),
+            "seed_summary": str(SEED_SUMMARY_PATH),
+        },
+        "elapsed_seconds": float(time.time() - t0),
     }
+    META_PATH.write_text(json.dumps(to_jsonable(metadata), ensure_ascii=False, indent=2), encoding="utf-8")
 
-    with open(
-        VALIDATION_DIR / "feature_manifest.json",
-        "w",
-        encoding="utf-8",
-    ) as f:
-        json.dump(
-            feature_manifest,
-            f,
-            indent=2,
-            ensure_ascii=False,
-        )
+    print("\n" + "=" * 118)
+    print("YEAR SUMMARY")
+    print("=" * 118)
+    print(ys.loc[ys["arm"].isin(PRIMARY_ARMS)].to_string(index=False))
 
-    source_path = Path(
-        __file__
-    ).resolve()
-
-    shutil.copy2(
-        source_path,
-        MODEL_DIR / "train.py",
-    )
-
-    print()
-    print("=" * 72)
-    print("Final Ensemble 저장 완료")
-    print("- MODEL_PATH :", MODEL_PATH)
-    print("- Validation :", VALIDATION_DIR)
-    print(
-        "- Weight     : "
-        f"Cat={final_cat_weight:.8f}, "
-        f"XGB={final_xgb_weight:.8f}"
-    )
-    print("=" * 72)
-
-    print()
-    print("[추론 시 필수]")
-    print(
-        "CatBoostRegressor는 predict()를 사용하고, "
-        "최종 제출 확률은 "
-        "np.clip(pred_raw, 0.0, 1.0)을 적용합니다."
-    )
+    print("\nInterpretation keys:")
+    print("  OHE > CODED49        : categorical ordinal encoding was materially hurting Ridge")
+    print("  SENS25 shift > OHE   : shift-style sensitivity representation is the key inductive bias")
+    print("  REF >> SHIFT         : gain is mostly previous-year Level/intercept transfer")
+    print("  SHIFT Shape > 0      : intercept-free sensitivity Shape transfers to next season")
+    print("  2024 3/3 seed Shape  : strongest evidence for current R-branch adoption")
+    print(f"\nSaved under: {VALIDATION_DIR}")
+    print(f"Elapsed: {time.time() - t0:.1f}s")
 
 
 if __name__ == "__main__":

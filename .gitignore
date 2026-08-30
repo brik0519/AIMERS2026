@@ -23,10 +23,23 @@ data/mlp_2024Validation/
 data/mlp_2024Validation/
 data/mlp_2024Validation/validation/ensemble_v*/oof_pred.csv
 data/trackman/
-validation/ensemble_v*/oof_pred.csv
-validation/*/oof_pred.csv
-validation/*/*.csv
-**/validation/**/oof_pred.csv
+**/oof_pred.csv
+**/oof.csv
 
 data/trackman/
 validation/ensemble_v*/oof_pred.csv
+
+validation/rresid_v001/r_predictions.csv
+validation/rresid_v002/ridge_predictions.csv
+validation/fanchor_v001/oof_predictions.csv
+Anker Concept/validation/cb_reg_v015/oof_pred.csv
+validation/rresid_v001/residual_bank.csv
+validation/esfix_v001/oof_predictions.csv
+Anker Concept/validation/cb_reg_v018/oof_pred.csv
+validation/shift_v001/oof.csv
+Anker Concept/validation/cb_reg_v009/oof_pred.csv
+Anker Concept/validation/cb_reg_v008/oof_pred.csv
+Anker Concept/validation/cb_reg_v010/oof_pred.csv
+validation/v18_repro_v001/oof.csv
+
+validation/shift_v*/oof.csv

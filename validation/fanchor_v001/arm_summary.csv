@@ -1,0 +1,3 @@
+arm,seed_wins_R_shape,n_seeds,mean_d_R_shape_2024,std_d_R_shape_2024,mean_d_LBP_2024,mean_d_best_iteration,level_gate_pass,tail_veto_pass,cross_exp_interpretable,verdict
+B_r_only,0,3,-81.05888657503328,12.818230195108088,-56.30581966941088,-65.0,False,False,False,VETO_TAIL
+C_f_weight,1,3,-6.197761785070573,20.371849098328674,-20.781769202602693,16.0,False,False,False,VETO_TAIL
