@@ -21,7 +21,7 @@ from sklearn.ensemble import ExtraTreesRegressor
 # Config
 # =============================================================================
 
-EXPERIMENT_NAME = "dankerTrack_v001"
+EXPERIMENT_NAME = "danker_v007"
 
 DATA_DIR = Path("./data")
 TRAIN_PATH = DATA_DIR / "train.csv"
@@ -95,7 +95,8 @@ MODEL_PARAMS = {
 EARLY_STOPPING_ROUNDS = 80
 
 EXPECTED_CONTROL_FEATURES = 52
-EXPECTED_TREATMENT_FEATURES = 86
+EXPECTED_TREATMENT_FEATURES_BASE = 86      # SUCCESS13 까지
+# feature group 열은 FEATURE_GROUPS 에 따라 더해진다 — active_group_features() 참조.
 
 # -----------------------------------------------------------------------------
 # Validated F Dynamic-ASOF blend (fanchor_blend_v001 -> danker_v001)
@@ -208,9 +209,11 @@ DYNAMIC_TRAIN_ON_ALL = False
 #
 # ⚠️ 이 측정의 base 는 L1 이고 L2 는 빠져 있다. 실제로는 L1+L2 위에 얹히므로
 #    L2 와 겹치는 만큼 이득이 줄 수 있다. train 로그에 상관계수를 남긴다.
-#
-# 🚩 48_* §0 재결정: 겹침 실측 ρ=+0.3011 에서 η=0.30 이 minimax
-#    (기대 +7.23 vs +5.18, 음수 꼬리 ρ≥0.62 vs ≥0.44). 0.50 은 폐기값.
+# η 는 0.50 에서 0.30 으로 내렸다 (48_* §4).
+# 학습 로그의 겹침 진단 corr(w_l2·L2corr, η·shift) = +0.3011 에서
+#   η=0.50  기대 +5.18 전행 pt,  ρ≥0.44 에서 음수
+#   η=0.30  기대 +7.23 전행 pt,  ρ≥0.62 까지 양수   ← minimax
+# 46_* §4 의 안전대역 [0.15, 0.60] 안이고 walk-forward 3/3 양수인 값이다.
 SHIFT_SCALE = 0.30
 SHIFT_RIDGE_ALPHA = 1e3
 SHIFT_FIT_INTERCEPT = False          # 영구 False. 변경 금지.
@@ -229,52 +232,6 @@ AFFINE_ALPHA_SEARCH = (0.95, 1.00, 1.05, 1.10)
 
 # --- E4: L1 타겟 정의 ----------------------------------------------------------
 L1_TARGET_MODE = "direct"            # "direct" | "anchor_residual"
-
-# --- E6: TRACK — 공식 투구추적 로그의 선수 프로파일 state 멤버 (51_* 이식 설계) ----
-# 공식 `trackman_history.csv`(2019~2024, data_description §3 이 파생 사용을 명시)를
-# **선수별 과거 프로파일 요약**으로 얼려 네 번째 L1 멤버의 입력에 더한다.
-#
-# 형태 근거 (51_* §0):
-#   - 물리값을 현재 행 회귀 입력으로 쓰는 형태·후처리 보정축 형태는 외부/내부에서
-#     반복 실패했다. 과거 프로파일 state + **blend 멤버** 형태만 성립했고,
-#     09_* 자기실측에서도 열 추가는 pooled 악화 / blend 는 4 fold 전부 양수였다.
-#   - 그래서 TREATMENT 에 열을 넣지 않는다. 별도 멤버 TRACK 을 학습해
-#     R 브랜치에서만 소수 가중으로 섞는다. F 경로는 무접촉.
-#
-#   R 행:  p_R = (1-W_R) * [ (1-TRACK_W)*TREATMENT + TRACK_W*TRACK ] + W_R*DYNAMIC
-#   F 행:  기존과 동일 (CONTROL/DYNAMIC)  — TRACK 은 어디에도 안 들어간다
-#
-# 시간 규율: 행의 season = s 이면 프로파일은 **season < s** 로그만 집계한 은행을
-# 쓴다 (ExactASOF 의 "완결된 과거만" 규율과 동일). 2025 추론 은행은 ≤2024 전체.
-# 매핑: preprocess_trackman.py 산출 `pitcher_mapping.csv` 의 Tier A 만 (08_* 게이트).
-#   매핑 identity 는 전체 이력 evidence 다 — 08_* §D 실측상 fold-frozen 과
-#   95.5~99.0% 일치하므로 fold 검증의 낙관 편의는 작다고 보고 주석으로 남긴다.
-# TRACK_ENABLED=False 또는 TRACK_W=0 이면 경로 자체를 우회해 v005 와 비트 동일.
-TRACK_ENABLED = True
-TRACK_W = 0.15                       # 비음수·사전 잠금. 단일 fold 최적화 금지 (51_* §5)
-TRACK_W_GRID = (0.0, 0.10, 0.15, 0.20, 0.25, 0.30)   # 진단 전용 (재학습 0회 재합성)
-TRACK_TIERS_OK = ("A",)              # 보수 운용. B(저신뢰 팀) 는 넣지 않는다
-TRACK_DIR = DATA_DIR / "trackman"
-TRACK_HISTORY_CANDIDATES = (
-    TRACK_DIR / "trackman_history.csv",
-    DATA_DIR / "trackman_history.csv",     # 배포 원본 위치 (아직 안 옮긴 경우)
-)
-TRACK_MAPPING_PATH = TRACK_DIR / "pitcher_mapping.csv"
-TRACK_ID_COL = "pitcher_trackman_id"
-TRACK_GROUP_COL = "pitch_type_group"
-TRACK_SEASON_COL_ = "season"         # trackman_history 쪽 season 컬럼
-TRACK_METRICS = (
-    "rel_speed", "spin_rate", "induced_vert_break", "horz_break",
-    "extension", "rel_height", "rel_side", "zone_speed",
-)
-TRACK_GROUPS = ("fastball", "breaking", "offspeed", "other")
-TRACK_COLS = (
-    ["track_hist_n_log"]
-    + [f"track_{m}_{s}" for m in TRACK_METRICS for s in ("avg", "dev")]
-    + [f"track_mix_{g}" for g in TRACK_GROUPS]
-    + [f"track_{g}_{m}_avg" for g in TRACK_GROUPS for m in TRACK_METRICS]
-    + ["track_hist_missing"]
-)                                    # 1 + 16 + 4 + 32 + 1 = 54열
 
 # --- 게이트 상수 (38_* §8-5) — 단위는 within-branch ----------------------------
 R_SIZE_THRESHOLD = 5.0
@@ -304,6 +261,14 @@ def assert_invariants():
         raise ValueError("seed 표준편차를 낼 수 없다 — SEEDS 는 2개 이상")
     if len(L1_SEEDS) < 1 or len(set(L1_SEEDS)) != len(L1_SEEDS):
         raise ValueError(f"L1_SEEDS 가 비었거나 중복이다: {L1_SEEDS}")
+    unknown = set(FEATURE_GROUPS) - {"S1_BB", "S1_SH", "S2_P", "S3_P", "S3_B"}
+    if unknown:
+        raise ValueError(f"알 수 없는 feature group: {sorted(unknown)}")
+    cols = active_group_features()
+    if len(set(cols)) != len(cols):
+        raise ValueError("feature group 열 이름에 중복이 있다")
+    if set(cols) & set(SUCCESS_FEATURES):
+        raise ValueError("feature group 이 SUCCESS 열과 충돌한다")
     if SHIFT_SCALE != 0.0:
         if not SHIFT_FIT_YEARS:
             raise ValueError("SHIFT_SCALE != 0 인데 SHIFT_FIT_YEARS 가 비었다")
@@ -316,15 +281,6 @@ def assert_invariants():
             )
         if SHIFT_RIDGE_ALPHA <= 0.0:
             raise ValueError("SHIFT_RIDGE_ALPHA 는 양수여야 한다")
-    if not (0.0 <= TRACK_W <= 0.5):
-        raise ValueError("TRACK_W must lie in [0, 0.5] — 소수 가중 blend 전용 (51_*)")
-    if TRACK_ENABLED:
-        if not TRACK_TIERS_OK:
-            raise ValueError("TRACK_ENABLED 인데 TRACK_TIERS_OK 가 비었다")
-        n_expected = 1 + 2 * len(TRACK_METRICS) + len(TRACK_GROUPS) \
-            + len(TRACK_GROUPS) * len(TRACK_METRICS) + 1
-        if len(TRACK_COLS) != n_expected or len(set(TRACK_COLS)) != len(TRACK_COLS):
-            raise ValueError(f"TRACK_COLS 구성 오류: {len(TRACK_COLS)} != {n_expected}")
 
 
 def is_neutral():
@@ -340,7 +296,7 @@ def is_neutral():
         and AFFINE_ALPHA == 1.0
         and AFFINE_OFFSET == 0.0
         and L1_TARGET_MODE == "direct"
-        and (not TRACK_ENABLED or TRACK_W == 0.0)
+        and not any(FEATURE_GROUPS.values())
     )
 
 
@@ -372,10 +328,12 @@ def freeze():
         "affine_center": float(AFFINE_CENTER),
         "affine_offset": float(AFFINE_OFFSET),
         "l1_target_mode": str(L1_TARGET_MODE),
-        "track_enabled": bool(TRACK_ENABLED),
-        "track_w": float(TRACK_W),
-        "track_tiers": list(TRACK_TIERS_OK),
-        "track_cols": list(TRACK_COLS),
+        "outcome_state": bool(FEATURE_GROUPS.get("S3_P", False)),
+        "feature_groups": {k: bool(v) for k, v in FEATURE_GROUPS.items()},
+        "gseason_specs": {
+            g: {kk: (list(vv) if isinstance(vv, tuple) else vv) for kk, vv in spec.items()}
+            for g, spec in GSEASON_SPECS.items()
+        },
         "is_neutral": is_neutral(),
     }
 
@@ -2100,6 +2058,103 @@ def apply_hbeb_pair(
         priors,
     )
 
+def apply_bbeb_pair(df_train, df_apply, base_features):
+    """S1_BB — 개인 단위 Beta-Binomial EB (population 전체 MLE).
+
+    `apply_hbeb_pair` 와 signature·반환 형태·**열 이름까지 동일**하다.
+    따라서 하류(EXPECTED_*_FEATURES, CAT_COLS, script 경로)가 바뀌지 않는다 —
+    바뀌는 것은 두 열의 **값**뿐이다.
+
+    HBEB 와의 차이
+        HBEB  관측 rate 의 분산으로 적률법.  Var(관측)=Var(실력)+E[p(1-p)/n]
+              이므로 실력 분산을 과대추정하고 축소 강도를 과소추정한다.
+        BBEB  카운트의 Beta-Binomial 우도를 MLE.  이항 잡음을 분리하므로
+              통계적으로 정합하다.
+
+    ⚠️ 실측(2024 fold 학습부)에서 두 방식의 출력은 상관 0.9994, 평균 |Δ| 0.0005 다.
+       prior 강도도 HBEB global 63.5 vs BBEB 65.3 으로 3% 차이다.
+       **이론적으로는 BBEB 가 옳지만 실질 변화는 매우 작다** — screen.py 로 재라.
+
+    규칙: MLE 는 df_train 의 라벨 집계만 쓴다. 적용은 그 행 자신의 asof_n·rate 와
+    동결된 (α, β) 뿐이므로 행 독립이다.
+    """
+    from scipy.optimize import minimize
+    from scipy.special import betaln
+
+    configs = [
+        {"id_col": c["group_cols"][0].replace("_hand", "_id"),
+         "n_col": c["n_col"], "rate_col": c["rate_col"], "new_col": c["new_col"]}
+        for c in HBEB_CONFIGS
+    ]
+
+    def _nll(log_params, successes, failures):
+        alpha, beta = float(np.exp(log_params[0])), float(np.exp(log_params[1]))
+        if not np.isfinite(alpha) or not np.isfinite(beta) or alpha <= 0.0 or beta <= 0.0:
+            return float("inf")
+        ll = betaln(successes + alpha, failures + beta) - betaln(alpha, beta)
+        if not np.all(np.isfinite(ll)):
+            return float("inf")
+        return -float(np.sum(ll))
+
+    def _fit_mle(successes, failures):
+        total = float(np.sum(successes) + np.sum(failures))
+        mu = float(np.clip(np.sum(successes) / total, 1e-6, 1.0 - 1e-6))
+        best = None
+        for strength in (20.0, 100.0, 500.0):
+            x0 = np.log([max(mu * strength, 1e-6), max((1.0 - mu) * strength, 1e-6)])
+            res = minimize(_nll, x0=x0, args=(successes, failures),
+                           method="L-BFGS-B", bounds=[(-12.0, 14.0), (-12.0, 14.0)])
+            if res.success and np.isfinite(res.fun) and (best is None or res.fun < best.fun):
+                best = res
+        if best is None:
+            raise RuntimeError("BBEB MLE 최적화 실패")
+        return float(np.exp(best.x[0])), float(np.exp(best.x[1]))
+
+    transformed = df_apply.copy()
+    features = list(base_features)
+    priors = {}
+
+    for config in configs:
+        agg = (
+            df_train.groupby(config["id_col"], observed=True)[TARGET]
+            .agg(successes="sum", trials="count")
+        )
+        alpha, beta = _fit_mle(
+            agg["successes"].to_numpy(dtype=np.float64),
+            (agg["trials"] - agg["successes"]).to_numpy(dtype=np.float64),
+        )
+
+        n = (
+            pd.to_numeric(transformed[config["n_col"]], errors="coerce")
+            .fillna(0.0).clip(lower=0.0).to_numpy(dtype=np.float64)
+        )
+        rate = (
+            pd.to_numeric(transformed[config["rate_col"]], errors="coerce")
+            .fillna(0.0).clip(lower=0.0, upper=1.0).to_numpy(dtype=np.float64)
+        )
+        success = n * rate
+        post_alpha = alpha + success
+        post_beta = beta + (n - success)
+        denom = post_alpha + post_beta
+        transformed[config["new_col"]] = np.divide(
+            post_alpha, denom,
+            out=np.full(len(transformed), alpha / (alpha + beta), dtype=np.float64),
+            where=denom > 0.0,
+        )
+
+        if config["rate_col"] in features:
+            features.remove(config["rate_col"])
+        if config["new_col"] not in features:
+            features.append(config["new_col"])
+        priors[config["new_col"]] = {
+            "alpha": float(alpha), "beta": float(beta),
+            "method": "bbeb_population_mle",
+            "id_col": config["id_col"], "n_col": config["n_col"],
+            "rate_col": config["rate_col"],
+        }
+    return transformed, features, priors
+
+
 def _ctx_frame_v15(frame):
     x = frame.copy()
     x["v15_count"] = (
@@ -2741,6 +2796,463 @@ SUCCESS_FEATURES = [
 ]
 
 
+# =========================================================
+# FA / S3 — 4-type 시즌내 상태 (42_SUCCESS §3, 50_* 카드 FA Tier 2)
+# =========================================================
+#
+# SUCCESS 축과 **완전히 같은 기계**를 success 외 4종 outcome 으로 확장한다.
+#     career    = asof_pitcher_{k}_rate               (그 행의 값)
+#     cumulative= round(asof_n × career)               (통산 누적 복원)
+#     current_n = max(asof_n − hist_n, 0)              (당해 시즌 표본수)
+#     current_k = clip(cumulative − hist_k, 0, current_n)
+#
+# success 는 라벨 합으로 hist 를 만들지만 4종은 라벨이 없다. 대신 각 투수의
+# **이력 마지막 행 as-of 스냅샷**에서 누적 카운트를 복원한다.
+# 두 방식의 정합은 오프라인에서 확인했다 (n·cnt 상관 1.000000, 중앙 |차이| 1행).
+#
+# 사전 검증 (재학습 0회, 42_SUCCESS §4):
+#   D-a  round(asof_n × rate) 정수 정합    5종 전부 100.0000%
+#   D-b  5종 합 = 1 아님(평균 1.706) → 독립 축 2개. wayoff 는 별도 개념
+#   D-d  L1 잔차 위 선형 후처리 증분  +5.62 (α 1e2~1e5 에서 +5.62~+7.04, 3/3 양수)
+#        비교: FA-Tier1 share 5열 = +0.41
+#
+# 규칙 준수: bank 는 공식 학습 데이터의 **과거 시즌**만으로 만들고 artifact 에 동결한다.
+# 추론은 현재 행의 asof 값 + 동결 bank 만 쓴다 — 다른 test 행을 보지 않는다.
+
+# ---------------------------------------------------------------------------
+# Feature group 레지스트리 — screen.py 가 이 딕셔너리만 바꿔서 조합을 시험한다
+# ---------------------------------------------------------------------------
+# 전부 TREATMENT 전용이다. CONTROL·DYNAMIC 은 건드리지 않으므로
+#   · F 분기가 비트 동일하고
+#   · 선별 시 TREATMENT 한 모델만 돌리면 된다 (fold 시간의 41.7%)
+# v006 실측으로 CONTROL·DYNAMIC Brier 가 소수 10자리까지 동일함을 확인했다.
+
+# 계열 명명 규약 (S0~S5)
+#   S0 Context                지금 어떤 투구 상황인가        base47 · CAT_COLS
+#   S1 Prior / Long-term      이 선수의 원래 능력은          HBEB · BBEB · career rate
+#   S2 Current / Temporal     올 시즌 평소보다 어떤가        Exact-ASOF · SUCCESS · Dynamic Anchor
+#   S3 State Decomposition    상태가 **어떤 형태로** 변했나  4종 current-season rate/delta
+#   S4 Conditional            특정 상황에서 특별히 강한가    PC21
+#   S5 Residual / Contrast    반복해서 틀리는 조건이 있나    L2 · SHIFT
+#
+# 그룹 이름은 `계열_약칭` 이다. 접미사는 P=pitcher, B=batter, SH=share, BB=bbeb.
+# ⚠️ S1_BB 만 **열을 더하지 않고 값을 바꾼다** (열 수 불변).
+
+FEATURE_GROUPS = {
+    "S1_BB": True,   # R 분기 prior 를 BBEB 로 교체          ±0열 (값만)
+    "S1_SH": True,   # career 비율 재표현 (wayoff/share/bsdiff)  5열
+    "S2_P":  True,   # 투수 success raw·log_n (대칭 회복)        2열
+    "S3_P":  False,  # 투수 4종 current-season 상태             20열  ← v006 실측 -4.67 로 제외
+    "S3_B":  True,   # 타자 middle current-season 상태           5열
+}
+
+VALUE_ONLY_GROUPS = ("S1_BB",)
+
+OUTCOME_STRENGTHS = (40.0, 80.0, 160.0)
+
+# 시즌내 상태 그룹의 명세. 같은 bank 기계를 entity·kind 만 바꿔 재사용한다.
+GSEASON_SPECS = {
+    "S3_P": {
+        "id_col": "pitcher_id", "n_col": "asof_pitcher_n",
+        "rate_fmt": "asof_pitcher_{kind}_rate",
+        "kinds": ("reverse", "middle", "ball", "strike"),
+        "prefix": "gseason__pitcher",
+        "variants": ("rate_k40", "rate_k80", "rate_k160", "raw", "minus_career"),
+    },
+    "S3_B": {
+        "id_col": "batter_id", "n_col": "asof_batter_n",
+        "rate_fmt": "asof_batter_{kind}_rate",
+        "kinds": ("middle",),
+        "prefix": "gseason__batter",
+        "variants": ("rate_k40", "rate_k80", "rate_k160", "raw", "minus_career"),
+    },
+    "S2_P": {
+        "id_col": "pitcher_id", "n_col": "asof_pitcher_n",
+        "rate_fmt": "asof_pitcher_{kind}_rate",
+        "kinds": ("success",),
+        "prefix": "gseason__pitcherS2",
+        "variants": ("raw", "log_n"),
+    },
+}
+
+SHARE_FEATURES = [
+    "share__wayoff_rate", "share__wayoff", "share__reverse",
+    "share__middle", "share__bsdiff",
+]
+
+
+def gseason_feature_names(group: str) -> list[str]:
+    spec = GSEASON_SPECS[group]
+    return [f"{spec['prefix']}_{k}_{v}" for k in spec["kinds"] for v in spec["variants"]]
+
+
+def active_group_features() -> list[str]:
+    """켜져 있는 그룹의 열 이름을 선언 순서대로 돌려준다."""
+    out = []
+    for g, on in FEATURE_GROUPS.items():
+        if not on:
+            continue
+        if g in VALUE_ONLY_GROUPS:
+            continue
+        out.extend(SHARE_FEATURES if g == "S1_SH" else gseason_feature_names(g))
+    return out
+
+
+# 하위 호환 별칭 (기존 코드·문서가 참조한다)
+OUTCOME_KINDS = GSEASON_SPECS["S3_P"]["kinds"]
+OUTCOME_FEATURES = gseason_feature_names("S3_P")
+
+
+def _outcome_rate_col(kind: str) -> str:
+    return f"asof_pitcher_{kind}_rate"
+
+
+def build_gseason_bank(history: pd.DataFrame, spec: dict) -> dict:
+    """spec 의 entity·kind 로 과거 시즌 누적 카운트 bank 를 만든다.
+
+    각 대상의 이력 마지막 행에서 `round(asof_n × rate)` 로 누적을 복원한다.
+    라벨 합 방식과의 정합은 오프라인에서 확인했다 (상관 1.000000).
+    """
+    id_col, n_col = spec["id_col"], spec["n_col"]
+    kinds = tuple(spec["kinds"])
+    if len(history) == 0:
+        return {"hist_n": {}, "count": {k: {} for k in kinds},
+                "prior": {k: 0.0 for k in kinds}}
+
+    hist = history.sort_values([id_col, SEASON, ID], kind="mergesort")
+    last = hist.groupby(id_col, sort=False, dropna=False).tail(1)
+    asof_n = pd.to_numeric(last[n_col], errors="coerce").fillna(0.0).clip(lower=0.0)
+    max_year = int(pd.to_numeric(history[SEASON], errors="raise").max())
+    tail_rows = history.loc[pd.to_numeric(history[SEASON], errors="coerce").eq(max_year)]
+
+    out = {"hist_n": history.groupby(id_col, sort=False, dropna=False).size().to_dict(),
+           "count": {}, "prior": {}}
+    for kind in kinds:
+        col = spec["rate_fmt"].format(kind=kind)
+        out["count"][kind] = pd.Series(
+            rounded_cumulative_count(asof_n, pd.to_numeric(last[col], errors="coerce")),
+            index=last[id_col],
+        ).to_dict()
+        prior = float(pd.to_numeric(tail_rows[col], errors="coerce").mean())
+        out["prior"][kind] = prior if np.isfinite(prior) else 0.0
+    return out
+
+
+def transform_gseason_state(rows: pd.DataFrame, bank: dict, spec: dict) -> pd.DataFrame:
+    """spec 이 요구하는 variants 만 만든다."""
+    id_col, n_col = spec["id_col"], spec["n_col"]
+    ids = rows[id_col]
+    z = pd.DataFrame(index=rows.index)
+
+    hist_n = ids.map(bank["hist_n"]).fillna(0.0).to_numpy(dtype=np.float64)
+    asof_n = (
+        pd.to_numeric(rows[n_col], errors="coerce")
+        .fillna(0.0).clip(lower=0.0).to_numpy(dtype=np.float64)
+    )
+    current_n = np.maximum(asof_n - hist_n, 0.0)
+
+    for kind in spec["kinds"]:
+        prior = float(bank["prior"][kind])
+        col = spec["rate_fmt"].format(kind=kind)
+        career = pd.to_numeric(rows[col], errors="coerce").to_numpy(np.float64)
+        cumulative = rounded_cumulative_count(asof_n, career)
+        hist_c = ids.map(bank["count"][kind]).fillna(0.0).to_numpy(dtype=np.float64)
+        current_c = np.clip(cumulative - hist_c, 0.0, current_n)
+        raw = np.where(current_n > 0.0, current_c / np.maximum(current_n, 1.0), prior)
+        base = f"{spec['prefix']}_{kind}"
+
+        for variant in spec["variants"]:
+            if variant.startswith("rate_k"):
+                strength = float(variant[6:])
+                z[f"{base}_{variant}"] = (current_c + strength * prior) / (current_n + strength)
+            elif variant == "raw":
+                z[f"{base}_raw"] = raw
+            elif variant == "minus_career":
+                z[f"{base}_minus_career"] = raw - np.where(np.isfinite(career), career, prior)
+            elif variant == "log_n":
+                z[f"{base}_log_n"] = np.log1p(current_n)
+            else:
+                raise ValueError(f"unknown variant: {variant}")
+    return z
+
+
+def build_share_features(rows: pd.DataFrame) -> pd.DataFrame:
+    """career 비율 재표현 5열. 현재 행의 공식 컬럼 산술 변환뿐이다 (bank 없음).
+
+    ⚠️ HBEB 가 asof_pitcher_success_rate 를 모델에서 **대체**하므로,
+    이 그룹은 원시 success 를 비율 형태로 부분 복원하는 성질도 갖는다.
+    """
+    def num(col):
+        return numeric_series(rows, col).to_numpy(dtype=np.float64)
+
+    n = np.nan_to_num(num("asof_pitcher_n"), nan=0.0)
+    s, r, m = num("asof_pitcher_success_rate"), num("asof_pitcher_reverse_rate"), num("asof_pitcher_middle_rate")
+    b, t = num("asof_pitcher_ball_rate"), num("asof_pitcher_strike_rate")
+    fail = np.clip(1.0 - s, 1e-6, None)
+    wayoff = np.clip(1.0 - s - r - m, 0.0, 1.0)
+    gate = (n >= 50.0).astype(np.float64)
+
+    z = pd.DataFrame(index=rows.index)
+    z["share__wayoff_rate"] = wayoff * gate
+    z["share__wayoff"] = (wayoff / fail) * gate
+    z["share__reverse"] = (r / fail) * gate
+    z["share__middle"] = (m / fail) * gate
+    z["share__bsdiff"] = b - t
+    return z.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+
+def build_group_state_for_rows(
+    rows: pd.DataFrame,
+    available_history: pd.DataFrame,
+    groups=None,
+) -> pd.DataFrame:
+    """켜져 있는 그룹의 열을 전부 만든다. 행의 목표 시즌별로 bank 를 갈아끼운다."""
+    groups = FEATURE_GROUPS if groups is None else groups
+    names = []
+    for g, on in groups.items():
+        if not on:
+            continue
+        if g in VALUE_ONLY_GROUPS:
+            continue
+        names.extend(SHARE_FEATURES if g == "S1_SH" else gseason_feature_names(g))
+    out = pd.DataFrame(index=rows.index)
+    if not names:
+        return out
+    for col in names:
+        out[col] = np.nan
+
+    if groups.get("S1_SH"):
+        sh = build_share_features(rows)
+        for col in SHARE_FEATURES:
+            out[col] = sh[col].to_numpy(dtype=np.float64)
+
+    gs = [g for g in ("S3_P", "S3_B", "S2_P") if groups.get(g)]
+    if gs:
+        seasons = pd.to_numeric(rows[SEASON], errors="raise").astype(int)
+        for target_year in sorted(seasons.unique()):
+            mask = seasons.eq(int(target_year))
+            rr = rows.loc[mask]
+            hist = available_history.loc[
+                pd.to_numeric(available_history[SEASON], errors="raise").astype(int)
+                .lt(int(target_year))
+            ]
+            for g in gs:
+                spec = GSEASON_SPECS[g]
+                blk = transform_gseason_state(rr, build_gseason_bank(hist, spec), spec)
+                for col in gseason_feature_names(g):
+                    out.loc[mask, col] = blk[col].to_numpy(dtype=np.float64)
+
+    values = out.to_numpy(dtype=np.float64)
+    if not np.isfinite(values).all():
+        bad = [c for c in names if not np.isfinite(out[c].to_numpy(np.float64)).all()]
+        raise RuntimeError(f"feature group state contains NaN/Inf: {bad}")
+    return out
+
+
+def build_outcome_bank(history: pd.DataFrame) -> dict:
+    """과거 시즌만으로 4종 누적 카운트 bank 를 만든다.
+
+    각 투수의 이력 마지막 행에서 `round(asof_n × rate)` 로 누적을 복원한다.
+    prior 는 이력의 마지막 시즌 평균 rate 다 (build_success_bank 의 prior 규약과 동형).
+    """
+    id_col = SUCCESS_SPEC["pitcher"]["id_col"]
+    empty = {k: {"count": {}, "prior": 0.0} for k in OUTCOME_KINDS}
+    if len(history) == 0:
+        return empty
+
+    hist = history.sort_values([id_col, SEASON, ID], kind="mergesort")
+    last = hist.groupby(id_col, sort=False, dropna=False).tail(1)
+    asof_n = (
+        pd.to_numeric(last[SUCCESS_SPEC["pitcher"]["n_col"]], errors="coerce")
+        .fillna(0.0).clip(lower=0.0)
+    )
+    max_year = int(pd.to_numeric(history[SEASON], errors="raise").max())
+    tail_rows = history.loc[
+        pd.to_numeric(history[SEASON], errors="coerce").eq(max_year)
+    ]
+
+    out = {}
+    for kind in OUTCOME_KINDS:
+        col = _outcome_rate_col(kind)
+        counts = rounded_cumulative_count(asof_n, pd.to_numeric(last[col], errors="coerce"))
+        prior = float(pd.to_numeric(tail_rows[col], errors="coerce").mean())
+        if not np.isfinite(prior):
+            prior = 0.0
+        out[kind] = {
+            "count": pd.Series(counts, index=last[id_col]).to_dict(),
+            "prior": prior,
+        }
+    return out
+
+
+def transform_outcome_state(
+    rows: pd.DataFrame,
+    outcome_bank: dict,
+    hist_n_map,
+    out: pd.DataFrame,
+) -> pd.DataFrame:
+    """4종 시즌내 상태 20열. hist_n 은 success bank 와 **같은 것**을 쓴다."""
+    id_col = SUCCESS_SPEC["pitcher"]["id_col"]
+    ids = rows[id_col]
+
+    hist_n = ids.map(hist_n_map).fillna(0.0).to_numpy(dtype=np.float64)
+    asof_n = (
+        pd.to_numeric(rows[SUCCESS_SPEC["pitcher"]["n_col"]], errors="coerce")
+        .fillna(0.0).clip(lower=0.0).to_numpy(dtype=np.float64)
+    )
+    current_n = np.maximum(asof_n - hist_n, 0.0)
+
+    for kind in OUTCOME_KINDS:
+        blk = outcome_bank[kind]
+        prior = float(blk["prior"])
+        career = pd.to_numeric(rows[_outcome_rate_col(kind)], errors="coerce").to_numpy(np.float64)
+        cumulative = rounded_cumulative_count(asof_n, career)
+        hist_c = ids.map(blk["count"]).fillna(0.0).to_numpy(dtype=np.float64)
+        current_c = np.clip(cumulative - hist_c, 0.0, current_n)
+
+        for strength in OUTCOME_STRENGTHS:
+            out[f"gseason__pitcher_{kind}_rate_k{int(strength)}"] = (
+                (current_c + strength * prior) / (current_n + strength)
+            )
+        raw = np.where(current_n > 0.0, current_c / np.maximum(current_n, 1.0), prior)
+        out[f"gseason__pitcher_{kind}_raw"] = raw
+        career_filled = np.where(np.isfinite(career), career, prior)
+        out[f"gseason__pitcher_{kind}_minus_career"] = raw - career_filled
+
+    return out
+
+
+def build_outcome_state_for_rows(
+    rows: pd.DataFrame,
+    available_history: pd.DataFrame,
+) -> pd.DataFrame:
+    """행의 목표 시즌별로 bank 를 갈아끼우며 20열을 만든다 (SUCCESS 경로와 동형)."""
+    out = pd.DataFrame(index=rows.index)
+    for col in OUTCOME_FEATURES:
+        out[col] = np.nan
+
+    seasons = pd.to_numeric(rows[SEASON], errors="raise").astype(int)
+    id_col = SUCCESS_SPEC["pitcher"]["id_col"]
+    for target_year in sorted(seasons.unique()):
+        mask = seasons.eq(int(target_year))
+        rr = rows.loc[mask].copy()
+        hist = available_history.loc[
+            pd.to_numeric(available_history[SEASON], errors="raise").astype(int)
+            .lt(int(target_year))
+        ]
+        obank = build_outcome_bank(hist)
+        hist_n_map = (
+            hist.groupby(id_col, sort=False, dropna=False).size()
+            if len(hist) else pd.Series(dtype=np.float64)
+        )
+        block = transform_outcome_state(rr, obank, hist_n_map, pd.DataFrame(index=rr.index))
+        for col in OUTCOME_FEATURES:
+            out.loc[mask, col] = block[col].to_numpy(dtype=np.float64)
+
+    values = out.to_numpy(dtype=np.float64)
+    if not np.isfinite(values).all():
+        bad = [c for c in OUTCOME_FEATURES if not np.isfinite(out[c].to_numpy(np.float64)).all()]
+        raise RuntimeError(f"OUTCOME state contains NaN/Inf: {bad}")
+    return out
+
+
+def build_gseason_history_artifact(full_train: pd.DataFrame, group: str) -> dict:
+    """script.py 가 raw train 없이 bank 를 복원할 수 있게 시즌별 스냅샷을 저장한다.
+
+    (id, season) 마다 그 시즌 **마지막 행**의 asof_n 과 kind 별 누적,
+    시즌별 rate 평균(prior 재료)과 행 수(hist_n 재료)를 담는다.
+    """
+    spec = GSEASON_SPECS[group]
+    id_col, n_col = spec["id_col"], spec["n_col"]
+    df = full_train.sort_values([id_col, SEASON, ID], kind="mergesort")
+    last = df.groupby([id_col, SEASON], sort=False, dropna=False).tail(1)
+
+    asof_n = pd.to_numeric(last[n_col], errors="coerce").fillna(0.0).clip(lower=0.0)
+    snap = pd.DataFrame({
+        id_col: last[id_col].to_numpy(),
+        SEASON: pd.to_numeric(last[SEASON], errors="raise").astype(int).to_numpy(),
+        "asof_n": asof_n.to_numpy(dtype=np.float64),
+    })
+    for kind in spec["kinds"]:
+        col = spec["rate_fmt"].format(kind=kind)
+        snap[f"cnt_{kind}"] = rounded_cumulative_count(
+            asof_n, pd.to_numeric(last[col], errors="coerce"))
+
+    counts = (
+        full_train.groupby([id_col, SEASON], sort=False, dropna=False)
+        .size().rename("n").reset_index()
+    )
+    counts[SEASON] = pd.to_numeric(counts[SEASON], errors="raise").astype(int)
+
+    priors = {}
+    for season, grp in full_train.groupby(SEASON, sort=False, dropna=False):
+        priors[int(season)] = {
+            kind: float(pd.to_numeric(
+                grp[spec["rate_fmt"].format(kind=kind)], errors="coerce").mean())
+            for kind in spec["kinds"]
+        }
+
+    return {
+        "group": group,
+        "id_col": id_col, "n_col": n_col,
+        "rate_fmt": spec["rate_fmt"],
+        "kinds": list(spec["kinds"]),
+        "variants": list(spec["variants"]),
+        "prefix": spec["prefix"],
+        "snapshots": snap.reset_index(drop=True),
+        "row_counts": counts.reset_index(drop=True),
+        "priors_by_season": priors,
+        "features": gseason_feature_names(group),
+    }
+
+
+def build_outcome_history_artifact(full_train: pd.DataFrame) -> dict:
+    """script.py 가 raw train 없이 bank 를 복원할 수 있게 시즌별 스냅샷을 저장한다.
+
+    (pitcher_id, season) 마다 그 시즌 **마지막 행**의 asof_n 과 4종 누적 카운트,
+    그리고 시즌별 rate 평균(prior 재료)과 행 수(hist_n 재료)를 담는다.
+    """
+    id_col = SUCCESS_SPEC["pitcher"]["id_col"]
+    n_col = SUCCESS_SPEC["pitcher"]["n_col"]
+    df = full_train.sort_values([id_col, SEASON, ID], kind="mergesort")
+    last = df.groupby([id_col, SEASON], sort=False, dropna=False).tail(1)
+
+    asof_n = pd.to_numeric(last[n_col], errors="coerce").fillna(0.0).clip(lower=0.0)
+    snap = pd.DataFrame({
+        id_col: last[id_col].to_numpy(),
+        SEASON: pd.to_numeric(last[SEASON], errors="raise").astype(int).to_numpy(),
+        "asof_n": asof_n.to_numpy(dtype=np.float64),
+    })
+    for kind in OUTCOME_KINDS:
+        snap[f"cnt_{kind}"] = rounded_cumulative_count(
+            asof_n, pd.to_numeric(last[_outcome_rate_col(kind)], errors="coerce")
+        )
+
+    counts = (
+        full_train.groupby([id_col, SEASON], sort=False, dropna=False)
+        .size().rename("n").reset_index()
+    )
+    counts[SEASON] = pd.to_numeric(counts[SEASON], errors="raise").astype(int)
+
+    priors = {}
+    for season, grp in full_train.groupby(SEASON, sort=False, dropna=False):
+        key = int(season)
+        priors[key] = {
+            kind: float(pd.to_numeric(grp[_outcome_rate_col(kind)], errors="coerce").mean())
+            for kind in OUTCOME_KINDS
+        }
+
+    return {
+        "id_col": id_col,
+        "snapshots": snap.reset_index(drop=True),
+        "row_counts": counts.reset_index(drop=True),
+        "priors_by_season": priors,
+        "kinds": list(OUTCOME_KINDS),
+        "strengths": [float(x) for x in OUTCOME_STRENGTHS],
+        "features": list(OUTCOME_FEATURES),
+    }
+
+
 def rounded_cumulative_count(
     n,
     rate,
@@ -3363,168 +3875,6 @@ def build_success_history_artifact(
     return result
 
 
-# =============================================================================
-# E6 TRACK — 공식 투구추적 로그의 선수별 프로파일 은행 (51_* 이식 설계)
-# =============================================================================
-#
-# 규칙 준수 요약:
-#   - 원천은 공식 `trackman_history.csv`(2019~2024) 와, 공식 train/trackman 두
-#     테이블의 통계 결합만으로 만든 `pitcher_mapping.csv` 다. test.csv 는 이 절
-#     어디에서도 읽지 않는다.
-#   - 행의 season = s 인 학습/검증 행은 season < s 로그만 집계한 은행을 쓴다.
-#   - 추론(2025)은 ≤2024 전체 은행을 artifact 에 동결해 **조회만** 한다.
-#     한 행의 조회 키는 그 행 자신의 pitcher_id 뿐 — 다른 test 행 참조가 없다.
-
-
-def resolve_track_history_path() -> Path:
-    for cand in TRACK_HISTORY_CANDIDATES:
-        if cand.exists():
-            return cand
-    raise FileNotFoundError(
-        "trackman_history.csv 를 찾을 수 없다. 시도한 위치: "
-        + ", ".join(str(c) for c in TRACK_HISTORY_CANDIDATES)
-    )
-
-
-def load_track_history() -> pd.DataFrame:
-    path = resolve_track_history_path()
-    usecols = [TRACK_SEASON_COL_, TRACK_ID_COL, TRACK_GROUP_COL, *TRACK_METRICS]
-    hist = pd.read_csv(path, encoding="utf-8-sig", usecols=usecols, low_memory=False)
-    hist[TRACK_SEASON_COL_] = pd.to_numeric(
-        hist[TRACK_SEASON_COL_], errors="raise"
-    ).astype(int)
-    lo, hi = int(hist[TRACK_SEASON_COL_].min()), int(hist[TRACK_SEASON_COL_].max())
-    if lo < 2019 or hi > SOURCE_YEAR:
-        raise RuntimeError(f"track history season 범위 이상: {lo}~{hi}")
-    hist[TRACK_GROUP_COL] = (
-        hist[TRACK_GROUP_COL].astype(str).where(
-            hist[TRACK_GROUP_COL].astype(str).isin(TRACK_GROUPS), "other"
-        )
-    )
-    for m in TRACK_METRICS:
-        hist[m] = pd.to_numeric(hist[m], errors="coerce")
-    print(f"TRACK history : {path}  rows={len(hist):,}  seasons {lo}~{hi}")
-    return hist
-
-
-def load_track_mapping() -> pd.DataFrame:
-    if not TRACK_MAPPING_PATH.exists():
-        raise FileNotFoundError(
-            f"{TRACK_MAPPING_PATH} 가 없다. preprocess_trackman.py 를 먼저 실행해\n"
-            "공식 train/trackman 만으로 매핑을 생성하라 (08_* 게이트 산출물)."
-        )
-    mp = pd.read_csv(TRACK_MAPPING_PATH, encoding="utf-8-sig")
-    need = {"pitcher_id", TRACK_ID_COL, "confidence_tier"}
-    missing = sorted(need - set(mp.columns))
-    if missing:
-        raise KeyError(f"pitcher_mapping.csv 필수 컬럼 누락: {missing}")
-    if "mapping_valid" in mp.columns:
-        mp = mp[mp["mapping_valid"].astype(bool)]
-    mp = mp[mp["confidence_tier"].astype(str).isin([str(t) for t in TRACK_TIERS_OK])]
-    mp = mp.dropna(subset=["pitcher_id", TRACK_ID_COL]).copy()
-    mp["pitcher_id"] = pd.to_numeric(mp["pitcher_id"], errors="raise").astype("int64")
-    if mp["pitcher_id"].duplicated().any() or mp[TRACK_ID_COL].duplicated().any():
-        raise RuntimeError(
-            "pitcher_mapping.csv 에 중복 매핑이 있다 — duplicate resolution 이전 파일이다"
-        )
-    print(
-        f"TRACK mapping : {TRACK_MAPPING_PATH}  tier {tuple(TRACK_TIERS_OK)}  "
-        f"pitchers={len(mp):,}"
-    )
-    return mp[["pitcher_id", TRACK_ID_COL]]
-
-
-def build_track_banks(history: pd.DataFrame, mapping: pd.DataFrame) -> dict:
-    """season → (pitcher_id 인덱스, TRACK_COLS) 은행. bank[s] 는 season < s 만 집계."""
-    hist = history.merge(mapping, on=TRACK_ID_COL, how="inner")
-    if len(hist) == 0:
-        raise RuntimeError("TRACK: 매핑 후 남은 로그가 0행이다")
-
-    metric_cols = list(TRACK_METRICS)
-    banks: dict[int, pd.DataFrame] = {}
-    for s in range(2019, EXPECTED_TARGET_YEAR + 1):
-        sub = hist.loc[hist[TRACK_SEASON_COL_] < s]
-        if len(sub) == 0:
-            banks[s] = pd.DataFrame(columns=TRACK_COLS)
-            continue
-        g = sub.groupby("pitcher_id", sort=True)
-        out = pd.DataFrame(index=g.size().index)
-        out["track_hist_n_log"] = np.log1p(g.size().astype(np.float64))
-        for m in metric_cols:
-            out[f"track_{m}_avg"] = g[m].mean()
-            out[f"track_{m}_dev"] = g[m].std().fillna(0.0)
-        counts = (
-            sub.groupby(["pitcher_id", TRACK_GROUP_COL], sort=True, observed=True)
-            .size().unstack(fill_value=0).reindex(columns=list(TRACK_GROUPS), fill_value=0)
-        )
-        denom = counts.sum(axis=1).replace(0, np.nan)
-        for gname in TRACK_GROUPS:
-            out[f"track_mix_{gname}"] = (
-                (counts[gname] / denom).reindex(out.index).fillna(0.0)
-            )
-        gm = sub.groupby(["pitcher_id", TRACK_GROUP_COL], sort=True, observed=True)[
-            metric_cols
-        ].mean()
-        for gname in TRACK_GROUPS:
-            try:
-                block = gm.xs(gname, level=TRACK_GROUP_COL)
-            except KeyError:
-                block = pd.DataFrame(index=out.index, columns=metric_cols, dtype=float)
-            for m in metric_cols:
-                col = block[m] if m in block.columns else pd.Series(dtype=float)
-                out[f"track_{gname}_{m}_avg"] = col.reindex(out.index)
-        out["track_hist_missing"] = 0.0
-        banks[s] = out[TRACK_COLS].astype(np.float64)
-    return banks
-
-
-def track_matrix(rows: pd.DataFrame, banks: dict) -> pd.DataFrame:
-    """행별 프로파일 조회. 각 행은 자기 (pitcher_id, season) 만 사용한다."""
-    if rows[SEASON_COL].isna().any() or rows["pitcher_id"].isna().any():
-        raise RuntimeError("TRACK: season/pitcher_id 에 결측이 있다")
-    seasons = pd.to_numeric(rows[SEASON_COL], errors="raise").astype(int)
-    pids = pd.to_numeric(rows["pitcher_id"], errors="raise").astype("int64")
-
-    parts = []
-    for s, idx in rows.groupby(seasons).groups.items():
-        bank = banks.get(int(s))
-        sel_pids = pids.loc[idx]
-        if bank is None or len(bank) == 0:
-            mat = pd.DataFrame(np.nan, index=idx, columns=TRACK_COLS)
-            mat["track_hist_missing"] = 1.0
-        else:
-            mat = bank.reindex(sel_pids.to_numpy())
-            mat.index = idx
-            found = mat["track_hist_n_log"].notna()
-            mat["track_hist_missing"] = np.where(found, 0.0, 1.0)
-        parts.append(mat)
-
-    out = pd.concat(parts).loc[rows.index, TRACK_COLS]
-    if out.isna().all(axis=None) and len(out):
-        print("TRACK ⚠️ 프로파일이 전 행 결측이다 — 매핑/은행을 확인하라")
-    return out
-
-
-def build_track_member_views(views: dict, rows_train, rows_apply, banks):
-    """TREATMENT 뷰 + TRACK 54열 = TRACK 멤버 뷰. TREATMENT 원본은 불변."""
-    mat_tr = track_matrix(rows_train, banks).reset_index(drop=True)
-    mat_ap = track_matrix(rows_apply, banks).reset_index(drop=True)
-    overlap = set(TRACK_COLS) & set(views["treatment_features"])
-    if overlap:
-        raise RuntimeError(f"TRACK 열이 TREATMENT 와 겹친다: {sorted(overlap)}")
-    train_view = pd.concat(
-        [views["train_treatment"].reset_index(drop=True), mat_tr], axis=1
-    )
-    apply_view = pd.concat(
-        [views["apply_treatment"].reset_index(drop=True), mat_ap], axis=1
-    )
-    features = list(views["treatment_features"]) + list(TRACK_COLS)
-    cover_tr = float((mat_tr["track_hist_missing"] == 0.0).mean())
-    cover_ap = float((mat_ap["track_hist_missing"] == 0.0).mean())
-    print(f"TRACK coverage: train {cover_tr:.4f} / apply {cover_ap:.4f}")
-    return train_view, apply_view, features, (cover_tr, cover_ap)
-
-
 def make_l1_views(df_train_raw, df_apply_raw, base_features, scope):
     pitcher_stats = build_pitcher_season_stats(df_train_raw)
     tr_exact, tr_exact_diag = add_pitcher_exact_asof_features(df_train_raw, pitcher_stats)
@@ -3580,8 +3930,47 @@ def make_l1_views(df_train_raw, df_apply_raw, base_features, scope):
         tr_treat[col] = state_tr[col]
         ap_treat[col] = state_ap[col]
 
+    # --- FA / S3: 4-type 시즌내 상태 20열 (TREATMENT 전용) -------------------
+    # CONTROL·DYNAMIC 은 건드리지 않는다 → **F 분기가 비트 동일**하고 R 게이트만 보면 된다
+    # (42_SUCCESS §0-4).
+    # --- S1_BB: R 분기 prior 만 BBEB 로 교체 (F 는 HBEB 유지) --------------
+    # 열 이름이 같으므로 feature 목록·개수는 바뀌지 않는다. 값만 바뀐다.
+    if FEATURE_GROUPS.get("S1_BB"):
+        tr_treat_base, treat_base_features, bbeb_priors = apply_bbeb_pair(
+            df_train=tr_exact, df_apply=tr_exact, base_features=exact_features)
+        ap_treat_base, ap_base_features, _ = apply_bbeb_pair(
+            df_train=tr_exact, df_apply=ap_exact, base_features=exact_features)
+        if list(ap_base_features) != list(treat_base_features):
+            raise RuntimeError("BBEB feature order mismatch")
+        if list(treat_base_features) != list(control_features):
+            raise RuntimeError(
+                "BBEB 는 열 이름을 바꾸지 않아야 한다 — CONTROL 과 목록이 달라졌다")
+        tr_treat = tr_treat_base.copy()
+        ap_treat = ap_treat_base.copy()
+        for col in PC_FEATURES:
+            tr_treat[col] = pc_tr[col]
+            ap_treat[col] = pc_ap[col]
+        for col in SUCCESS_FEATURES:
+            tr_treat[col] = state_tr[col]
+            ap_treat[col] = state_ap[col]
+    else:
+        bbeb_priors = None
+
+    group_cols = active_group_features()
+    if group_cols:
+        grp_tr = build_group_state_for_rows(
+            rows=df_train_raw, available_history=df_train_raw)
+        grp_ap = build_group_state_for_rows(
+            rows=df_apply_raw, available_history=df_train_raw)
+        for col in group_cols:
+            if col in tr_treat.columns or col in ap_treat.columns:
+                raise RuntimeError(f"Duplicate group feature: {col}")
+            tr_treat[col] = grp_tr[col]
+            ap_treat[col] = grp_ap[col]
+
     treatment_features = (
         list(control_features) + list(PC_FEATURES) + list(SUCCESS_FEATURES)
+        + list(group_cols)
     )
     control_cat_cols = [c for c in CAT_COLS if c in control_features]
     treatment_cat_cols = [c for c in CAT_COLS if c in treatment_features]
@@ -3590,9 +3979,10 @@ def make_l1_views(df_train_raw, df_apply_raw, base_features, scope):
         raise RuntimeError(
             f"control feature count {len(control_features)} != {EXPECTED_CONTROL_FEATURES}"
         )
-    if len(treatment_features) != EXPECTED_TREATMENT_FEATURES:
+    expected_treat = EXPECTED_TREATMENT_FEATURES_BASE + len(group_cols)
+    if len(treatment_features) != expected_treat:
         raise RuntimeError(
-            f"treatment feature count {len(treatment_features)} != {EXPECTED_TREATMENT_FEATURES}"
+            f"treatment feature count {len(treatment_features)} != {expected_treat}"
         )
 
     return {
@@ -3606,6 +3996,7 @@ def make_l1_views(df_train_raw, df_apply_raw, base_features, scope):
         "treatment_cat_cols": treatment_cat_cols,
         "pitcher_season_stats": pitcher_stats,
         "hbeb_priors": hbeb_priors,
+        "bbeb_priors": bbeb_priors,
         "exact_diag_train": tr_exact_diag,
         "exact_diag_apply": ap_exact_diag,
         "pc_coverage_train": pc_cov_tr,
@@ -3713,7 +4104,7 @@ def fit_full_model(view, features, cat_cols, y, iterations, label, seeds=None):
 # Main
 # =============================================================================
 
-def run_shift_fold(train, base_features, target_year: int, track_banks=None) -> dict:
+def run_shift_fold(train, base_features, target_year: int) -> dict:
     """SHIFT 적합용 과거 fold 하나를 돌린다 (E3c).
 
     2024 fold 와 **완전히 같은 절차**다. 다만 SHIFT 에 필요한 것만 돌려준다.
@@ -3750,24 +4141,6 @@ def run_shift_fold(train, base_features, target_year: int, track_banks=None) -> 
         y_tr, y_va, f"TREATMENT[{target_year}]", L1_SEEDS,
     )
 
-    # E6: 배포 L1 과 같은 합성으로 잔차를 만들려면 SHIFT fold 도 TRACK 을 포함해야
-    # 한다 (47_* 규약 4 — 사전분석은 배포 축에서 잰다).
-    sec_k = 0.0
-    if TRACK_ENABLED and TRACK_W != 0.0:
-        if track_banks is None:
-            raise RuntimeError("run_shift_fold: TRACK_ENABLED 인데 track_banks 가 없다")
-        tr_view_k, ap_view_k, feats_k, _ = build_track_member_views(
-            views, fold_train, fold_val, track_banks,
-        )
-        pred_track, _, sec_k = fit_fold_seeded(
-            tr_view_k, ap_view_k, feats_k, views["treatment_cat_cols"],
-            y_tr, y_va, f"TRACK[{target_year}]", L1_SEEDS,
-        )
-        r_member = (1.0 - TRACK_W) * pred_treat + TRACK_W * pred_track
-        del tr_view_k, ap_view_k
-    else:
-        r_member = pred_treat
-
     league_means = build_season_league_means(fold_train)
     prev_tr = compute_prev_anchor(
         rows=fold_train,
@@ -3800,19 +4173,19 @@ def run_shift_fold(train, base_features, target_year: int, track_banks=None) -> 
 
     gt = fold_val[GAME_TYPE_COL].fillna("__MISSING__").astype(str).to_numpy()
     f_mask = gt == "F"
-    p_main = np.where(f_mask, pred_control, r_member)
+    p_main = np.where(f_mask, pred_control, pred_treat)
     weights = blend_weights(gt, w_r=W_R, w_f=F_BLEND_WEIGHT)
     l1_oof = blend(p_main, pred_dynamic, weights)
 
     print(f"  L1 {target_year} Brier : {brier_score(y_va, l1_oof):.10f}"
-          f"   R행 {int((~f_mask).sum()):,}   {sec_c + sec_t + sec_k + sec_d:.1f}s")
+          f"   R행 {int((~f_mask).sum()):,}   {sec_c + sec_t + sec_d:.1f}s")
     return {
         "year": int(target_year),
         "rows": fold_val,
         "y": y_va,
         "l1_oof": l1_oof,
         "r_mask": ~f_mask,
-        "seconds": sec_c + sec_t + sec_k + sec_d,
+        "seconds": sec_c + sec_t + sec_d,
     }
 
 
@@ -3842,11 +4215,9 @@ def main():
     print(f"FINAL ET cfg  : {FINAL_ADAPTER_CFG}")
     print(f"Shrink        : {ADAPTER_SHRINK}")
     print("L3            : OFF")
-    if TRACK_ENABLED:
-        print(f"TRACK member  : ON  w={TRACK_W:g}  tier={tuple(TRACK_TIERS_OK)}  "
-              f"cols={len(TRACK_COLS)}  (R blend 전용, F 무접촉)")
-    else:
-        print("TRACK member  : OFF")
+    _on = [g for g, v in FEATURE_GROUPS.items() if v]
+    print("Feature groups: " + (f"{_on}  (+{len(active_group_features())}열, TREATMENT 전용)"
+                                if _on else "없음"))
     print("Test usage    : HEADER ONLY")
     print("=" * 112)
 
@@ -3904,18 +4275,6 @@ def main():
         raise KeyError(f"train required columns missing: {missing}")
 
     # -----------------------------------------------------------------
-    # 0b) TRACK 프로파일 은행 (season < s 규율, 51_* §2)
-    # -----------------------------------------------------------------
-    track_banks = None
-    if TRACK_ENABLED:
-        track_history = load_track_history()
-        track_mapping = load_track_mapping()
-        track_banks = build_track_banks(track_history, track_mapping)
-        for s in (2021, SOURCE_YEAR, EXPECTED_TARGET_YEAR):
-            print(f"TRACK bank[<{s}] pitchers: {len(track_banks[s]):,}")
-        del track_history            # 은행만 남긴다 — 원로그는 더 안 쓴다
-
-    # -----------------------------------------------------------------
     # 1) Latest OOT fold: 2019~2023 -> 2024
     #    - CONTROL tree count
     #    - TREATMENT tree count
@@ -3961,30 +4320,6 @@ def main():
         "TREATMENT",
         L1_SEEDS,
     )
-
-    # E6 TRACK member (TREATMENT 피처 + 프로파일 54열, R blend 전용)
-    pred_track24 = None
-    track_trees = None
-    track_fold_time = 0.0
-    track_cover_fold = None
-    if TRACK_ENABLED:
-        (
-            train_track_view,
-            apply_track_view,
-            track_features_fold,
-            track_cover_fold,
-        ) = build_track_member_views(fold_views, fold_train, fold_val, track_banks)
-        pred_track24, track_trees, track_fold_time = fit_fold_seeded(
-            train_track_view,
-            apply_track_view,
-            track_features_fold,
-            fold_views["treatment_cat_cols"],
-            y_tr,
-            y24,
-            "TRACK",
-            L1_SEEDS,
-        )
-        del train_track_view, apply_track_view
 
     # F DYNAMIC-ASOF expert
     fold_season_league_means = build_season_league_means(fold_train)
@@ -4036,28 +4371,22 @@ def main():
         0.0,
         1.0,
     )
-    # --- L1 합성: 라우팅을 곱셈 가중치로 (I2 + E6) ---------------------------
-    # E6: R 주 예측기가 TREATMENT 단독에서 소수 가중 blend 로 바뀐다.
-    #   R 행 : (1-W_R) * [ (1-TRACK_W)*TREATMENT + TRACK_W*TRACK ] + W_R*DYNAMIC
-    #   F 행 : (1-0.25)*control + 0.25*dynamic      = 기존 f_blend (TRACK 무접촉)
-    # TRACK_W = 0 또는 TRACK_ENABLED=False 면 경로 자체를 우회해 (부동소수 연산
-    # 없이 pred_treat24 를 그대로 쓴다) v005 와 비트 단위 동일하다.
-    # W_R = 0 이고 TRACK 중립이면 v002 의 np.where 라우팅과도 비트 단위 동일하다.
-    if TRACK_ENABLED and TRACK_W != 0.0:
-        if pred_track24 is None:
-            raise RuntimeError("TRACK_ENABLED 인데 TRACK fold 예측이 없다")
-        r_member24 = (1.0 - TRACK_W) * pred_treat24 + TRACK_W * pred_track24
-    else:
-        r_member24 = pred_treat24
-    p_main24 = np.where(f24, pred_control24, r_member24)
+    # --- L1 합성: 라우팅을 곱셈 가중치로 (I2) --------------------------------
+    # W_R = 0 이면 아래는 v002 의 np.where 라우팅과 비트 단위 동일하다.
+    #   R 행 : (1-0)*treatment + 0*dynamic          = treatment
+    #   F 행 : (1-0.25)*control + 0.25*dynamic      = 기존 f_blend
+    # 주의: p_main24 는 여전히 CONTROL / TREATMENT 를 게임타입으로 고른다.
+    # 두 L1 예측기를 하나로 합치는 것은 별개 축이며 D0~E2 범위 밖이다
+    # (36_* §6-2: 트리 예산 70.8% 가 11.84% 행에 배정된 문제).
+    p_main24 = np.where(f24, pred_control24, pred_treat24)
     w24 = blend_weights(gt24, w_r=W_R, w_f=F_BLEND_WEIGHT)
     l1_oof24 = blend(p_main24, pred_dynamic24, w24)
 
-    if W_R == 0.0:                                  # I5 회귀 (TRACK 반영판)
-        _ref = np.clip(np.where(r24, r_member24, f_blend24), 0.0, 1.0)
+    if W_R == 0.0:                                  # I5 회귀
+        _ref = np.clip(np.where(r24, pred_treat24, f_blend24), 0.0, 1.0)
         if not np.array_equal(l1_oof24, _ref):
             raise RuntimeError(
-                "L1 합성 회귀 실패: W_R=0 인데 참조 라우팅과 값이 다르다 "
+                "L1 합성 회귀 실패: W_R=0 인데 v002 라우팅과 값이 다르다 "
                 f"(max|diff|={float(np.abs(l1_oof24 - _ref).max()):.3e})"
             )
 
@@ -4096,43 +4425,10 @@ def main():
     print(f"BLEND F gain             : {blend_f_gain_pt:+.3f} pt")
     print(f"Dynamic mean alpha       : {dynamic_diag24['mean_alpha']:.6f}")
     print(f"Dynamic mean |shift|     : {dynamic_diag24['mean_abs_anchor_shift']:.6f}")
-    if TRACK_ENABLED and pred_track24 is not None:
-        print(f"TRACK best tree count    : {track_trees}")
-        print(f"TRACK 2024 Brier         : {brier_score(y24, pred_track24):.10f}")
-
-    # --- E6 진단: TRACK_W 격자 재합성 (재학습 0회, 2024 R행 paired vs w=0) -----
-    # 배포축(47_* 규약 4): base = 배포되는 L1 합성 그대로, 여기서는 R행 within 지표.
-    # F 행은 TRACK 이 구조적으로 못 건드린다 — 아래에서 실측으로도 확인한다.
-    track_w_diag = []
-    if TRACK_ENABLED and pred_track24 is not None:
-        y24_r = y24[r24]
-        b0_r = float(np.mean(y24_r) * (1.0 - np.mean(y24_r)))
-        base_main = np.where(f24, pred_control24, pred_treat24)
-        base_l1 = blend(base_main, pred_dynamic24, w24)
-        base_b, base_lv, base_sh = brier_parts(base_l1[r24], y24_r)
-        print("\n  TRACK_W 격자 (2024 R행, within-R pt, paired vs w=0):")
-        print(f"  {'w':>6}{'Δtotal':>12}{'Δlevel':>12}{'Δshape':>12}")
-        for wt in TRACK_W_GRID:
-            mem = (1.0 - wt) * pred_treat24 + wt * pred_track24 if wt != 0.0 \
-                else pred_treat24
-            l1w = blend(np.where(f24, pred_control24, mem), pred_dynamic24, w24)
-            bb, lv, sh = brier_parts(l1w[r24], y24_r)
-            row = {
-                "w": float(wt),
-                "d_total_pt": 1e5 * (base_b - bb) / b0_r,
-                "d_level_pt": 1e5 * (base_lv - lv) / b0_r,
-                "d_shape_pt": 1e5 * (base_sh - sh) / b0_r,
-            }
-            track_w_diag.append(row)
-            print(f"  {wt:>6.2f}{row['d_total_pt']:>+12.3f}"
-                  f"{row['d_level_pt']:>+12.3f}{row['d_shape_pt']:>+12.3f}")
-        # F 무접촉 실측 — 배포 합성과 w=0 합성이 F 행에서 완전히 같아야 한다.
-        if not np.array_equal(l1_oof24[f24], base_l1[f24]):
-            raise RuntimeError("E6 위반: TRACK 이 F 행 예측을 바꿨다")
 
     # Save the actual OOT L1 source before final training.
     VALIDATION_DIR.mkdir(parents=True, exist_ok=False)
-    oof_cols = {
+    oof_df = pd.DataFrame({
         ID: fold_val[ID].to_numpy(),
         SEASON_COL: fold_val[SEASON_COL].to_numpy(),
         GAME_TYPE_COL: fold_val[GAME_TYPE_COL].to_numpy(),
@@ -4143,11 +4439,7 @@ def main():
         "DYNAMIC": pred_dynamic24,
         "F_BLEND": f_blend24,
         "L1_ROUTED": l1_oof24,
-    }
-    if TRACK_ENABLED and pred_track24 is not None:
-        oof_cols["TRACK"] = pred_track24
-        oof_cols["R_MEMBER"] = r_member24
-    oof_df = pd.DataFrame(oof_cols)
+    })
     oof_df.to_csv(OOF_2024_PATH, index=False, encoding="utf-8-sig")
 
     # -----------------------------------------------------------------
@@ -4170,9 +4462,7 @@ def main():
                     "l1_oof": l1_oof24, "r_mask": r24, "seconds": 0.0,
                 }
             else:
-                folds[int(year)] = run_shift_fold(
-                    train, base_features, int(year), track_banks=track_banks,
-                )
+                folds[int(year)] = run_shift_fold(train, base_features, int(year))
 
         mats, resids, years, sizes = [], [], [], []
         for year in sorted(folds):
@@ -4275,30 +4565,6 @@ def main():
         "TREATMENT",
     )
 
-    # E6 TRACK member final fit (train 전 행, 각 행은 자기 season 이전 은행만 본다)
-    track_models = None
-    track_final_params = None
-    track_final_time = 0.0
-    track_features_full = None
-    track_cover_full = None
-    if TRACK_ENABLED:
-        (
-            train_track_full,
-            _apply_track_full,
-            track_features_full,
-            track_cover_full,
-        ) = build_track_member_views(final_views, train, train, track_banks)
-        del _apply_track_full
-        track_models, track_final_params, track_final_time = fit_full_model(
-            train_track_full,
-            track_features_full,
-            final_views["treatment_cat_cols"],
-            y_full,
-            track_trees,
-            "TRACK",
-        )
-        del train_track_full
-
     # Dynamic-ASOF expert final fit.  The full-history bank is saved in the artifact
     # so script.py can reconstruct A_prev and A_t for each 2025 row independently.
     full_season_league_means = build_season_league_means(train)
@@ -4352,6 +4618,12 @@ def main():
 
     pc_tables_by_source_season = build_pc_tables_by_source_season(train)
     success_history_artifact = build_success_history_artifact(train)
+    gseason_history_artifacts = {
+        g: build_gseason_history_artifact(train, g)
+        for g in ("S3_P", "S3_B", "S2_P")
+        if FEATURE_GROUPS.get(g)
+    }
+    outcome_history_artifact = gseason_history_artifacts.get("S3_P")
 
     # -----------------------------------------------------------------
     # 3) Final R-only L2 on genuine 2024 OOT residuals from danker L1
@@ -4420,25 +4692,6 @@ def main():
             "pc_features": list(PC_FEATURES),
         },
 
-        # E6 TRACK — 추론은 이 블록의 은행 lookup 만 쓴다 (재계산 0).
-        "track": None if not TRACK_ENABLED else {
-            "models": track_models,
-            "features": list(track_features_full),
-            "cat_cols": list(final_views["treatment_cat_cols"]),
-            "final_iterations": track_trees,
-            "model_params": track_final_params,
-            "seeds": [int(x) for x in L1_SEEDS],
-            "track_cols": list(TRACK_COLS),
-            # 2025 추론용 은행: 공식 로그 season<=2024 전체 집계. pitcher_id 인덱스.
-            "bank_target": track_banks[EXPECTED_TARGET_YEAR],
-            "tiers": list(TRACK_TIERS_OK),
-            "history_source": "official trackman_history.csv (2019~2024)",
-            "mapping_source": (
-                "data/trackman/pitcher_mapping.csv — 공식 train/trackman 통계 결합, "
-                "test 미사용 (08_* 안정성 게이트, Tier A)"
-            ),
-        },
-
         "dynamic": {
             "models": dynamic_models,
             "features": list(final_views["control_features"]),
@@ -4475,6 +4728,16 @@ def main():
             "success_spec": SUCCESS_SPEC,
             "success_features": list(SUCCESS_FEATURES),
             "success_history": success_history_artifact,
+            "outcome_history": outcome_history_artifact,     # 하위 호환
+            "outcome_features": (
+                list(OUTCOME_FEATURES) if FEATURE_GROUPS.get("S3_P") else []
+            ),
+            "gseason_history": gseason_history_artifacts,
+            "group_features": list(active_group_features()),
+            "share_features": (
+                list(SHARE_FEATURES) if FEATURE_GROUPS.get("S1_SH") else []
+            ),
+            "bbeb_priors": final_views.get("bbeb_priors"),
         },
 
         "l1_routing": {
@@ -4485,21 +4748,13 @@ def main():
             #   p_main = where(F, CONTROL, TREATMENT)
             #   w      = where(F, w_f, w_r)
             #   L1     = clip((1 - w) * p_main + w * DYNAMIC_ASOF, 0, 1)
-            "R_main": (
-                "(1 - track_w)*TREATMENT + track_w*TRACK"
-                if TRACK_ENABLED and TRACK_W != 0.0 else "TREATMENT"
-            ),
+            "R_main": "TREATMENT",
             "F_main": "CONTROL",
-            "R_prediction": (
-                "(1 - w_r) * [(1 - track_w)*TREATMENT + track_w*TRACK] + w_r * DYNAMIC_ASOF"
-                if TRACK_ENABLED and TRACK_W != 0.0
-                else "(1 - w_r) * TREATMENT + w_r * DYNAMIC_ASOF"
-            ),
+            "R_prediction": "(1 - w_r) * TREATMENT + w_r * DYNAMIC_ASOF",
             "F_prediction": "(1 - w_f) * CONTROL + w_f * DYNAMIC_ASOF",
-            # 기술용 사본. 추론 측 단일 진실원은 artifact 최상위 "w_r"/"track_w" 이며,
+            # 기술용 사본. 추론 측 단일 진실원은 artifact 최상위 "w_r" 이며,
             # script.py 가 두 값의 일치를 검사한다.
             "w_r": float(W_R),
-            "track_w": float(TRACK_W),
             "f_blend_weight": float(F_BLEND_WEIGHT),
             "b_F": False,
         },
@@ -4544,15 +4799,6 @@ def main():
             "l2_residual_source": "official 2024 labels + genuine danker 2024 L1 OOT prediction",
             "exact_asof": "row-local official ASOF minus completed prior-season train labels",
             "pc_source": "exactly previous labeled season only",
-            "track_profile_source": (
-                "official trackman_history.csv, row season 미만 시즌만 집계한 "
-                "동결 은행; 2025 추론 은행은 <=2024 전체"
-            ),
-            "track_mapping_source": (
-                "official train+trackman 통계 결합으로만 생성 (08_* 게이트, Tier A); "
-                "test.csv 는 어느 단계에서도 미사용"
-            ),
-            "track_inference": "row-local pitcher_id lookup only; no test aggregation",
         },
     }
 
@@ -4636,20 +4882,6 @@ def main():
         "dynamic_correction_mean_2024": float(np.mean(dynamic_correction24)),
         "dynamic_correction_std_2024": float(np.std(dynamic_correction24)),
         "dynamic_correction_abs_mean_2024": float(np.mean(np.abs(dynamic_correction24))),
-
-        # E6 TRACK
-        "track_enabled": bool(TRACK_ENABLED),
-        "track_w": float(TRACK_W),
-        "track_final_tree_count": list(track_trees) if track_trees else None,
-        "track_brier_2024": (
-            brier_score(y24, pred_track24) if pred_track24 is not None else None
-        ),
-        "track_fold_seconds": track_fold_time,
-        "track_coverage_fold": (
-            {"train": track_cover_fold[0], "apply": track_cover_fold[1]}
-            if track_cover_fold else None
-        ),
-        "track_w_grid_2024_R_paired": track_w_diag,
     }
     FOLD4_META_PATH.write_text(
         json.dumps(to_jsonable(fold_meta), ensure_ascii=False, indent=2),
@@ -4663,11 +4895,6 @@ def main():
         "external_validation_dependency": False,
         "architecture": {
             "L1_R": (
-                f"(1-{W_R:g})*[(1-{TRACK_W:g})*Treatment + {TRACK_W:g}*Track] "
-                f"+ {W_R:g}*Dynamic-ASOF  "
-                "| Treatment = CatBoost Exact-ASOF5 + HB-EB + R-only PC FULL"
-                " | Track = Treatment 피처 + 공식 투구추적 프로파일 54열"
-                if TRACK_ENABLED and TRACK_W != 0.0 else
                 f"(1-{W_R:g})*Treatment + {W_R:g}*Dynamic-ASOF  "
                 "| Treatment = CatBoost Exact-ASOF5 + HB-EB + R-only PC FULL"
             ),
@@ -4700,14 +4927,6 @@ def main():
             "treatment_features": len(final_views["treatment_features"]),
             "dynamic_features": len(final_views["control_features"]),
             "dynamic_full_diag": dynamic_diag_full,
-            "track_tree_count": list(track_trees) if track_trees else None,
-            "track_fit_seconds": track_final_time,
-            "track_features": (
-                len(track_features_full) if track_features_full else None
-            ),
-            "track_coverage_full": (
-                {"train": track_cover_full[0]} if track_cover_full else None
-            ),
         },
         "l2": {
             "source_year": SOURCE_YEAR,
@@ -4747,8 +4966,6 @@ def main():
     print(f"CONTROL trees : {control_trees}")
     print(f"TREATMENT trees: {treatment_trees}")
     print(f"DYNAMIC trees : {dynamic_trees}")
-    if TRACK_ENABLED:
-        print(f"TRACK trees   : {track_trees}   (w={TRACK_W:g}, R 전용)")
     print(f"F blend       : {1.0 - F_BLEND_WEIGHT:.2f} CONTROL + {F_BLEND_WEIGHT:.2f} DYNAMIC")
     print(f"Final ET cfg  : {FINAL_ADAPTER_CFG}")
     print(f"Total elapsed : {time.time() - total_start:.1f}s")
