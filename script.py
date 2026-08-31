@@ -1,14 +1,31 @@
-"""script.py — danker_v001 inference
+"""script.py — danker_v004 inference
+
+danker_v002(=danker_sj_v001) 추론 코드에 E2b(W_R) 를 반영한 판본이다.
+구조 상수는 전부 artifact(pkl) 에서 읽는다. 이 파일에는 튜닝 가능한 값이 없다.
 
 Final architecture
 ------------------
-L1 R branch:
-    TREATMENT CatBoost
-    = Control features + R-only Pitcher Conditional FULL
+L1 합성 (라우팅을 곱셈 가중치로 — train.py blend_weights / blend 와 동일 정의):
 
-L1 F branch:
-    0.75 * CONTROL CatBoost
-    + 0.25 * DYNAMIC-ASOF residual CatBoost
+    p_main = where(game_type == "F", CONTROL, TREATMENT)
+    w      = where(game_type == "F", w_f, w_r)          # 둘 다 artifact 동결 상수
+    L1     = clip( (1 - w) * p_main + w * DYNAMIC , 0, 1 )
+
+    w_r = 0 이면 danker_v001/v002 의 np.where 라우팅과 비트 단위 동일하다.
+        R 행 : (1-0) * TREATMENT + 0 * DYNAMIC        = TREATMENT
+        F 행 : (1-0.25) * CONTROL + 0.25 * DYNAMIC    = 기존 f_blend
+
+L1 시드평균 (E5):
+    CONTROL / TREATMENT / DYNAMIC 각각 L1_SEEDS 개의 모델을 산술평균한다.
+    artifact 의 각 블록은 "models" 리스트를 갖는다.
+    모델이 1개면 평균은 항등이므로 시드평균 이전과 비트 동일하다.
+
+L1 R branch 주 예측기:
+    TREATMENT CatBoost
+    = Control features + R-only Pitcher Conditional FULL (+ SUCCESS state)
+
+L1 F branch 주 예측기:
+    CONTROL CatBoost
 
 Dynamic ASOF anchor:
     A_t = (1 - alpha_t) * A_prev + alpha_t * R_t
@@ -16,8 +33,19 @@ Dynamic ASOF anchor:
     lambda = 1.0, kappa = 100.0
 
 L2:
-    ExtraTrees residual adapter, R only
-    F rows are protected exactly at L1.
+    ExtraTrees residual adapter.
+    적용 범위도 곱셈 가중치다 (train.py l2_weights 와 동일 정의):
+        w_l2 = full(adapter_shrink);  if not l2_apply_f: w_l2[F] = 0
+        final = clip( L1 + w_l2 * mean_seed(correction) , 0, 1 )
+    l2_apply_f = False 이면 v001/v002 의 `final[f_mask] = pred_l1[f_mask]` 와
+    비트 단위 동일하다.
+
+미구현 구조 플래그
+------------------
+artifact 에는 E3/E4 용 플래그(shift_scale, affine_alpha, affine_offset,
+add_tables, l1_target_mode)도 동결되지만 이 판본은 그것들을 **구현하지 않는다**.
+중립값이 아니면 `assert_supported_flags()` 가 즉시 예외를 던진다.
+조용히 무시되는 일이 없도록 하기 위한 장치다.
 
 Evaluation-row independence
 ---------------------------
@@ -54,7 +82,7 @@ import pandas as pd
 # 경로 — 프로젝트 표준
 # =============================================================================
 
-EXPERIMENT_NAME = "danker_sj_v001"
+EXPERIMENT_NAME = "danker_v006"
 
 DATA_DIR = Path("./data")
 
@@ -170,6 +198,139 @@ def add_eng(frame: pd.DataFrame) -> pd.DataFrame:
 # =============================================================================
 
 
+# =============================================================================
+# E3c — SHIFT 설계행렬 (train.py build_shift_matrix 와 **동일한 정의**)
+# =============================================================================
+#
+# 30열 전부 현재 행의 공식 컬럼만 쓴다. 다른 test 행을 참조하는 항이 없다.
+# median / mu / sd / beta 는 artifact 에서만 온다 — test 분포에서 재추정하지 않는다.
+
+SHIFT_COLS = [
+    "game_month", "inning", "balls_before", "strikes_before", "outs_before",
+    "num_runners_on", "score_diff_pitcher_team", "home_win_expectancy", "li",
+    "asof_pitcher_success_rate", "asof_pitcher_reverse_rate",
+    "asof_pitcher_middle_rate", "asof_pitcher_ball_rate",
+    "asof_pitcher_strike_rate",
+    "asof_pitcher_prev1_game_success_rate",
+    "asof_pitcher_prev3_game_success_rate",
+    "asof_pitcher_prev5_game_success_rate",
+    "asof_batter_success_rate", "asof_batter_middle_rate",
+    "log_pn", "log_bn",
+    "recent35", "recent_delta", "sb",
+    "same_hand", "two_strike", "three_ball", "runners", "late", "close",
+]
+
+
+SHIFT_SOURCE_COLS = [
+    "game_month", "inning", "balls_before", "strikes_before", "outs_before",
+    "num_runners_on", "score_diff_pitcher_team", "home_win_expectancy", "li",
+    "asof_pitcher_n", "asof_batter_n",
+    "asof_pitcher_success_rate", "asof_pitcher_reverse_rate",
+    "asof_pitcher_middle_rate", "asof_pitcher_ball_rate",
+    "asof_pitcher_strike_rate",
+    "asof_pitcher_prev1_game_success_rate",
+    "asof_pitcher_prev3_game_success_rate",
+    "asof_pitcher_prev5_game_success_rate",
+    "asof_batter_success_rate", "asof_batter_middle_rate",
+    "pitcher_hand", "batter_hand",
+]
+
+
+def assert_shift_source_columns(frame) -> None:
+    """설계행렬의 원천 컬럼이 전부 있는지 확인한다.
+
+    numeric_series 는 컬럼이 없으면 조용히 NaN 을 돌려준다. 그러면 median 으로
+    채워져 **에러 없이 틀린** 예측이 나온다 — 가장 추적하기 어려운 실패다.
+    """
+    missing = [c for c in SHIFT_SOURCE_COLS if c not in frame.columns]
+    if missing:
+        raise KeyError(f"SHIFT 원천 컬럼 누락: {missing}")
+
+
+def build_shift_matrix(frame: pd.DataFrame) -> pd.DataFrame:
+    """E3c 민감도 설계행렬. 결측은 채우지 않고 NaN 으로 돌려준다."""
+    assert_shift_source_columns(frame)
+    x = pd.DataFrame(index=frame.index)
+
+    def num(col):
+        return numeric_series(frame, col)
+
+    for col in [
+        "game_month", "inning", "balls_before", "strikes_before", "outs_before",
+        "num_runners_on", "score_diff_pitcher_team", "home_win_expectancy", "li",
+        "asof_pitcher_success_rate", "asof_pitcher_reverse_rate",
+        "asof_pitcher_middle_rate", "asof_pitcher_ball_rate",
+        "asof_pitcher_strike_rate",
+        "asof_pitcher_prev1_game_success_rate",
+        "asof_pitcher_prev3_game_success_rate",
+        "asof_pitcher_prev5_game_success_rate",
+        "asof_batter_success_rate", "asof_batter_middle_rate",
+    ]:
+        x[col] = num(col)
+
+    x["log_pn"] = np.log1p(num("asof_pitcher_n").clip(lower=0))
+    x["log_bn"] = np.log1p(num("asof_batter_n").clip(lower=0))
+
+    career = num("asof_pitcher_success_rate").fillna(0.5)
+    p1 = num("asof_pitcher_prev1_game_success_rate").fillna(career)
+    p3 = num("asof_pitcher_prev3_game_success_rate").fillna(p1)
+    p5 = num("asof_pitcher_prev5_game_success_rate").fillna(p3)
+    x["recent35"] = 0.5 * p1 + 0.3 * p3 + 0.2 * p5
+    x["recent_delta"] = x["recent35"] - career
+    x["sb"] = num("asof_pitcher_strike_rate") - num("asof_pitcher_ball_rate")
+
+    if "pitcher_hand" not in frame.columns or "batter_hand" not in frame.columns:
+        raise KeyError("SHIFT: pitcher_hand / batter_hand 가 test 에 없다")
+    x["same_hand"] = (
+        frame["pitcher_hand"].astype(str) == frame["batter_hand"].astype(str)
+    ).astype(float)
+
+    x["two_strike"] = (num("strikes_before") == 2).astype(float)
+    x["three_ball"] = (num("balls_before") == 3).astype(float)
+    x["runners"] = (num("num_runners_on") > 0).astype(float)
+    x["late"] = (num("inning") >= 7).astype(float)
+    x["close"] = (num("score_diff_pitcher_team").abs() <= 1).astype(float)
+
+    x = x.replace([np.inf, -np.inf], np.nan)
+    if list(x.columns) != SHIFT_COLS:
+        raise RuntimeError(
+            f"SHIFT 열 순서 불일치\n  기대: {SHIFT_COLS}\n  실제: {list(x.columns)}"
+        )
+    return x.astype(np.float64)
+
+
+def compute_shift_correction(test: pd.DataFrame, art: dict) -> np.ndarray:
+    """행별 SHIFT 보정량. artifact 의 median/mu/sd/beta 만 쓴다."""
+    cols = list(art["shift_cols"])
+    if cols != SHIFT_COLS:
+        raise RuntimeError(
+            "SHIFT 열 정의가 artifact 와 다르다 — train.py 와 script.py 가 어긋났다\n"
+            f"  artifact: {cols}\n  script  : {SHIFT_COLS}"
+        )
+    mat = build_shift_matrix(test).to_numpy(dtype=np.float64)
+
+    median = np.asarray(art["shift_median"], dtype=np.float64)
+    mu = np.asarray(art["sens_mu"], dtype=np.float64)
+    sd = np.asarray(art["sens_sd"], dtype=np.float64)
+    beta = np.asarray(art["shift_beta"], dtype=np.float64)
+    for name, vec in (("shift_median", median), ("sens_mu", mu),
+                      ("sens_sd", sd), ("shift_beta", beta)):
+        if vec.shape != (len(SHIFT_COLS),):
+            raise RuntimeError(f"{name} 길이 {vec.shape} != {len(SHIFT_COLS)}")
+
+    filled = np.where(np.isnan(mat), median, mat)
+    if not np.isfinite(filled).all():
+        raise RuntimeError("SHIFT 행렬에 median 으로도 못 채운 NaN/Inf 가 있다")
+
+    sd_safe = np.where(np.abs(sd) < 1e-12, 1.0, sd)
+    clip = float(art.get("shift_clip", 8.0))
+    z = np.clip((filled - mu) / sd_safe, -clip, clip)
+    corr = z @ beta
+    if not np.isfinite(corr).all():
+        raise RuntimeError("SHIFT 보정에 NaN/Inf")
+    return corr
+
+
 def load_artifact(path: Path) -> dict:
     if not path.exists():
         raise FileNotFoundError(path)
@@ -193,12 +354,95 @@ def load_artifact(path: Path) -> dict:
         "l2",
         "l2_routing",
         "expected_target_year",
+        # --- train.py freeze() 가 동결하는 구조 상수 -------------------------
+        # 기본값을 주지 않는다. 구 artifact(v001/v002)를 이 script 로 돌리면
+        # 조용히 W_R=0 으로 되돌아가는 대신 여기서 죽어야 한다.
+        "w_r",
+        "l2_apply_f",
+        "shift_scale",
+        "outcome_state",
     }
+    if float(art.get("shift_scale", 0.0)) != 0.0:
+        required_top |= {
+            "shift_beta", "shift_median", "shift_cols",
+            "sens_mu", "sens_sd", "shift_apply_f",
+        }
     missing = sorted(required_top - set(art))
     if missing:
         raise KeyError(f"artifact required keys missing: {missing}")
 
+    if bool(art.get("outcome_state", False)):
+        shared = art.get("shared_l1_state", {})
+        need = ["outcome_history", "outcome_features"]
+        gone = [k for k in need if not shared.get(k)]
+        if gone:
+            raise KeyError(f"outcome_state=True 인데 shared_l1_state 에 없다: {gone}")
+        feats = list(shared["outcome_features"])
+        in_treat = [c for c in feats if c in set(art["treatment"]["features"])]
+        if len(in_treat) != len(feats):
+            raise RuntimeError(
+                "OUTCOME feature 가 treatment feature 목록과 어긋난다: "
+                f"{len(in_treat)}/{len(feats)}"
+            )
+
+    assert_supported_flags(art)
+    force_deterministic_forests(art)
     return art
+
+
+def force_deterministic_forests(art: dict) -> None:
+    """L2 ExtraTrees 의 예측을 단일 스레드로 고정한다 — 행 독립 결정론.
+
+    sklearn 의 forest predict 는 트리별 예측을 공유 배열에 누산한다.
+        Parallel(n_jobs=self.n_jobs)(delayed(_accumulate_prediction)(...) for e in estimators_)
+    n_jobs > 1 이면 **누산 순서가 스레드 스케줄링에 따라 달라진다.**
+    부동소수 덧셈은 결합법칙을 만족하지 않으므로, 같은 행이라도 호출을 나눠서 하면
+    마지막 비트가 흔들린다 (실측 8.674e-19).
+
+    이것은 다른 test 행의 정보가 새는 것이 아니라 **누산 순서 문제**다.
+    그러나 selfcheck 의 정확한 0 기준을 지키기 위해, 그리고 코드 검증 시
+    오해를 없애기 위해 추론에서는 항상 단일 스레드로 고정한다.
+
+    train.py 는 N_JOBS(최대 6)로 학습하므로 artifact 의 모델이 그 값을 갖고 온다.
+    v18 계열도 같은 처리를 한다 (`et.n_jobs = 1  # 행 독립 결정론`).
+    """
+    fixed = 0
+    for model in (art.get("l2", {}).get("adapter_models") or {}).values():
+        if getattr(model, "n_jobs", 1) != 1:
+            model.n_jobs = 1
+            fixed += 1
+    if fixed:
+        print(f"L2 forests : n_jobs -> 1 ({fixed}개, 행 독립 결정론)")
+
+
+def assert_supported_flags(art: dict) -> None:
+    """이 script 가 구현하지 않은 구조 플래그가 켜져 있으면 즉시 죽는다.
+
+    train.py 의 freeze() 는 E3/E4 용 상수도 artifact 에 담는다. 그것을 여기서
+    조용히 무시하면 로컬 검증과 제출 결과가 갈라진다 — 에러 없이 틀리는,
+    가장 추적하기 어려운 실패다. 그래서 미구현 축은 전부 예외로 막는다.
+    """
+    unsupported = []
+
+    # shift_scale (E3c) 는 이 판본에서 구현됐다. 다만 F 적용은 아직 미구현이다 —
+    # SHIFT 는 R 도메인에서만 검증됐으므로(46_*) F 로 넓히려면 재검증이 필요하다.
+    if float(art.get("shift_scale", 0.0)) != 0.0 and bool(art.get("shift_apply_f", False)):
+        unsupported.append("shift_apply_f=True (F 도메인 미검증·미구현)")
+    if float(art.get("affine_alpha", 1.0)) != 1.0:
+        unsupported.append(f"affine_alpha={art['affine_alpha']} (E3b 미구현)")
+    if float(art.get("affine_offset", 0.0)) != 0.0:
+        unsupported.append(f"affine_offset={art['affine_offset']} (38_* §5: 영구 0)")
+    if len(art.get("add_tables", ()) or ()) > 0:
+        unsupported.append(f"add_tables n={len(art['add_tables'])} (E3d 미구현)")
+    if str(art.get("l1_target_mode", "direct")) != "direct":
+        unsupported.append(f"l1_target_mode={art['l1_target_mode']!r} (E4 미구현)")
+
+    if unsupported:
+        raise NotImplementedError(
+            "artifact 가 이 script.py 미구현 구조를 요구한다:\n  - "
+            + "\n  - ".join(unsupported)
+            + "\nscript.py 를 먼저 갱신하라. 무시하고 추론하면 로컬과 제출이 갈라진다."
+        )
 
 
 def validate_test(test: pd.DataFrame, art: dict) -> pd.DataFrame:
@@ -966,6 +1210,114 @@ def _transform_success_state(
     }
 
 
+# =============================================================================
+# FA / S3 — 4-type 시즌내 상태 (train.py 와 **동일한 정의**)
+# =============================================================================
+#
+# artifact 의 outcome_history 만으로 bank 를 복원한다. raw train 을 읽지 않고
+# test 의 다른 행도 보지 않는다 — 현재 행의 asof 값 + 동결 bank 뿐이다.
+
+def _rounded_cumulative_count(n, rate) -> np.ndarray:
+    n = np.asarray(n, dtype=np.float64)
+    rate = np.asarray(rate, dtype=np.float64)
+    out = np.zeros(len(n), dtype=np.float64)
+    ok = (n > 0.0) & np.isfinite(rate)
+    out[ok] = np.rint(n[ok] * rate[ok])
+    return out
+
+
+def _build_frozen_outcome_bank(outcome_history: dict, target_year: int) -> dict:
+    """target_year 미만 시즌만으로 4종 누적 카운트 bank + hist_n 을 복원한다."""
+    id_col = outcome_history["id_col"]
+    kinds = list(outcome_history["kinds"])
+
+    snap = outcome_history["snapshots"]
+    snap = snap.loc[snap[SEASON_COL].astype(int) < int(target_year)]
+    counts = outcome_history["row_counts"]
+    counts = counts.loc[counts[SEASON_COL].astype(int) < int(target_year)]
+
+    if len(snap) == 0:
+        return {
+            "hist_n": {},
+            "count": {k: {} for k in kinds},
+            "prior": {k: 0.0 for k in kinds},
+        }
+
+    # 각 투수의 **가장 최근** 이력 시즌 스냅샷
+    snap = snap.sort_values([id_col, SEASON_COL], kind="mergesort")
+    last = snap.groupby(id_col, sort=False, dropna=False).tail(1)
+
+    hist_n = counts.groupby(id_col, sort=False, dropna=False)["n"].sum()
+
+    max_year = int(snap[SEASON_COL].astype(int).max())
+    priors_all = outcome_history["priors_by_season"]
+    prior_block = priors_all.get(max_year, priors_all.get(str(max_year), {}))
+
+    out = {"hist_n": hist_n.to_dict(), "count": {}, "prior": {}}
+    for kind in kinds:
+        out["count"][kind] = pd.Series(
+            last[f"cnt_{kind}"].to_numpy(dtype=np.float64), index=last[id_col]
+        ).to_dict()
+        val = float(prior_block.get(kind, 0.0))
+        out["prior"][kind] = val if np.isfinite(val) else 0.0
+    return out
+
+
+def _transform_outcome_state(rows: pd.DataFrame, bank: dict, kinds, strengths,
+                             id_col: str) -> pd.DataFrame:
+    ids = rows[id_col]
+    z = pd.DataFrame(index=rows.index)
+
+    hist_n = ids.map(bank["hist_n"]).fillna(0.0).to_numpy(dtype=np.float64)
+    asof_n = (
+        numeric_series(rows, "asof_pitcher_n")
+        .fillna(0.0).clip(lower=0.0).to_numpy(dtype=np.float64)
+    )
+    current_n = np.maximum(asof_n - hist_n, 0.0)
+
+    for kind in kinds:
+        prior = float(bank["prior"][kind])
+        career = numeric_series(rows, f"asof_pitcher_{kind}_rate").to_numpy(dtype=np.float64)
+        cumulative = _rounded_cumulative_count(asof_n, career)
+        hist_c = ids.map(bank["count"][kind]).fillna(0.0).to_numpy(dtype=np.float64)
+        current_c = np.clip(cumulative - hist_c, 0.0, current_n)
+
+        for strength in strengths:
+            z[f"gseason__pitcher_{kind}_rate_k{int(strength)}"] = (
+                (current_c + float(strength) * prior) / (current_n + float(strength))
+            )
+        raw = np.where(current_n > 0.0, current_c / np.maximum(current_n, 1.0), prior)
+        z[f"gseason__pitcher_{kind}_raw"] = raw
+        career_filled = np.where(np.isfinite(career), career, prior)
+        z[f"gseason__pitcher_{kind}_minus_career"] = raw - career_filled
+    return z
+
+
+def build_outcome_test_features(
+    test: pd.DataFrame,
+    outcome_history: dict,
+    outcome_features: list[str],
+    target_year: int,
+) -> pd.DataFrame:
+    kinds = list(outcome_history["kinds"])
+    strengths = list(outcome_history["strengths"])
+    id_col = outcome_history["id_col"]
+
+    bank = _build_frozen_outcome_bank(outcome_history, int(target_year))
+    z = _transform_outcome_state(test, bank, kinds, strengths, id_col)
+
+    missing = [c for c in outcome_features if c not in z.columns]
+    if missing:
+        raise RuntimeError(f"OUTCOME feature 누락: {missing}")
+    z = z.reindex(columns=list(outcome_features))
+    values = z.to_numpy(dtype=np.float64)
+    if not np.isfinite(values).all():
+        bad = [c for c in outcome_features
+               if not np.isfinite(z[c].to_numpy(np.float64)).all()]
+        raise RuntimeError(f"OUTCOME state contains NaN/Inf: {bad}")
+    return z
+
+
 def build_success_test_features(
     test: pd.DataFrame,
     success_history: dict,
@@ -1178,6 +1530,19 @@ def build_treatment_view(
             raise RuntimeError(f"duplicate SUCCESS feature at inference: {col}")
         out[col] = success[col].to_numpy()
 
+    # --- FA / S3: 4-type 시즌내 상태 20열 ---
+    if bool(art.get("outcome_state", False)):
+        outcome = build_outcome_test_features(
+            test=test,
+            outcome_history=shared["outcome_history"],
+            outcome_features=list(shared["outcome_features"]),
+            target_year=int(art["expected_target_year"]),
+        )
+        for col in outcome.columns:
+            if col in out.columns:
+                raise RuntimeError(f"duplicate OUTCOME feature at inference: {col}")
+            out[col] = outcome[col].to_numpy()
+
     features = list(art["treatment"]["features"])
     missing = sorted(set(features) - set(out.columns))
     if missing:
@@ -1366,25 +1731,35 @@ def _predict_catboost(
     view: pd.DataFrame,
     label: str,
 ) -> np.ndarray:
+    """L1 예측. E5 시드평균 — block["models"] 를 산술평균한다.
+
+    구 artifact 호환: "models" 가 없으면 단일 "model" 을 1개짜리 리스트로 본다.
+    모델이 1개면 평균은 항등이므로 시드평균 도입 이전과 비트 동일하다.
+    """
     features = list(block["features"])
     cat_cols = list(block["cat_cols"])
-    model = block["model"]
 
     missing = sorted(set(features) - set(view.columns))
     if missing:
-        raise KeyError(f"{label} inference features missing: {missing}")
+        raise KeyError(f"{label} features missing: {missing}")
 
     X = prepare_features(view[features], cat_cols)
 
-    if hasattr(model, "feature_names_"):
-        trained = list(model.feature_names_)
-        if trained and trained != features:
-            raise RuntimeError(f"{label} artifact feature order mismatch")
+    models = block.get("models")
+    if models is None:
+        models = [block["model"]]
+    if not isinstance(models, (list, tuple)) or len(models) == 0:
+        raise RuntimeError(f"{label} 모델 목록이 비었다")
 
-    pred = np.asarray(model.predict(X), dtype=np.float64)
-    if len(pred) != len(view) or not np.isfinite(pred).all():
-        raise RuntimeError(f"{label} prediction invalid")
-    return pred
+    acc = None
+    for k, m in enumerate(models):
+        if hasattr(m, "feature_names_") and list(m.feature_names_) != features:
+            raise RuntimeError(f"{label} feature order mismatch (model {k})")
+        p = np.asarray(m.predict(X), dtype=np.float64)
+        if len(p) != len(view) or not np.isfinite(p).all():
+            raise RuntimeError(f"{label} prediction invalid (model {k})")
+        acc = p if acc is None else acc + p
+    return acc / float(len(models))
 
 
 def predict(test: pd.DataFrame, art: dict) -> dict[str, np.ndarray]:
@@ -1451,20 +1826,38 @@ def predict(test: pd.DataFrame, art: dict) -> dict[str, np.ndarray]:
     r_mask = gt != "F"
     f_mask = gt == "F"
 
-    blend_w = float(art["l1_routing"]["f_blend_weight"])
-    pred_f_blend = np.clip(
-        (1.0 - blend_w) * pred_control
-        + blend_w * pred_dynamic,
+    # 행별 blend 가중치. 마스크를 곱셈 계수로만 쓴다 (train.py blend_weights).
+    w_f = float(art["l1_routing"]["f_blend_weight"])
+    w_r = float(art["w_r"])          # 단일 진실원 = artifact 최상위 (freeze())
+    if not (0.0 <= w_r <= 1.0) or not (0.0 <= w_f <= 1.0):
+        raise ValueError(f"blend weight out of [0,1]: w_r={w_r}, w_f={w_f}")
+
+    # l1_routing 안의 사본은 기술용이다. 두 값이 갈라지면 artifact 가 자기
+    # 구조를 잘못 기술하고 있다는 뜻이므로 추론을 진행하지 않는다.
+    w_r_doc = art["l1_routing"].get("w_r")
+    if w_r_doc is not None and float(w_r_doc) != w_r:
+        raise RuntimeError(
+            f"artifact w_r 불일치: top-level={w_r} vs l1_routing={float(w_r_doc)}"
+        )
+
+    w_row = np.where(f_mask, w_f, w_r).astype(np.float64)
+
+    # 주 예측기는 game_type 으로 고른다 (train.py p_main24 와 동일).
+    p_main = np.where(f_mask, pred_control, pred_treatment)
+
+    # train.py blend() 와 동일한 식·동일한 연산 순서.
+    pred_l1 = np.clip(
+        (1.0 - w_row) * p_main + w_row * pred_dynamic,
         0.0,
         1.0,
     )
 
-    pred_l1 = np.where(
-        r_mask,
-        pred_treatment,
-        pred_f_blend,
+    # 진단용. F 행 정의는 기존과 같고, w_r=0 이면 pred_l1[F] 와 일치한다.
+    pred_f_blend = np.clip(
+        (1.0 - w_f) * pred_control + w_f * pred_dynamic,
+        0.0,
+        1.0,
     )
-    pred_l1 = np.clip(pred_l1, 0.0, 1.0)
 
     # -----------------------------------------------------------------
     # L2 ExtraTrees residual adapter — R only
@@ -1507,6 +1900,9 @@ def predict(test: pd.DataFrame, art: dict) -> dict[str, np.ndarray]:
                 key = str(key)
             else:
                 raise KeyError(f"L2 model seed {seed} missing from artifact")
+        # 방어적 재설정. load_artifact 에서 이미 고정하지만, artifact 를 다른 경로로
+        # 로드했을 때도 결정론이 깨지지 않도록 예측 직전에 한 번 더 건다.
+        models[key].n_jobs = 1
         corr = np.asarray(models[key].predict(X_l2), dtype=np.float64)
         if len(corr) != n or not np.isfinite(corr).all():
             raise RuntimeError(f"L2 correction invalid for seed={seed}")
@@ -1517,15 +1913,31 @@ def predict(test: pd.DataFrame, art: dict) -> dict[str, np.ndarray]:
     else:
         l2_correction = np.zeros(n, dtype=np.float64)
 
-    final = pred_l1.copy()
-    final[r_mask] = np.clip(
-        final[r_mask]
-        + float(l2["adapter_shrink"]) * l2_correction[r_mask],
-        0.0,
-        1.0,
-    )
-    # F rows are explicitly protected.
-    final[f_mask] = pred_l1[f_mask]
+    # L2 적용 범위도 곱셈 가중치다 (train.py l2_weights 와 동일 정의).
+    # l2_apply_f = False 이면 v001/v002 의 `final[f_mask] = pred_l1[f_mask]` 와
+    # 비트 동일하다 — pred_l1 은 이미 [0,1] 이므로 clip 이 항등이고,
+    # w_l2[F] = 0.0 이므로 0.0 * 유한값 = 0.0 이다.
+    w_l2 = np.full(n, float(l2["adapter_shrink"]), dtype=np.float64)
+    if not bool(art["l2_apply_f"]):
+        w_l2[f_mask] = 0.0
+
+    # --- E3c SHIFT: 절편 없는 Ridge 가산 (R 도메인) ---------------------------
+    # 적용 범위도 곱셈 가중치다. shift_scale = 0 이면 w_shift 가 전부 0.0 이고
+    # 0.0 * 유한값 = 0.0 이므로 danker_v004 와 **비트 단위로 동일**하다.
+    shift_scale = float(art.get("shift_scale", 0.0))
+    if shift_scale != 0.0:
+        shift_raw = compute_shift_correction(test, art)
+        if len(shift_raw) != n:
+            raise RuntimeError(f"SHIFT 길이 불일치: {len(shift_raw)} vs {n}")
+    else:
+        shift_raw = np.zeros(n, dtype=np.float64)
+
+    w_shift = np.full(n, shift_scale, dtype=np.float64)
+    if not bool(art.get("shift_apply_f", False)):
+        w_shift[f_mask] = 0.0
+
+    # 단 한 번만 clip 한다 — 46_* 의 walk-forward 측정과 같은 형태다.
+    final = np.clip(pred_l1 + w_l2 * l2_correction + w_shift * shift_raw, 0.0, 1.0)
 
     if not np.isfinite(final).all():
         raise RuntimeError("final prediction contains NaN/Inf")
@@ -1541,7 +1953,12 @@ def predict(test: pd.DataFrame, art: dict) -> dict[str, np.ndarray]:
         "f_blend": pred_f_blend,
         "l1": pred_l1,
         "l2_correction": l2_correction,
+        "shift_correction": shift_raw,
         "final": final,
+        # 진단용 (selfcheck 대상 아님 — 상수 벡터라 행 독립 자명)
+        "_w_row": w_row,
+        "_w_l2": w_l2,
+        "_w_shift": w_shift,
     }
 
 
@@ -1580,6 +1997,7 @@ def selfcheck(
         "f_blend",
         "l1",
         "l2_correction",
+        "shift_correction",
         "final",
     ]
 

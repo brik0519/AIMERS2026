@@ -1,4 +1,0 @@
-experiment,fold,seed,branch,n,share,b0,brier,level,shape,bss,d_brier,d_level,d_shape,d_total_within,d_level_within,d_shape_within,d_total_total,d_level_total,d_shape_total
-danker_v003:smoke,2021,42,ALL,247088,1,0.2489266771,0.2452999816,4.741245474e-05,0.2452525692,1456.933225,,,,,,,,,
-danker_v003:smoke,2021,42,F,25861,0.104663116,0.2084493528,0.2184342489,0.01046303137,0.2079712176,-4790.082592,,,,,,,,,
-danker_v003:smoke,2021,42,R,221227,0.895336884,0.2498371082,0.2484405328,1.820546439e-05,0.2484223273,558.994368,,,,,,,,,

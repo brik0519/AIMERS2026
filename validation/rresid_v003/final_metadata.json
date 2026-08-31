@@ -1,328 +1,115 @@
 {
-  "experiment_name": "rresid_v003",
-  "purpose": "Sens25 Ridge + original CORE routing temporal audit on Treatment R OOF residuals",
-  "validation_only": true,
-  "final_model_saved": false,
-  "bank_source": "validation/rresid_v001/residual_bank.csv",
-  "eval_years": [
-    2021,
-    2022,
-    2023,
-    2024
-  ],
+  "F_gate": "not_measured; R-only correction contract",
   "base_seeds": [
     42,
-    314,
-    2026
+    2026,
+    314
   ],
-  "temporal_protocol": "source year t-1 Treatment OOF residual -> target year t",
-  "router": {
-    "definition": "FUTURES if F; else ANCHOR_TEAM if anchor team involved; else CORE",
-    "original_anchor_discovery_max_season": 2022,
-    "original_fixed_anchor_team": 13,
-    "audit": [
-      {
-        "source_year": 2020,
-        "target_year": 2021,
-        "fixed_anchor_team": 13,
-        "causal_anchor_team": 13,
-        "anchor_equal": true,
-        "source_core_n": 177021,
-        "source_anchor_team_n": 43853,
-        "target_core_n": 177741,
-        "target_anchor_team_n": 43486,
-        "target_core_share_R": 0.8034326732270474
-      },
-      {
-        "source_year": 2021,
-        "target_year": 2022,
-        "fixed_anchor_team": 13,
-        "causal_anchor_team": 13,
-        "anchor_equal": true,
-        "source_core_n": 177741,
-        "source_anchor_team_n": 43486,
-        "target_core_n": 174218,
-        "target_anchor_team_n": 42806,
-        "target_core_share_R": 0.8027591418460631
-      },
-      {
-        "source_year": 2022,
-        "target_year": 2023,
-        "fixed_anchor_team": 13,
-        "causal_anchor_team": 13,
-        "anchor_equal": true,
-        "source_core_n": 174218,
-        "source_anchor_team_n": 42806,
-        "target_core_n": 175785,
-        "target_anchor_team_n": 44054,
-        "target_core_share_R": 0.7996078948685175
-      },
-      {
-        "source_year": 2023,
-        "target_year": 2024,
-        "fixed_anchor_team": 13,
-        "causal_anchor_team": 13,
-        "anchor_equal": true,
-        "source_core_n": 175785,
-        "source_anchor_team_n": 44054,
-        "target_core_n": 178729,
-        "target_anchor_team_n": 44768,
-        "target_core_share_R": 0.7996930607569677
-      }
-    ],
-    "strict_temporal_note": "each transition rediscovers anchor using F rows through source_year and asserts equality to fixed original anchor"
+  "elapsed_seconds": 105.12040305137634,
+  "experiment_name": "rresid_v003",
+  "extra_trees": "excluded: exact v001 execution source unavailable",
+  "families": [
+    "RIDGE_CODED49",
+    "RIDGE_SENS25"
+  ],
+  "final_model_saved": false,
+  "fixed_weak_scale": 0.15,
+  "fixed_weak_scale_origin": "posthoc hypothesis after viewing v001/v002 2024",
+  "historical_posthoc": true,
+  "model_path_reserved_not_written": "model/rresid_v003/rresid_v003.pkl",
+  "native_scale": {
+    "RIDGE_CODED49": 0.5,
+    "RIDGE_SENS25": 0.75
   },
-  "sens25": {
-    "n_features": 25,
-    "history_years": 3,
-    "decay": 0.65,
-    "parent_strength": 100.0,
-    "hand_strength": 35.0,
-    "pressure_hand_strength": 45.0,
-    "ridge_alpha": 1000.0,
-    "solver": "lsqr",
-    "fit_intercept_primary": false,
-    "scale": 0.75,
-    "fit_source": "all source-year R rows",
-    "apply_primary": "target CORE rows only"
+  "reference_parity": "passed",
+  "report_year": 2024,
+  "report_year_previously_seen": true,
+  "residual_training": "strict previous-year Treatment OOF residual only",
+  "row_level_metrics": "actual clipped predictions, not quadratic estimates",
+  "rules": {
+    "external_OOF_bank_training_code_audited": false,
+    "seed_std_is_statistical_significance": false,
+    "source_preprocessing": "fit on source R rows only",
+    "target_correction_mean_subtracted": false,
+    "target_feature_history": "official seasons strictly before target year",
+    "test_read": false,
+    "test_row_aggregation": false
   },
-  "arms": {
-    "CONSTANT_S05": "all-R previous-year residual mean * 0.50",
-    "SENS25_SHIFT_ALLR_S075": "no-intercept Sens25 * .75 on all R; rresid_v002 comparison",
-    "SENS25_SHIFT_CORE_S075": "no-intercept Sens25 * .75 on CORE only; primary router audit",
-    "SENS25_REFERENCE_CORE_S075": "intercept Sens25 * .75 on CORE only; Level diagnostic",
-    "CONST_S05_PLUS_SENS25_SHIFT_CORE_S075": "constant .50 all R + no-intercept Sens25 .75 CORE only"
+  "runtime": {
+    "numpy": "1.26.4",
+    "pandas": "2.0.3",
+    "python": "3.11.15",
+    "sklearn": "1.8.0"
   },
-  "gates": {
-    "SENS25_SHIFT_CORE_S075": {
-      "2024_allR_total_3of3_positive": false,
-      "2024_allR_shape_3of3_positive": false,
-      "2024_allR_mean_total_positive": false,
-      "2024_allR_mean_shape_positive": false,
-      "2024_core_total_3of3_positive": false,
-      "2024_core_shape_3of3_positive": false,
-      "2024_core_mean_total_pt": -3.1427609393279936,
-      "2024_core_mean_shape_pt": -6.032394237844201,
-      "temporal_allR_total_positive_years": 3,
-      "temporal_allR_shape_positive_years": 3,
-      "diagnostic_g23_ge_8": true,
-      "diagnostic_g24_ge_10": false,
-      "diagnostic_core24_ge_15": false
+  "scale_grid": [
+    0.0,
+    0.025,
+    0.05,
+    0.1,
+    0.15,
+    0.2,
+    0.25,
+    0.35,
+    0.5,
+    0.75,
+    1.0
+  ],
+  "seed_predictions_averaged": false,
+  "selection": {
+    "RIDGE_CODED49": {
+      "family": "RIDGE_CODED49",
+      "max_abs_year_mean_level_pt": 39.773054243429755,
+      "mean_total_gain_pt": 44.80113596760875,
+      "positive_shape_seed_fold_count": 6,
+      "positive_shape_year_count": 2,
+      "reason": "maximize equal-weight mean of discovery-year mean Shape gains; ties choose smaller scale; scale 0 allows no change",
+      "scale": 0.5,
+      "score_equal_year_mean_shape_pt": 30.817602837101077,
+      "worst_year_mean_shape_pt": -31.89161633567716
     },
-    "CONST_S05_PLUS_SENS25_SHIFT_CORE_S075": {
-      "2024_allR_total_3of3_positive": true,
-      "2024_allR_shape_3of3_positive": false,
-      "2024_allR_mean_total_positive": true,
-      "2024_allR_mean_shape_positive": false,
-      "2024_core_total_3of3_positive": true,
-      "2024_core_shape_3of3_positive": false,
-      "2024_core_mean_total_pt": 36.54723526141877,
-      "2024_core_mean_shape_pt": -6.032394237847909,
-      "temporal_allR_total_positive_years": 4,
-      "temporal_allR_shape_positive_years": 3,
-      "diagnostic_g23_ge_8": true,
-      "diagnostic_g24_ge_10": true,
-      "diagnostic_core24_ge_15": true
+    "RIDGE_SENS25": {
+      "family": "RIDGE_SENS25",
+      "max_abs_year_mean_level_pt": 4.696930708806703,
+      "mean_total_gain_pt": 28.165232569822624,
+      "positive_shape_seed_fold_count": 9,
+      "positive_shape_year_count": 3,
+      "reason": "maximize equal-weight mean of discovery-year mean Shape gains; ties choose smaller scale; scale 0 allows no change",
+      "scale": 0.75,
+      "score_equal_year_mean_shape_pt": 30.23807251005674,
+      "worst_year_mean_shape_pt": 7.052505979177655
     }
   },
-  "diagnostics": [
-    {
-      "source_year": 2020,
-      "target_year": 2021,
-      "base_seed": 42,
-      "source_residual_mean": -0.016802504163735098,
-      "source_residual_std": 0.497452585323415,
-      "core_share_target_R": 0.8034326732270474,
-      "sens_mu_abs_mean": 0.171637769712825,
-      "sens_sd_mean": 0.27746801069820465,
-      "reference_intercept": -0.016802118851473355,
-      "coef_gap_max": 0.008696971929687004,
-      "shift_coef_l2": 0.029721847420628663,
-      "source_shift_corr_mean": -7.004229579075282e-05,
-      "source_reference_corr_mean": -0.0168025041637351
-    },
-    {
-      "source_year": 2020,
-      "target_year": 2021,
-      "base_seed": 314,
-      "source_residual_mean": -0.015149631567753225,
-      "source_residual_std": 0.49745752553773914,
-      "core_share_target_R": 0.8034326732270474,
-      "sens_mu_abs_mean": 0.171637769712825,
-      "sens_sd_mean": 0.27746801069820465,
-      "reference_intercept": -0.015149700473437725,
-      "coef_gap_max": 0.007841575148711654,
-      "shift_coef_l2": 0.029134680606133202,
-      "source_shift_corr_mean": -6.273702496199835e-05,
-      "source_reference_corr_mean": -0.015149631567753225
-    },
-    {
-      "source_year": 2020,
-      "target_year": 2021,
-      "base_seed": 2026,
-      "source_residual_mean": -0.016765447345401422,
-      "source_residual_std": 0.4974493049466629,
-      "core_share_target_R": 0.8034326732270474,
-      "sens_mu_abs_mean": 0.171637769712825,
-      "sens_sd_mean": 0.27746801069820465,
-      "reference_intercept": -0.016765357666694458,
-      "coef_gap_max": 0.008677912566200837,
-      "shift_coef_l2": 0.03200568021964767,
-      "source_shift_corr_mean": -6.959417592905045e-05,
-      "source_reference_corr_mean": -0.01676544734540142
-    },
-    {
-      "source_year": 2021,
-      "target_year": 2022,
-      "base_seed": 42,
-      "source_residual_mean": -0.004112440664319701,
-      "source_residual_std": 0.4985852120314927,
-      "core_share_target_R": 0.8027591418460631,
-      "sens_mu_abs_mean": 0.1749759452813867,
-      "sens_sd_mean": 0.2782545367100757,
-      "reference_intercept": -0.004114257848312784,
-      "coef_gap_max": 0.0005185741803966404,
-      "shift_coef_l2": 0.018457453996074635,
-      "source_shift_corr_mean": -1.144932780489054e-06,
-      "source_reference_corr_mean": -0.004112440664319698
-    },
-    {
-      "source_year": 2021,
-      "target_year": 2022,
-      "base_seed": 314,
-      "source_residual_mean": -0.005339770431516834,
-      "source_residual_std": 0.49862340273312283,
-      "core_share_target_R": 0.8027591418460631,
-      "sens_mu_abs_mean": 0.1749759452813867,
-      "sens_sd_mean": 0.2782545367100757,
-      "reference_intercept": -0.0053390750790319325,
-      "coef_gap_max": 0.0011590664081577843,
-      "shift_coef_l2": 0.019767016523803936,
-      "source_shift_corr_mean": -6.4042598597215865e-06,
-      "source_reference_corr_mean": -0.005339770431516833
-    },
-    {
-      "source_year": 2021,
-      "target_year": 2022,
-      "base_seed": 2026,
-      "source_residual_mean": -0.007152266914095632,
-      "source_residual_std": 0.49859606852681704,
-      "core_share_target_R": 0.8027591418460631,
-      "sens_mu_abs_mean": 0.1749759452813867,
-      "sens_sd_mean": 0.2782545367100757,
-      "reference_intercept": -0.0071555673652154575,
-      "coef_gap_max": 0.0012364744331026312,
-      "shift_coef_l2": 0.020476268305436918,
-      "source_shift_corr_mean": -3.375935913375553e-06,
-      "source_reference_corr_mean": -0.007152266914095632
-    },
-    {
-      "source_year": 2022,
-      "target_year": 2023,
-      "base_seed": 42,
-      "source_residual_mean": -0.003301340406420128,
-      "source_residual_std": 0.4982956030543123,
-      "core_share_target_R": 0.7996078948685175,
-      "sens_mu_abs_mean": 0.17927640108741674,
-      "sens_sd_mean": 0.2747559197357112,
-      "reference_intercept": -0.0033015916925668615,
-      "coef_gap_max": 0.0010978705335232194,
-      "shift_coef_l2": 0.019103909181683892,
-      "source_shift_corr_mean": -1.2120760424145295e-05,
-      "source_reference_corr_mean": -0.0033013404064201283
-    },
-    {
-      "source_year": 2022,
-      "target_year": 2023,
-      "base_seed": 314,
-      "source_residual_mean": -0.003268761599558272,
-      "source_residual_std": 0.4983197065531447,
-      "core_share_target_R": 0.7996078948685175,
-      "sens_mu_abs_mean": 0.17927640108741674,
-      "sens_sd_mean": 0.2747559197357112,
-      "reference_intercept": -0.0032697080324553657,
-      "coef_gap_max": 0.001077970360685024,
-      "shift_coef_l2": 0.020992211179695873,
-      "source_shift_corr_mean": -1.1213694914082138e-05,
-      "source_reference_corr_mean": -0.003268761599558273
-    },
-    {
-      "source_year": 2022,
-      "target_year": 2023,
-      "base_seed": 2026,
-      "source_residual_mean": -0.0020957893442986324,
-      "source_residual_std": 0.4982547962255495,
-      "core_share_target_R": 0.7996078948685175,
-      "sens_mu_abs_mean": 0.17927640108741674,
-      "sens_sd_mean": 0.2747559197357112,
-      "reference_intercept": -0.0020977932244236755,
-      "coef_gap_max": 0.000685940749405155,
-      "shift_coef_l2": 0.018824322783326516,
-      "source_shift_corr_mean": -5.756979436664635e-06,
-      "source_reference_corr_mean": -0.002095789344298632
-    },
-    {
-      "source_year": 2023,
-      "target_year": 2024,
-      "base_seed": 42,
-      "source_residual_mean": -0.024146172865724225,
-      "source_residual_std": 0.49932792306188556,
-      "core_share_target_R": 0.7996930607569677,
-      "sens_mu_abs_mean": 0.1810044742303711,
-      "sens_sd_mean": 0.2742846369761276,
-      "reference_intercept": -0.024102302297622,
-      "coef_gap_max": 0.015662894188561573,
-      "shift_coef_l2": 0.043441498604457576,
-      "source_shift_corr_mean": -0.00020520509985301667,
-      "source_reference_corr_mean": -0.02414617286572423
-    },
-    {
-      "source_year": 2023,
-      "target_year": 2024,
-      "base_seed": 314,
-      "source_residual_mean": -0.0210147854053792,
-      "source_residual_std": 0.4991550036842649,
-      "core_share_target_R": 0.7996930607569677,
-      "sens_mu_abs_mean": 0.1810044742303711,
-      "sens_sd_mean": 0.2742846369761276,
-      "reference_intercept": -0.020972470328448397,
-      "coef_gap_max": 0.013706023258881504,
-      "shift_coef_l2": 0.03938666306391813,
-      "source_shift_corr_mean": -0.00018347216138822094,
-      "source_reference_corr_mean": -0.021014785405379197
-    },
-    {
-      "source_year": 2023,
-      "target_year": 2024,
-      "base_seed": 2026,
-      "source_residual_mean": -0.02275509673875007,
-      "source_residual_std": 0.499231488001041,
-      "core_share_target_R": 0.7996930607569677,
-      "sens_mu_abs_mean": 0.1810044742303711,
-      "sens_sd_mean": 0.2742846369761276,
-      "reference_intercept": -0.022712653400290314,
-      "coef_gap_max": 0.014726224344016266,
-      "shift_coef_l2": 0.04085637886315404,
-      "source_shift_corr_mean": -0.00019412938207208038,
-      "source_reference_corr_mean": -0.022755096738750074
-    }
+  "selection_rule": "equal-year mean Shape; ties smaller scale; scale <= native",
+  "selection_sha256": "beef7769a5cc1b48280a1efc8c08ed8ac8e3225ea3b6a19b6d509d0e988ebcd5",
+  "selection_years": [
+    2021,
+    2022,
+    2023
   ],
-  "rule_compliance": {
-    "official_train_labels_only": true,
-    "test_rows_used": false,
-    "test_row_aggregation": false,
-    "residual_source": "strictly previous OOF season only",
-    "sensitivity_history": "official labeled seasons strictly before each cutoff year",
-    "router_current_transition_source": "only F covariates through source_year; no target labels used"
+  "source_files": {
+    "frozen_bank": {
+      "path": "/home/brik0519/AIMERS2026/validation/rresid_v001/residual_bank.csv",
+      "sha256": "401f0c661b8b7155a27d3e31f581597e1bd8f4dd6e752df2d7066e1af20d31f0"
+    },
+    "official_train": {
+      "path": "/home/brik0519/AIMERS2026/data/train.csv",
+      "sha256": "d2081186b458b49f60b082be480c273135833e15ba59a76d033af28bcf8763ff"
+    },
+    "this_script": {
+      "path": "/home/brik0519/AIMERS2026/train2.py",
+      "sha256": "baf14e568cbfcf78e1d476701c1052704e649992e44cf4a6a0875a02c6d5af6a"
+    },
+    "v002_metrics": {
+      "path": "/home/brik0519/AIMERS2026/validation/rresid_v002/ridge_metrics.csv",
+      "sha256": "f327be88d8cb6927da1f1b90b1e3a2b25902b47135d93cf77cb455fae935dd22"
+    },
+    "v002_predictions": {
+      "path": "/home/brik0519/AIMERS2026/validation/rresid_v002/ridge_predictions.csv",
+      "sha256": "d2f024a3646a7be655adebf19f2c1b4a250e4e95cd3476a71a986c9b3c68afeb"
+    }
   },
-  "scope_note": "This is not a full reproduction of shift_v003 Phase 5: base is Treatment R OOF, and F residuals are excluded from Ridge fit. It isolates Sens25 + CORE routing for the current R branch.",
-  "outputs": {
-    "transition_metrics": "validation/rresid_v003/transition_metrics.csv",
-    "segment_metrics": "validation/rresid_v003/segment_metrics.csv",
-    "predictions": "validation/rresid_v003/predictions.csv",
-    "year_summary": "validation/rresid_v003/year_summary.csv",
-    "seed_summary": "validation/rresid_v003/seed_summary.csv",
-    "router_audit": "validation/rresid_v003/router_audit.csv"
-  },
-  "elapsed_seconds": 74.65789675712585
+  "source_mode": "replay_frozen_v002_corrections",
+  "status": "complete",
+  "target_year_correction_recentered": false,
+  "validation_only": true
 }

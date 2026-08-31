@@ -1,0 +1,3930 @@
+#train.py 
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import time
+import math
+from dataclasses import dataclass, field, asdict
+from pathlib import Path
+
+import joblib
+import numpy as np
+import pandas as pd
+from catboost import CatBoostRegressor
+from sklearn.ensemble import ExtraTreesRegressor
+
+
+# =============================================================================
+# Config
+# =============================================================================
+
+EXPERIMENT_NAME = "danker_v004"
+
+DATA_DIR = Path("./data")
+TRAIN_PATH = DATA_DIR / "train.csv"
+
+MODEL_ROOT = Path("./model")
+MODEL_DIR = MODEL_ROOT / EXPERIMENT_NAME
+MODEL_PATH = MODEL_DIR / f"{EXPERIMENT_NAME}.pkl"
+META_PATH = MODEL_DIR / "final_metadata.json"
+
+VALIDATION_ROOT = Path("./validation")
+VALIDATION_DIR = VALIDATION_ROOT / EXPERIMENT_NAME
+OOF_2024_PATH = VALIDATION_DIR / "l1_2024_oof.csv"
+FOLD4_META_PATH = VALIDATION_DIR / "fold4_metadata.json"
+
+OUTPUT_DIR = Path("./output")
+
+TEST_PATH = DATA_DIR / "test.csv"
+SAMPLE_SUB_PATH = DATA_DIR / "sample_submission.csv"
+OUTPUT_PATH = OUTPUT_DIR / "submission.csv"
+
+ID = "row_id"
+TARGET = "control_success"
+SEASON_COL = "season"
+GAME_TYPE_COL = "game_type"
+
+BASE_SEED = 42
+SOURCE_YEAR = 2024
+EXPECTED_TARGET_YEAR = 2025
+
+CAT_COLS = [
+    "top_bottom", "game_type", "base_state", "pitcher_id", "batter_id",
+    "pitcher_team_id", "batter_team_id", "pitcher_hand", "batter_hand",
+]
+
+EXACT_FEATURES = [
+    "exact_pitcher_season_n",
+    "exact_pitcher_season_logn",
+    "exact_pitcher_season_success_rate",
+    "exact_pitcher_past_success_rate",
+    "exact_pitcher_season_minus_past",
+]
+
+HBEB_CONFIGS = [
+    {
+        "group_cols": ["pitcher_hand"],
+        "n_col": "asof_pitcher_n",
+        "rate_col": "asof_pitcher_success_rate",
+        "new_col": "hbeb_pitcher_success_rate",
+    },
+    {
+        "group_cols": ["batter_hand"],
+        "n_col": "asof_batter_n",
+        "rate_col": "asof_batter_success_rate",
+        "new_col": "hbeb_batter_success_rate",
+    },
+]
+
+MODEL_PARAMS = {
+    "iterations": 800,
+    "learning_rate": 0.07,
+    "depth": 8,
+    "loss_function": "RMSE",
+    "l2_leaf_reg": 10.0,
+    "random_strength": 1.0,
+    "random_seed": BASE_SEED,
+    "max_ctr_complexity": 1,
+    "thread_count": -1,
+    "verbose": 100,
+    "allow_writing_files": False,
+}
+EARLY_STOPPING_ROUNDS = 80
+
+EXPECTED_CONTROL_FEATURES = 52
+EXPECTED_TREATMENT_FEATURES = 86
+
+# -----------------------------------------------------------------------------
+# Validated F Dynamic-ASOF blend (fanchor_blend_v001 -> danker_v001)
+# -----------------------------------------------------------------------------
+# Previous anchor:
+#   career-to-date pitcher history + previous-season league prior (EB strength=100)
+# Dynamic update:
+#   A_t = (1-alpha_t) * A_prev + alpha_t * R_t
+#   alpha_t = lambda * n_t / (n_t + kappa)
+# Final F route:
+#   0.75 * Control + 0.25 * Dynamic-ASOF residual model
+#
+# These values are intentionally frozen from the confirmatory experiment.
+ANCHOR_STRENGTH = 100.0
+ANCHOR_FALLBACK_RATE = 0.5
+DYNAMIC_LAMBDA = 1.0
+DYNAMIC_KAPPA = 100.0
+F_BLEND_WEIGHT = 0.25
+
+PC_CONTEXTS = [
+    ("v15_count", 28.0),
+    ("batter_hand", 35.0),
+    ("v15_inning_phase", 35.0),
+    ("base_state", 35.0),
+    ("v15_pressure", 28.0),
+    ("v15_runners", 35.0),
+    ("v15_li_bucket", 35.0),
+]
+PC_PARENT_STRENGTH = 80.0
+PC_FIELDS = ("rate", "reliability", "delta")
+PC_FEATURES = [
+    f"pc__{ctx}__{field}"
+    for ctx, _ in PC_CONTEXTS
+    for field in PC_FIELDS
+]
+
+# L2 reference-style adapter settings used in the validated D0 line.
+V15_CF_CFG = {
+    "n_estimators": 100,
+    "max_depth": 10,
+    "min_samples_leaf": 200,
+    "max_features": 0.7,
+}
+FINAL_ADAPTER_CFG = {
+    "n_estimators": 120,
+    "max_depth": 10,
+    "min_samples_leaf": 200,
+    "max_features": 0.7,
+}
+ADAPTER_SEEDS = [42, 2026, 314]
+ADAPTER_SHRINK = 0.50
+
+# =============================================================================
+# danker_v003 — 구조 플래그 (38_danker_v002_구조개편_설계_v001.md §7-0)
+# =============================================================================
+# 이 파일이 단일 진실원이다. E0 중립 설정(W_R=0, L2_APPLY_F=False,
+# L2_TRAIN_ON_ALL=False, SHIFT_SCALE=0, AFFINE_ALPHA=1)에서 danker_v002 와
+# 비트 단위 동일해야 한다. 각 실험은 아래 중 "정확히 하나"만 바꾼다.
+
+SEEDS = (42, 2026, 314)
+FOLDS = (2021, 2022, 2023, 2024)
+PRIMARY_FOLD = 2024
+F_LABEL = "F"
+BRANCHES = ("ALL", "R", "F")
+
+LS_METRICS_PATH = VALIDATION_DIR / "ls_metrics.csv"
+GATE_PATH = VALIDATION_DIR / "gate.json"
+
+# --- E5: L1 시드평균 -----------------------------------------------------------
+# L2 는 ADAPTER_SEEDS 로 이미 3 시드를 평균하는데 L1 은 단일 시드였다.
+# 43_* §4 실측(2024 R행 Δshape, 단일시드 대비):
+#     W_R=0.25 단독 +12.06   |   L1 3시드평균 +16.81   |   6시드평균 +20.96
+#     그러나 2023 체제단절에서는 시드평균 +3.2 vs W_R +190.6 — 둘은 보완재다.
+# fold 도 같은 시드로 돌려 **시드평균된 L1 OOF** 로 L2 를 적합한다.
+#     그렇지 않으면 L2 가 학습한 base_pred(단일시드)와 배포 base_pred(시드평균)가
+#     어긋난다 — 2024 실측 std 기준 13.3% (W_R 도입 때의 10.2% 보다 크다).
+# 트리 수는 각 시드가 자기 fold 의 best iteration 을 쓴다.
+# L1_SEEDS = (BASE_SEED,) 이면 시드평균 도입 이전과 비트 단위 동일하다.
+#
+# 🚩 danker_v004 = 제출 A (E5 단독).
+#     v003(W_R=0.25, L1_SEEDS=(42,)) 대비 **이 상수 하나만** 바뀐다.
+#     45_* §1 실측: 배포 기준(seed 42) 대비 R행 Δshape
+#       2021 +9.71   2022 +27.00   2023 +10.94   2024 +14.90   → 4/4 양수
+#     Jensen 부등식으로 "개별 시드 평균보다 나쁘지 않음"이 보장된다 (4/4 확인).
+L1_SEEDS = (42, 2026, 314)
+# L1_SEEDS = (42,)                # E5 를 끄고 v003 재현할 때
+
+# --- E2b: 라우팅을 곱셈 가중치로. W_R=0 이면 v002 와 수학적으로 동일 -------------
+W_R = 0.25
+# W_F 는 아래 F_BLEND_WEIGHT (fanchor_blend_v001 검증 완료, 고정)
+
+# --- E1a / E1b: L2 잔차 어댑터의 적용 범위와 학습 범위 --------------------------
+L2_APPLY_F = False
+L2_TRAIN_ON_ALL = False
+
+# --- E2a: Dynamic 잔차 모델을 전 행으로 학습 -----------------------------------
+DYNAMIC_TRAIN_ON_ALL = False
+
+# --- E3c: 가산 보정항 (절편 없는 Ridge) ----------------------------------------
+SHIFT_SCALE = 0.0
+SHIFT_RIDGE_ALPHA = 1e3
+SHIFT_FIT_INTERCEPT = False          # 영구 False. 변경 금지.
+SHIFT_CLIP = 8.0
+
+# --- E3d: 대비 가산표 (06 방식) ------------------------------------------------
+ADD_TABLE_SPECS = ()
+
+# --- E3b: 최종 아핀 (절편 0 판본) ----------------------------------------------
+AFFINE_ALPHA = 1.0
+AFFINE_CENTER = 0.5
+AFFINE_OFFSET = 0.0                  # 영구 0. 탐색 대상 아님. (38_* §5)
+AFFINE_ALPHA_SEARCH = (0.95, 1.00, 1.05, 1.10)
+
+# --- E4: L1 타겟 정의 ----------------------------------------------------------
+L1_TARGET_MODE = "direct"            # "direct" | "anchor_residual"
+
+# --- 게이트 상수 (38_* §8-5) — 단위는 within-branch ----------------------------
+R_SIZE_THRESHOLD = 5.0
+F_SIZE_THRESHOLD = 10.0
+R_LEVEL_ABS_MAX = 5.0
+F_LEVEL_MIN = -10.0
+F_SHAPE_MIN = -5.0
+R_SHAPE_MIN = -10.0
+UNCERTAIN_Z = 2.0
+
+# --- 참고값 (진단용, 판정에 직접 쓰지 않는다) ----------------------------------
+B0_ALL_REF = 0.2498390                # 1 BSS pt = 2.4984e-6 Brier
+V001_F_GAIN_WITHIN_REF = 22.166       # blend_gain_2024_F_pt (E2a 하한 기준)
+
+
+def assert_invariants():
+    """설정 자체가 설계 규약을 어기지 않는지 검사한다."""
+    if AFFINE_OFFSET != 0.0:
+        raise ValueError("AFFINE_OFFSET must stay 0.0 — 절편은 시즌을 건너지 못한다 (38_* §5)")
+    if SHIFT_FIT_INTERCEPT:
+        raise ValueError("SHIFT_FIT_INTERCEPT must stay False — 가산항의 중립값은 정확히 0")
+    if not (0.0 <= W_R <= 1.0) or not (0.0 <= F_BLEND_WEIGHT <= 1.0):
+        raise ValueError("W_R / F_BLEND_WEIGHT must lie in [0, 1]")
+    if L1_TARGET_MODE not in ("direct", "anchor_residual"):
+        raise ValueError(f"unknown L1_TARGET_MODE: {L1_TARGET_MODE!r}")
+    if len(SEEDS) < 2:
+        raise ValueError("seed 표준편차를 낼 수 없다 — SEEDS 는 2개 이상")
+    if len(L1_SEEDS) < 1 or len(set(L1_SEEDS)) != len(L1_SEEDS):
+        raise ValueError(f"L1_SEEDS 가 비었거나 중복이다: {L1_SEEDS}")
+
+
+def is_neutral():
+    """E0 중립 설정인가? True 면 danker_v002 와 비트 동일해야 한다."""
+    return (
+        tuple(L1_SEEDS) == (BASE_SEED,)
+        and W_R == 0.0
+        and not L2_APPLY_F
+        and not L2_TRAIN_ON_ALL
+        and not DYNAMIC_TRAIN_ON_ALL
+        and SHIFT_SCALE == 0.0
+        and len(ADD_TABLE_SPECS) == 0
+        and AFFINE_ALPHA == 1.0
+        and AFFINE_OFFSET == 0.0
+        and L1_TARGET_MODE == "direct"
+    )
+
+
+def freeze():
+    """artifact(pkl)에 담을 상수 묶음.
+
+    script.py 는 추론 시 **이 값들만** 참조한다. test 데이터에서 어떤 상수도
+    재추정하지 않는다 (평가 데이터 독립 추론 규칙).
+    """
+    assert_invariants()
+    return {
+        "experiment_name": EXPERIMENT_NAME,
+        "expected_target_year": EXPECTED_TARGET_YEAR,
+        "w_r": float(W_R),
+        "l1_seeds": [int(x) for x in L1_SEEDS],
+        "w_f": float(F_BLEND_WEIGHT),
+        "l2_apply_f": bool(L2_APPLY_F),
+        "l2_train_on_all": bool(L2_TRAIN_ON_ALL),
+        "l2_shrink": float(ADAPTER_SHRINK),
+        "dynamic_train_on_all": bool(DYNAMIC_TRAIN_ON_ALL),
+        "dynamic_lambda": float(DYNAMIC_LAMBDA),
+        "dynamic_kappa": float(DYNAMIC_KAPPA),
+        "shift_scale": float(SHIFT_SCALE),
+        "shift_clip": float(SHIFT_CLIP),
+        "affine_alpha": float(AFFINE_ALPHA),
+        "affine_center": float(AFFINE_CENTER),
+        "affine_offset": float(AFFINE_OFFSET),
+        "l1_target_mode": str(L1_TARGET_MODE),
+        "is_neutral": is_neutral(),
+    }
+
+
+
+# =============================================================================
+# danker_v003 — Brier Level/Shape 분해 및 ls_metrics (38_* §8-1~§8-2)
+# =============================================================================
+
+BSS_SCALE = 1e5
+
+
+# =========================================================
+# 기본 분해
+# =========================================================
+def brier_parts(p, y) -> tuple[float, float, float]:
+    """(brier, level, shape) 를 반환. shape 는 brier - level 로 정의한다."""
+    p = np.asarray(p, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    if p.shape != y.shape:
+        raise ValueError(f"shape mismatch: {p.shape} vs {y.shape}")
+    if p.size == 0:
+        return float("nan"), float("nan"), float("nan")
+    if not np.isfinite(p).all() or not np.isfinite(y).all():
+        raise ValueError("non-finite value in p or y")
+
+    d = p - y
+    brier = float(np.mean(d * d))
+    level = float(np.mean(d) ** 2)
+    shape = brier - level
+    return brier, level, shape
+
+
+def b0_of(y) -> float:
+    """기준 Brier B0 = r(1-r). 이진 y 에서 Var(y) 와 같다."""
+    y = np.asarray(y, dtype=np.float64)
+    r = float(np.mean(y))
+    return r * (1.0 - r)
+
+
+def bss_of(brier: float, b0: float) -> float:
+    """공식 산식. max(0, .) 클리핑은 여기서 하지 않는다 (진단용 원값 보존)."""
+    if not np.isfinite(b0) or b0 <= 0.0:
+        return float("nan")
+    return BSS_SCALE * (1.0 - brier / b0)
+
+
+# =========================================================
+# 한 (fold, seed, branch) 행
+# =========================================================
+@dataclass(frozen=True)
+class BranchRow:
+    experiment: str
+    fold: int
+    seed: int
+    branch: str
+    n: int
+    b0: float
+    brier: float
+    level: float
+    shape: float
+    bss: float
+
+    @staticmethod
+    def build(experiment: str, fold: int, seed: int, branch: str, p, y) -> "BranchRow":
+        brier, level, shape = brier_parts(p, y)
+        b0 = b0_of(y)
+        return BranchRow(
+            experiment=str(experiment),
+            fold=int(fold),
+            seed=int(seed),
+            branch=str(branch),
+            n=int(np.asarray(y).size),
+            b0=b0,
+            brier=brier,
+            level=level,
+            shape=shape,
+            bss=bss_of(brier, b0),
+        )
+
+
+def split_branches(
+    y,
+    p,
+    game_type,
+    f_label: str = "F",
+) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """ALL / R / F 로 나눈 (p, y) 쌍을 돌려준다. 행 순서는 보존한다."""
+    y = np.asarray(y, dtype=np.float64)
+    p = np.asarray(p, dtype=np.float64)
+    gt = pd.Series(game_type).fillna("__MISSING__").astype(str).to_numpy()
+    if not (len(y) == len(p) == len(gt)):
+        raise ValueError("length mismatch among y / p / game_type")
+
+    f_mask = gt == f_label
+    r_mask = ~f_mask
+    return {
+        "ALL": (p, y),
+        "R": (p[r_mask], y[r_mask]),
+        "F": (p[f_mask], y[f_mask]),
+    }
+
+
+def fold_seed_rows(
+    experiment: str,
+    fold: int,
+    seed: int,
+    y,
+    p,
+    game_type,
+    f_label: str = "F",
+) -> list[BranchRow]:
+    parts = split_branches(y, p, game_type, f_label=f_label)
+    return [
+        BranchRow.build(experiment, fold, seed, br, pp, yy)
+        for br, (pp, yy) in parts.items()
+        if len(yy) > 0
+    ]
+
+
+def rows_to_frame(rows) -> pd.DataFrame:
+    return pd.DataFrame([asdict(r) for r in rows])
+
+
+# =========================================================
+# paired delta
+# =========================================================
+def paired_delta(
+    base: pd.DataFrame,
+    cand: pd.DataFrame,
+    b0_all_by_fold: dict[int, float] | None = None,
+    n_all_by_fold: dict[int, float] | None = None,
+) -> pd.DataFrame:
+    """동일 (fold, seed, branch) 끼리 짝지어 delta 를 계산한다.
+
+    개선(= Brier 감소)이 양수가 되도록 부호를 잡는다.
+
+        d_bss_within = (brier_base - brier_cand) / b0_branch * 1e5
+        d_bss_total  = (brier_base - brier_cand) * (n_b/n_all) / b0_all * 1e5
+
+    level / shape 도 같은 분모로 나누므로 d_total = d_level + d_shape 가 성립한다.
+    b0 는 y 에만 의존하고 base/cand 가 같은 행을 보므로 두 표에서 동일하다.
+    """
+    keys = ["fold", "seed", "branch"]
+    for name, df in (("base", base), ("cand", cand)):
+        missing = set(keys) - set(df.columns)
+        if missing:
+            raise KeyError(f"{name} frame missing {sorted(missing)}")
+
+    m = base.merge(cand, on=keys, suffixes=("_base", "_cand"), how="inner")
+    if len(m) == 0:
+        raise ValueError("paired_delta: 짝지어진 행이 없다 (fold/seed/branch 불일치)")
+    if not np.allclose(m["n_base"], m["n_cand"]):
+        raise ValueError("paired_delta: base/cand 의 행 수가 다르다 — paired 비교 불가")
+    if not np.allclose(m["b0_base"], m["b0_cand"], atol=1e-12):
+        raise ValueError("paired_delta: base/cand 의 B0 가 다르다 — 같은 행이 아니다")
+
+    if b0_all_by_fold is None:
+        b0_all_by_fold = (
+            m.loc[m.branch == "ALL"].set_index("fold")["b0_base"].to_dict()
+        )
+    if n_all_by_fold is None:
+        n_all_by_fold = (
+            m.loc[m.branch == "ALL"].set_index("fold")["n_base"].to_dict()
+        )
+
+    b0_branch = m["b0_base"].to_numpy(dtype=np.float64)
+    b0_all = m["fold"].map(b0_all_by_fold).to_numpy(dtype=np.float64)
+    n_all = m["fold"].map(n_all_by_fold).to_numpy(dtype=np.float64)
+    share = m["n_base"].to_numpy(dtype=np.float64) / n_all
+
+    out = m[keys].copy()
+    out["n"] = m["n_base"].to_numpy()
+    out["b0"] = b0_branch
+    out["share"] = share
+
+    for comp in ("brier", "level", "shape"):
+        d_raw = m[f"{comp}_base"].to_numpy(np.float64) - m[f"{comp}_cand"].to_numpy(np.float64)
+        out[f"d_{comp}"] = d_raw
+        name = "total" if comp == "brier" else comp
+        out[f"d_{name}_within"] = d_raw / b0_branch * BSS_SCALE
+        out[f"d_{name}_total"] = d_raw * share / b0_all * BSS_SCALE
+
+    out["bss_base"] = m["bss_base"].to_numpy()
+    out["bss_cand"] = m["bss_cand"].to_numpy()
+
+    # 항등식 검사: total = level + shape (수치 오차 범위)
+    resid = out["d_total_within"] - (out["d_level_within"] + out["d_shape_within"])
+    if not np.allclose(resid, 0.0, atol=1e-6):
+        raise AssertionError(
+            f"Level/Shape 가산 항등식 위반: max |resid| = {np.abs(resid).max():.3e}"
+        )
+    return out
+
+
+# =========================================================
+# 산출
+# =========================================================
+LS_COLUMNS = [
+    "experiment", "fold", "seed", "branch", "n", "share", "b0",
+    "brier", "level", "shape", "bss",
+    "d_brier", "d_level", "d_shape",
+    "d_total_within", "d_level_within", "d_shape_within",
+    "d_total_total", "d_level_total", "d_shape_total",
+]
+
+
+def build_ls_metrics(
+    cand_rows,
+    base_rows=None,
+    experiment: str | None = None,
+) -> pd.DataFrame:
+    """ls_metrics.csv 로 저장할 표를 만든다.
+
+    base_rows 가 없으면 절대값만 담는다(D0 기준선 생성용).
+    있으면 paired delta 열을 붙인다.
+    """
+    cand = rows_to_frame(cand_rows) if not isinstance(cand_rows, pd.DataFrame) else cand_rows.copy()
+    if experiment is not None:
+        cand["experiment"] = experiment
+
+    n_all = cand.loc[cand.branch == "ALL"].set_index(["fold", "seed"])["n"]
+    cand["share"] = [
+        row["n"] / n_all.get((row["fold"], row["seed"]), np.nan)
+        for _, row in cand.iterrows()
+    ]
+
+    if base_rows is None:
+        for c in LS_COLUMNS:
+            if c not in cand.columns:
+                cand[c] = np.nan
+        return cand[LS_COLUMNS].sort_values(["fold", "seed", "branch"]).reset_index(drop=True)
+
+    base = rows_to_frame(base_rows) if not isinstance(base_rows, pd.DataFrame) else base_rows.copy()
+    d = paired_delta(base, cand)
+    merged = cand.merge(
+        d.drop(columns=["n", "b0", "share"]),
+        on=["fold", "seed", "branch"],
+        how="left",
+    )
+    for c in LS_COLUMNS:
+        if c not in merged.columns:
+            merged[c] = np.nan
+    return merged[LS_COLUMNS].sort_values(["fold", "seed", "branch"]).reset_index(drop=True)
+
+
+def save_ls_metrics(df: pd.DataFrame, path) -> None:
+    from pathlib import Path
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(path, index=False, float_format="%.10g")
+
+
+# =============================================================================
+# danker_v003 — R/F 게이트 판정 (38_* §8-5, 2026-08-30 정정본)
+# =============================================================================
+
+PASS = "PASS"
+WEAK_POSITIVE = "WEAK_POSITIVE"
+UNCERTAIN = "UNCERTAIN"
+FAIL = "FAIL"
+
+
+# =========================================================
+# 시드 통계
+# =========================================================
+@dataclass(frozen=True)
+class SeedStat:
+    metric: str
+    values: tuple
+    k: int
+    mean: float
+    std: float          # 표본표준편차 (ddof=1)
+    t_u: float          # 2*s/sqrt(k)
+    all_positive: bool
+
+    @staticmethod
+    def build(metric: str, values) -> "SeedStat":
+        v = np.asarray(list(values), dtype=np.float64)
+        if v.size == 0:
+            raise ValueError(f"{metric}: 시드 값이 없다")
+        if not np.isfinite(v).all():
+            raise ValueError(f"{metric}: 비유한 값 포함 {v}")
+        k = int(v.size)
+        std = float(np.std(v, ddof=1)) if k > 1 else 0.0
+        return SeedStat(
+            metric=metric,
+            values=tuple(float(x) for x in v),
+            k=k,
+            mean=float(np.mean(v)),
+            std=std,
+            t_u=float(UNCERTAIN_Z * std / math.sqrt(k)),
+            all_positive=bool(np.all(v > 0.0)),
+        )
+
+
+def _pull(df: pd.DataFrame, branch: str, column: str, fold: int) -> SeedStat:
+    """(fold, branch) 의 시드별 값을 뽑는다. seed 순서는 config.SEEDS 를 따른다."""
+    sub = df[(df.fold == fold) & (df.branch == branch)]
+    if len(sub) == 0:
+        raise KeyError(f"fold={fold} branch={branch} 행이 없다")
+    sub = sub.set_index("seed")
+    seeds = [s for s in SEEDS if s in sub.index]
+    missing = [s for s in SEEDS if s not in sub.index]
+    if missing:
+        raise KeyError(f"fold={fold} branch={branch}: seed {missing} 누락")
+    return SeedStat.build(f"{branch}.{column}", [float(sub.loc[s, column]) for s in seeds])
+
+
+# =========================================================
+# 판정 결과
+# =========================================================
+@dataclass
+class Verdict:
+    gate_type: str                  # "R" | "F"
+    experiment: str
+    fold: int
+    decision: str                   # PASS / WEAK_POSITIVE / UNCERTAIN / FAIL
+    primary_metric: str
+    primary: dict = field(default_factory=dict)
+    thresholds: dict = field(default_factory=dict)
+    gates: dict = field(default_factory=dict)
+    diag: dict = field(default_factory=dict)
+    reasons: list = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def _diag_block(df: pd.DataFrame, fold: int, names: list[tuple[str, str]]) -> dict:
+    out = {}
+    for branch, col in names:
+        try:
+            st = _pull(df, branch, col, fold)
+            out[f"{branch}.{col}"] = {"mean": st.mean, "std": st.std, "values": list(st.values)}
+        except KeyError:
+            out[f"{branch}.{col}"] = None
+    return out
+
+
+# =========================================================
+# R 게이트
+# =========================================================
+def evaluate_r_gate(
+    df: pd.DataFrame,
+    experiment: str = EXPERIMENT_NAME,
+    fold: int = PRIMARY_FOLD,
+) -> Verdict:
+    primary = _pull(df, "R", "d_shape_within", fold)
+    t_u = primary.t_u
+    t_p = max(R_SIZE_THRESHOLD, t_u)
+
+    v = Verdict(
+        gate_type="R",
+        experiment=experiment,
+        fold=fold,
+        decision=FAIL,
+        primary_metric="R.d_shape_within",
+        primary={
+            "mean": primary.mean,
+            "std": primary.std,
+            "values": list(primary.values),
+            "all_positive": primary.all_positive,
+            "k": primary.k,
+        },
+        thresholds={"T_u": t_u, "T_p": t_p, "size": R_SIZE_THRESHOLD},
+    )
+
+    r_level = _pull(df, "R", "d_level_within", fold)
+    f_level = _pull(df, "F", "d_level_within", fold)
+    v.gates = {
+        "gate1_abs_R_level<=5": {
+            "value": abs(r_level.mean),
+            "limit": R_LEVEL_ABS_MAX,
+            "ok": bool(abs(r_level.mean) <= R_LEVEL_ABS_MAX),
+            "raw_mean": r_level.mean,
+        },
+        "gate2_F_level>=-10": {
+            "value": f_level.mean,
+            "limit": F_LEVEL_MIN,
+            "ok": bool(f_level.mean >= F_LEVEL_MIN),
+        },
+    }
+    v.diag = _diag_block(
+        df, fold,
+        [("R", "d_total_within"), ("F", "d_shape_within"), ("ALL", "d_total_within")],
+    )
+
+    m = primary.mean
+    if m <= 0.0:
+        v.decision = FAIL
+        v.reasons.append(f"mean dR_shape = {m:.4f} <= 0")
+        return v
+    if m < t_u:
+        v.decision = UNCERTAIN
+        v.reasons.append(f"0 < mean {m:.4f} < T_u {t_u:.4f} — 시드 산포 대비 효과가 작다")
+        return v
+    if m < t_p:
+        v.decision = WEAK_POSITIVE
+        v.reasons.append(
+            f"T_u {t_u:.4f} <= mean {m:.4f} < 크기문턱 {R_SIZE_THRESHOLD} — 안정적이나 효과 크기 부족"
+        )
+        return v
+    if not primary.all_positive:
+        v.decision = FAIL
+        v.reasons.append(f"3/3 seed 양수 조건 미달: {list(primary.values)}")
+        return v
+
+    failed = [k for k, g in v.gates.items() if not g["ok"]]
+    if failed:
+        v.decision = FAIL
+        v.reasons.extend(f"{k} 위반 (value={v.gates[k]['value']:.4f})" for k in failed)
+        return v
+
+    v.decision = PASS
+    v.reasons.append(f"PRIMARY 통과 (mean {m:.4f} >= T_p {t_p:.4f}), 보조 게이트 전부 통과")
+    return v
+
+
+# =========================================================
+# F 게이트
+# =========================================================
+def evaluate_f_gate(
+    df: pd.DataFrame,
+    experiment: str = EXPERIMENT_NAME,
+    fold: int = PRIMARY_FOLD,
+) -> Verdict:
+    primary = _pull(df, "F", "d_total_within", fold)
+    t_u = primary.t_u
+    t_p = max(F_SIZE_THRESHOLD, t_u)
+
+    v = Verdict(
+        gate_type="F",
+        experiment=experiment,
+        fold=fold,
+        decision=FAIL,
+        primary_metric="F.d_total_within",
+        primary={
+            "mean": primary.mean,
+            "std": primary.std,
+            "values": list(primary.values),
+            "all_positive": primary.all_positive,
+            "k": primary.k,
+        },
+        thresholds={"T_u": t_u, "T_p": t_p, "size": F_SIZE_THRESHOLD},
+    )
+
+    f_shape = _pull(df, "F", "d_shape_within", fold)
+    r_shape = _pull(df, "R", "d_shape_within", fold)
+    v.gates = {
+        "gate1_F_shape>=-5": {
+            "value": f_shape.mean,
+            "limit": F_SHAPE_MIN,
+            "ok": bool(f_shape.mean >= F_SHAPE_MIN),
+        },
+        "gate2_R_shape>=-10": {
+            "value": r_shape.mean,
+            "limit": R_SHAPE_MIN,
+            "ok": bool(r_shape.mean >= R_SHAPE_MIN),
+        },
+    }
+    v.diag = _diag_block(
+        df, fold,
+        [("F", "d_level_within"), ("R", "d_level_within"), ("ALL", "d_total_within")],
+    )
+
+    m = primary.mean
+    if m <= 0.0:
+        v.decision = FAIL
+        v.reasons.append(f"mean dF_total = {m:.4f} <= 0")
+        return v
+    if m < t_u:
+        v.decision = UNCERTAIN
+        v.reasons.append(f"0 < mean {m:.4f} < T_u {t_u:.4f} — 시드 산포 대비 효과가 작다")
+        return v
+    if m < F_SIZE_THRESHOLD:
+        v.decision = WEAK_POSITIVE
+        v.reasons.append(
+            f"T_u {t_u:.4f} <= mean {m:.4f} < 크기문턱 {F_SIZE_THRESHOLD} — 안정적이나 효과 크기 부족"
+        )
+        return v
+    if not primary.all_positive:
+        v.decision = FAIL
+        v.reasons.append(f"3/3 seed 양수 조건 미달: {list(primary.values)}")
+        return v
+
+    failed = [k for k, g in v.gates.items() if not g["ok"]]
+    if failed:
+        v.decision = FAIL
+        v.reasons.extend(f"{k} 위반 (value={v.gates[k]['value']:.4f})" for k in failed)
+        return v
+
+    v.decision = PASS
+    v.reasons.append(f"PRIMARY 통과 (mean {m:.4f} >= {t_p:.4f}), 보조 게이트 전부 통과")
+    return v
+
+
+# =========================================================
+# LB 업로드 3조건 (38_* §8-3)
+# =========================================================
+def upload_conditions(df: pd.DataFrame) -> dict:
+    """4 fold x k seed 전부 dBSS >= 0 인지, Total gain 이 양수인지 확인한다."""
+    all_rows = df[df.branch == "ALL"]
+    per_fold = {}
+    for fold in FOLDS:
+        sub = all_rows[all_rows.fold == fold]
+        if len(sub) == 0:
+            per_fold[fold] = {"present": False}
+            continue
+        vals = sub["d_total_within"].to_numpy(dtype=np.float64)
+        wins = int(np.sum(vals >= 0.0))
+        per_fold[fold] = {
+            "present": True,
+            "k": int(vals.size),
+            "wins": wins,
+            "record": f"{wins}/{vals.size}",
+            "ok": bool(wins == vals.size),
+            "mean": float(np.mean(vals)),
+        }
+    cond1 = all(v.get("ok", False) for v in per_fold.values())
+
+    primary = all_rows[all_rows.fold == PRIMARY_FOLD]
+    total_gain = float(primary["d_total_within"].mean()) if len(primary) else float("nan")
+    cond2 = bool(np.isfinite(total_gain) and total_gain > 0.0)
+
+    return {
+        "cond1_all_folds_all_seeds_nonneg": cond1,
+        "per_fold": per_fold,
+        "cond2_total_gain_positive": cond2,
+        "total_gain_2024_within": total_gain,
+    }
+
+
+# =========================================================
+# 저장
+# =========================================================
+def run_gates(
+    df: pd.DataFrame,
+    experiment: str = EXPERIMENT_NAME,
+    gate_types: tuple = ("R", "F"),
+    fold: int = PRIMARY_FOLD,
+) -> dict:
+    result = {
+        "experiment": experiment,
+        "protocol": "LS_BRANCH_GATE_V1 (38_* §8-5, 2026-08-30)",
+        "unit": "within-branch BSS points",
+        "primary_fold": fold,
+        "seeds": list(SEEDS),
+        "upload_conditions": upload_conditions(df),
+        "verdicts": {},
+    }
+    if "R" in gate_types:
+        result["verdicts"]["R"] = evaluate_r_gate(df, experiment, fold).to_dict()
+    if "F" in gate_types:
+        result["verdicts"]["F"] = evaluate_f_gate(df, experiment, fold).to_dict()
+
+    decisions = [v["decision"] for v in result["verdicts"].values()]
+    if not decisions:
+        result["final"] = FAIL
+    elif all(d == PASS for d in decisions):
+        result["final"] = PASS
+    elif any(d == FAIL for d in decisions):
+        result["final"] = FAIL
+    elif any(d == UNCERTAIN for d in decisions):
+        result["final"] = UNCERTAIN
+    else:
+        result["final"] = WEAK_POSITIVE
+
+    result["submit_recommended"] = bool(
+        result["final"] == PASS and result["upload_conditions"]["cond1_all_folds_all_seeds_nonneg"]
+    )
+    return result
+
+
+def save_gate(result: dict, path=GATE_PATH) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def format_report(result: dict) -> str:
+    lines = [
+        f"experiment : {result['experiment']}",
+        f"unit       : {result['unit']}",
+        f"final      : {result['final']}  (submit_recommended={result['submit_recommended']})",
+        "",
+        "-- LB 업로드 조건 --",
+    ]
+    uc = result["upload_conditions"]
+    for fold, info in uc["per_fold"].items():
+        if info.get("present"):
+            mark = "OK " if info["ok"] else "NG "
+            lines.append(f"  {mark}{fold}: {info['record']}  mean={info['mean']:+.4f}")
+        else:
+            lines.append(f"  -- {fold}: 없음")
+    lines.append(f"  cond2 total gain 2024 = {uc['total_gain_2024_within']:+.4f}")
+    for gt, v in result["verdicts"].items():
+        lines += [
+            "",
+            f"-- {gt} 게이트 : {v['decision']} --",
+            f"  PRIMARY {v['primary_metric']}  mean={v['primary']['mean']:+.4f}"
+            f"  std={v['primary']['std']:.4f}  values={['%+.4f' % x for x in v['primary']['values']]}",
+            f"  T_u={v['thresholds']['T_u']:.4f}  T_p={v['thresholds']['T_p']:.4f}",
+        ]
+        for k, g in v["gates"].items():
+            lines.append(f"  {'OK ' if g['ok'] else 'NG '}{k}: {g['value']:+.4f} (limit {g['limit']})")
+        for r in v["reasons"]:
+            lines.append(f"  · {r}")
+    return "\n".join(lines)
+
+
+# =============================================================================
+# danker_v003 — 후처리 슬롯 (가산 + 아핀, 절편 0) (38_* §5, §6)
+# =============================================================================
+
+# =========================================================
+# 대비 가산표 (06 방식)
+# =========================================================
+@dataclass
+class TableSpec:
+    """개체 x 이진맥락 잔차 차등표.
+
+    담는 값은 수준이 아니라 **대비**다. 부모 집단 대비 편차이므로 리그 연도 이동이
+    뺄셈에서 소거된다. 반대칭(+-0.5v)이라 표 항목의 평균이 0이다.
+    """
+    name: str
+    entity_col: str                 # 예: "pitcher_id"
+    ctx_col: str                    # 0/1 이진 맥락 컬럼명
+    weight: float
+    table: dict                     # {(entity, ctx): value}
+    row_mean: float = 0.0           # 학습 행 가중 평균 (중심화용)
+    unseen: float = 0.0             # 미지 조합의 값. 반드시 0 (중립)
+
+
+def build_contrast_table(
+    entity,
+    ctx,
+    resid,
+    k: float,
+    name: str = "table",
+    entity_col: str = "pitcher_id",
+    ctx_col: str = "ctx",
+    weight: float = 1.0,
+    center_on_rows: bool = True,
+) -> TableSpec:
+    """OOF 잔차로 개체 x 이진맥락 대비표를 만든다.
+
+        d  = mean(r | ctx=1) - mean(r | ctx=0)
+        ne = n0*n1 / (n0+n1)                    # 대비의 유효 표본수
+        v  = d * ne/(ne+k)                      # EB 축소
+        표 = +0.5v (ctx=1) / -0.5v (ctx=0)      # 반대칭
+
+    center_on_rows
+        06 의 반대칭 인코딩은 **표 항목의 평균**을 0으로 만들지만, 개체별
+        n0 != n1 이면 **행 가중 평균**은 0이 아니다. 즉 Level 이 미세하게 움직인다.
+        이 옵션을 켜면 학습 행 기준 가중 평균을 빼서 Level 불변을 정확히 만든다.
+        (38_* §8-8 의 "E3d 는 Level 불변이 설계 목표" 를 실제로 보장하는 장치)
+    """
+    entity = np.asarray(entity)
+    ctx = np.asarray(ctx).astype(np.int64)
+    resid = np.asarray(resid, dtype=np.float64)
+    if not (len(entity) == len(ctx) == len(resid)):
+        raise ValueError("entity / ctx / resid 길이 불일치")
+    if not np.isin(ctx, (0, 1)).all():
+        raise ValueError("ctx 는 0/1 이진이어야 한다")
+
+    g = pd.DataFrame({"e": entity, "c": ctx, "r": resid}).groupby(["e", "c"])["r"]
+    agg = g.agg(["mean", "size"]).unstack()
+
+    m0 = agg[("mean", 0)] if ("mean", 0) in agg.columns else np.nan
+    m1 = agg[("mean", 1)] if ("mean", 1) in agg.columns else np.nan
+    n0 = agg[("size", 0)] if ("size", 0) in agg.columns else 0.0
+    n1 = agg[("size", 1)] if ("size", 1) in agg.columns else 0.0
+    n0 = pd.Series(n0, index=agg.index).fillna(0.0)
+    n1 = pd.Series(n1, index=agg.index).fillna(0.0)
+
+    d = (pd.Series(m1, index=agg.index) - pd.Series(m0, index=agg.index))
+    denom = (n0 + n1).replace(0.0, np.nan)
+    ne = (n0 * n1) / denom
+    v = (d * ne / (ne + float(k))).dropna()
+
+    table = {}
+    for e, val in v.items():
+        table[(e, 1)] = float(0.5 * val)
+        table[(e, 0)] = float(-0.5 * val)
+
+    spec = TableSpec(
+        name=name, entity_col=entity_col, ctx_col=ctx_col,
+        weight=float(weight), table=table, row_mean=0.0, unseen=0.0,
+    )
+    if center_on_rows:
+        vals = _lookup_table(spec, entity, ctx)
+        spec.row_mean = float(np.mean(vals))
+    return spec
+
+
+def _lookup_table(spec: TableSpec, entity, ctx) -> np.ndarray:
+    """미지 조합은 정확히 0. 그 행 자신의 키만 본다."""
+    tab = spec.table
+    unseen = float(spec.unseen)
+    out = np.fromiter(
+        (tab.get((e, int(c)), unseen) for e, c in zip(np.asarray(entity), np.asarray(ctx))),
+        dtype=np.float64,
+        count=len(entity),
+    )
+    return out - float(spec.row_mean)
+
+
+def apply_tables(pred: np.ndarray, rows: pd.DataFrame, specs) -> np.ndarray:
+    out = np.asarray(pred, dtype=np.float64).copy()
+    for spec in specs or ():
+        if spec.entity_col not in rows.columns or spec.ctx_col not in rows.columns:
+            raise KeyError(f"table {spec.name!r}: 컬럼 {spec.entity_col}/{spec.ctx_col} 없음")
+        v = _lookup_table(spec, rows[spec.entity_col].to_numpy(), rows[spec.ctx_col].to_numpy())
+        out = out + float(spec.weight) * v
+    return out
+
+
+# =========================================================
+# 표준화 (학습 시 동결된 mu/sd 만 사용)
+# =========================================================
+def standardize(mat, mu, sd, clip: float = 8.0) -> np.ndarray:
+    mat = np.asarray(mat, dtype=np.float64)
+    mu = np.asarray(mu, dtype=np.float64)
+    sd = np.asarray(sd, dtype=np.float64)
+    sd = np.where(np.abs(sd) < 1e-12, 1.0, sd)
+    z = (mat - mu) / sd
+    return np.clip(z, -clip, clip)
+
+
+# =========================================================
+# 후처리 파이프라인
+# =========================================================
+def apply_postproc(
+    pred,
+    art: dict,
+    rows: pd.DataFrame | None = None,
+    sens_matrix=None,
+) -> np.ndarray:
+    """가산 -> 아핀 -> clip. 모든 상수는 art 에서만 온다.
+
+    art 필수 키
+        shift_scale, affine_alpha, affine_center, affine_offset
+    art 선택 키
+        shift_model (predict 가능), sens_mu, sens_sd, shift_clip, add_tables
+    """
+    for key in ("shift_scale", "affine_alpha", "affine_center", "affine_offset"):
+        if key not in art:
+            raise KeyError(f"artifact 에 {key} 가 없다 — 후처리 상수는 pkl 에서만 온다")
+
+    offset = float(art["affine_offset"])
+    if offset != 0.0:
+        raise ValueError(
+            f"affine_offset must be 0.0, got {offset} — 절편은 시즌을 건너지 못한다 (38_* §5)"
+        )
+
+    out = np.asarray(pred, dtype=np.float64).copy()
+
+    # ---- 가산 1: 절편 없는 Ridge 민감도 보정 ----
+    scale = float(art["shift_scale"])
+    if scale != 0.0:
+        model = art.get("shift_model")
+        if model is None or sens_matrix is None:
+            raise ValueError("shift_scale != 0 인데 shift_model 또는 sens_matrix 가 없다")
+        z = standardize(
+            sens_matrix, art["sens_mu"], art["sens_sd"], float(art.get("shift_clip", 8.0))
+        )
+        corr = np.asarray(model.predict(z), dtype=np.float64)
+        if corr.shape != out.shape:
+            raise ValueError(f"shift 보정 길이 불일치: {corr.shape} vs {out.shape}")
+        out = out + scale * corr
+
+    # ---- 가산 2: 대비 보정표 ----
+    specs = art.get("add_tables") or ()
+    if specs:
+        if rows is None:
+            raise ValueError("add_tables 가 있는데 rows 가 없다")
+        out = apply_tables(out, rows, specs)
+
+    # ---- 아핀 (절편 0) ----
+    alpha = float(art["affine_alpha"])
+    center = float(art["affine_center"])
+    if alpha != 1.0:
+        out = center + alpha * (out - center)
+
+    out = np.clip(out, 0.0, 1.0)
+    if not np.isfinite(out).all():
+        raise RuntimeError("후처리 결과에 NaN/Inf")
+    return out
+
+
+# =========================================================
+# L1 라우팅 -> 가중치 (I2)
+# =========================================================
+def blend_weights(game_type, w_r: float, w_f: float, f_label: str = "F") -> np.ndarray:
+    """행별 blend 가중치. 마스크를 곱셈 계수로만 쓴다.
+
+    w_r = 0, w_f = 0.25 이면 danker_v001 의 where 라우팅과 수학적으로 동일하다.
+    """
+    gt = pd.Series(game_type).fillna("__MISSING__").astype(str).to_numpy()
+    return np.where(gt == f_label, float(w_f), float(w_r)).astype(np.float64)
+
+
+def blend(p_main, p_dyn, weights) -> np.ndarray:
+    p_main = np.asarray(p_main, dtype=np.float64)
+    p_dyn = np.asarray(p_dyn, dtype=np.float64)
+    w = np.asarray(weights, dtype=np.float64)
+    if not (p_main.shape == p_dyn.shape == w.shape):
+        raise ValueError("blend 입력 길이 불일치")
+    return np.clip((1.0 - w) * p_main + w * p_dyn, 0.0, 1.0)
+
+
+def apply_l2(pred, correction, weights) -> np.ndarray:
+    """L2 잔차 보정. weights 로 적용 범위를 건다 (R만 = F에 0).
+
+    danker_v001 의 `final[f_mask] = pred_l1[f_mask]` 는 weights[f]=0 과 동일하다.
+    """
+    pred = np.asarray(pred, dtype=np.float64)
+    corr = np.asarray(correction, dtype=np.float64)
+    w = np.asarray(weights, dtype=np.float64)
+    if not (pred.shape == corr.shape == w.shape):
+        raise ValueError("apply_l2 입력 길이 불일치")
+    return np.clip(pred + w * corr, 0.0, 1.0)
+
+
+def l2_weights(game_type, shrink: float, apply_f: bool, f_label: str = "F") -> np.ndarray:
+    gt = pd.Series(game_type).fillna("__MISSING__").astype(str).to_numpy()
+    f_mask = gt == f_label
+    w = np.full(len(gt), float(shrink), dtype=np.float64)
+    if not apply_f:
+        w[f_mask] = 0.0
+    return w
+N_JOBS = max(1, min(6, os.cpu_count() or 1))
+
+REFERENCE_RAWNUM = [
+    "game_month",
+    "inning",
+    "balls_before",
+    "strikes_before",
+    "outs_before",
+    "score_diff_pitcher_team",
+    "num_runners_on",
+    "home_win_expectancy",
+    "li",
+    "asof_pitcher_n",
+    "asof_pitcher_success_rate",
+    "asof_pitcher_reverse_rate",
+    "asof_pitcher_middle_rate",
+    "asof_pitcher_ball_rate",
+    "asof_pitcher_strike_rate",
+    "asof_pitcher_prev1_game_success_rate",
+    "asof_pitcher_prev3_game_success_rate",
+    "asof_pitcher_prev5_game_success_rate",
+    "asof_pitcher_prev1_game_middle_rate",
+    "asof_pitcher_prev3_game_middle_rate",
+    "asof_pitcher_prev5_game_middle_rate",
+    "asof_batter_n",
+    "asof_batter_success_rate",
+    "asof_batter_middle_rate",
+    "asof_pitcher_fastball_rate",
+    "asof_pitcher_breaking_rate",
+    "asof_pitcher_offspeed_rate",
+    "pitcher_team_id",
+    "batter_team_id",
+]
+
+REFERENCE_CAT_SMALL = [
+    "game_dayofweek",
+    "top_bottom",
+    "game_type",
+    "base_state",
+    "pitcher_hand",
+    "batter_hand",
+    "pitcher_team_id",
+    "batter_team_id",
+]
+
+ENG_COLS = [
+    "eng_recent35",
+    "eng_recent_delta",
+    "eng_sb",
+    "eng_same",
+    "eng_close",
+    "eng_late",
+]
+
+
+def mask_pitcher_conditional_to_r_only(pc_frame, source_rows):
+    """
+    R(game_type != 'F') 행에서만 PITCHER_CONDITIONAL을 활성화한다.
+    F 행은 21개 PC feature를 모두 0으로 둔다.
+
+    주의:
+    - 이것은 single global CatBoost의 feature masking이다.
+    - shared tree structure 때문에 F prediction이 Control과 완전히 같아지는 것은 보장되지 않는다.
+    - 따라서 별도로 routed prediction도 평가한다:
+        R -> masked treatment prediction
+        F -> control prediction
+    """
+    out = pc_frame.copy()
+    gt = source_rows[GAME_TYPE_COL].fillna("__MISSING__").astype(str).to_numpy()
+    f_mask = gt == "F"
+
+    out.loc[f_mask, PC_FEATURES] = 0.0
+
+    values = out[PC_FEATURES].to_numpy(dtype=np.float64)
+    if not np.isfinite(values).all():
+        raise RuntimeError("R-only masked PITCHER_CONDITIONAL contains NaN/Inf")
+
+    if f_mask.any():
+        f_values = out.loc[f_mask, PC_FEATURES].to_numpy(dtype=np.float64)
+        if not np.all(f_values == 0.0):
+            raise RuntimeError("F rows are not fully neutralized in R-only PC mask")
+
+    return out
+
+def prepare_features(df, cat_cols):
+    df = df.copy()
+
+    for col in cat_cols:
+        if col in df.columns:
+            df[col] = (
+                df[col]
+                .fillna("__MISSING__")
+                .astype(str)
+            )
+
+    return df
+
+def brier_score(y_true, y_pred):
+    y_true = np.asarray(y_true, dtype=np.float64)
+    y_pred = np.asarray(y_pred, dtype=np.float64)
+
+    return float(
+        np.mean(
+            (y_true - y_pred) ** 2
+        )
+    )
+
+def calculate_bss(y_true, y_pred):
+    y_true = np.asarray(y_true, dtype=np.float64)
+    y_pred = np.asarray(y_pred, dtype=np.float64)
+
+    brier = brier_score(y_true, y_pred)
+    p = float(np.mean(y_true))
+    baseline = p * (1.0 - p)
+
+    if baseline <= 0.0:
+        return 0.0
+
+    return float(
+        100000.0
+        * (
+            1.0
+            - brier / baseline
+        )
+    )
+
+def build_pitcher_season_stats(df_train):
+    """
+    공식 train label만으로 pitcher × season 완결 통계를 만든다.
+
+    Exact-ASOF 계산 시에는 target row의 season보다
+    과거 season만 사용한다.
+    """
+
+    required = {
+        "pitcher_id",
+        SEASON_COL,
+        TARGET,
+    }
+
+    missing = sorted(
+        required - set(df_train.columns)
+    )
+
+    if missing:
+        raise KeyError(
+            f"pitcher season stats 필수 컬럼 없음: {missing}"
+        )
+
+    stats = (
+        df_train
+        .groupby(
+            ["pitcher_id", SEASON_COL],
+            dropna=False,
+            sort=False,
+        )[TARGET]
+        .agg(
+            n="size",
+            success="sum",
+        )
+        .reset_index()
+    )
+
+    stats[SEASON_COL] = (
+        pd.to_numeric(
+            stats[SEASON_COL],
+            errors="raise",
+        )
+        .astype(int)
+    )
+
+    stats["n"] = (
+        stats["n"]
+        .astype(np.float64)
+    )
+
+    stats["success"] = (
+        stats["success"]
+        .astype(np.float64)
+    )
+
+    return stats
+
+def add_pitcher_exact_asof_features(
+    df,
+    pitcher_season_stats,
+):
+    """
+    해당 row의 official cumulative ASOF에서
+    과거 완결 시즌 누적치를 빼서
+    현재 시즌 시점 직전 상태를 복원한다.
+
+    다른 validation/test row는 사용하지 않는다.
+    """
+
+    required = {
+        SEASON_COL,
+        "pitcher_id",
+        "asof_pitcher_n",
+        "asof_pitcher_success_rate",
+    }
+
+    missing = sorted(
+        required - set(df.columns)
+    )
+
+    if missing:
+        raise KeyError(
+            f"Exact-ASOF 필수 컬럼 없음: {missing}"
+        )
+
+    out = df.copy()
+
+    for col in EXACT_FEATURES:
+        out[col] = np.nan
+
+    seasons = (
+        pd.to_numeric(
+            out[SEASON_COL],
+            errors="raise",
+        )
+        .astype(int)
+    )
+
+    stats = pitcher_season_stats.copy()
+    stats[SEASON_COL] = (
+        pd.to_numeric(
+            stats[SEASON_COL],
+            errors="raise",
+        )
+        .astype(int)
+    )
+
+    diagnostics = []
+
+    for target_year in sorted(
+        seasons.unique()
+    ):
+        row_mask = (
+            seasons == int(target_year)
+        )
+
+        rows = out.loc[row_mask]
+
+        hist = stats.loc[
+            stats[SEASON_COL]
+            < int(target_year)
+        ]
+
+        if len(hist) > 0:
+            hist_agg = (
+                hist
+                .groupby(
+                    "pitcher_id",
+                    sort=False,
+                    dropna=False,
+                )[["n", "success"]]
+                .sum()
+            )
+
+            hist_n = (
+                rows["pitcher_id"]
+                .map(hist_agg["n"])
+                .fillna(0.0)
+                .to_numpy(dtype=np.float64)
+            )
+
+            hist_success = (
+                rows["pitcher_id"]
+                .map(hist_agg["success"])
+                .fillna(0.0)
+                .to_numpy(dtype=np.float64)
+            )
+        else:
+            hist_n = np.zeros(
+                len(rows),
+                dtype=np.float64,
+            )
+
+            hist_success = np.zeros(
+                len(rows),
+                dtype=np.float64,
+            )
+
+        asof_n = (
+            pd.to_numeric(
+                rows["asof_pitcher_n"],
+                errors="coerce",
+            )
+            .fillna(0.0)
+            .clip(lower=0.0)
+            .to_numpy(dtype=np.float64)
+        )
+
+        asof_rate = (
+            pd.to_numeric(
+                rows[
+                    "asof_pitcher_success_rate"
+                ],
+                errors="coerce",
+            )
+            .to_numpy(dtype=np.float64)
+        )
+
+        asof_success = (
+            asof_n * asof_rate
+        )
+
+        raw_current_n = (
+            asof_n - hist_n
+        )
+
+        current_n = np.maximum(
+            raw_current_n,
+            0.0,
+        )
+
+        raw_current_success = (
+            asof_success
+            - hist_success
+        )
+
+        current_success = np.where(
+            np.isfinite(
+                raw_current_success
+            ),
+            np.clip(
+                raw_current_success,
+                0.0,
+                current_n,
+            ),
+            np.nan,
+        )
+
+        current_rate = np.full(
+            len(rows),
+            np.nan,
+            dtype=np.float64,
+        )
+
+        valid_current = (
+            (current_n > 0.0)
+            & np.isfinite(
+                current_success
+            )
+        )
+
+        current_rate[
+            valid_current
+        ] = (
+            current_success[
+                valid_current
+            ]
+            / current_n[
+                valid_current
+            ]
+        )
+
+        past_rate = np.full(
+            len(rows),
+            np.nan,
+            dtype=np.float64,
+        )
+
+        valid_past = (
+            hist_n > 0.0
+        )
+
+        past_rate[
+            valid_past
+        ] = (
+            hist_success[
+                valid_past
+            ]
+            / hist_n[
+                valid_past
+            ]
+        )
+
+        idx = rows.index
+
+        out.loc[
+            idx,
+            "exact_pitcher_season_n",
+        ] = current_n
+
+        out.loc[
+            idx,
+            "exact_pitcher_season_logn",
+        ] = np.log1p(
+            current_n
+        )
+
+        out.loc[
+            idx,
+            "exact_pitcher_season_success_rate",
+        ] = current_rate
+
+        out.loc[
+            idx,
+            "exact_pitcher_past_success_rate",
+        ] = past_rate
+
+        out.loc[
+            idx,
+            "exact_pitcher_season_minus_past",
+        ] = (
+            current_rate
+            - past_rate
+        )
+
+        diagnostics.append(
+            {
+                "season": int(target_year),
+                "n_rows": int(len(rows)),
+                "negative_current_n": int(
+                    (
+                        raw_current_n
+                        < -1e-8
+                    ).sum()
+                ),
+                "current_rate_available": int(
+                    np.isfinite(
+                        current_rate
+                    ).sum()
+                ),
+                "past_rate_available": int(
+                    np.isfinite(
+                        past_rate
+                    ).sum()
+                ),
+            }
+        )
+
+    return (
+        out,
+        pd.DataFrame(diagnostics),
+    )
+
+def compute_hbeb_priors(
+    df_train,
+    group_cols,
+    rate_col,
+):
+    """
+    train subset만으로 HB-EB prior를 추정한다.
+    """
+
+    g_mu = float(
+        df_train[rate_col].mean()
+    )
+
+    g_var = float(
+        df_train[rate_col].var()
+    )
+
+    max_bernoulli_var = (
+        g_mu * (1.0 - g_mu)
+    )
+
+    if (
+        not np.isfinite(g_var)
+        or g_var <= 0.0
+        or g_var >= max_bernoulli_var
+    ):
+        g_var = (
+            max_bernoulli_var
+            * 0.5
+        )
+
+    g_m = (
+        max_bernoulli_var
+        / g_var
+    ) - 1.0
+
+    g_alpha = (
+        g_mu * g_m
+    )
+
+    g_beta = (
+        (1.0 - g_mu)
+        * g_m
+    )
+
+    stats = (
+        df_train
+        .groupby(
+            group_cols,
+            dropna=False,
+        )[rate_col]
+        .agg(
+            ["mean", "var", "count"]
+        )
+        .reset_index()
+    )
+
+    group_max_var = (
+        stats["mean"]
+        * (
+            1.0
+            - stats["mean"]
+        )
+    )
+
+    valid_mask = (
+        stats["var"].notna()
+        & np.isfinite(
+            stats["var"]
+        )
+        & (
+            stats["var"] > 0.0
+        )
+        & (
+            stats["var"]
+            < group_max_var
+        )
+        & (
+            stats["count"] >= 30
+        )
+    )
+
+    stats["alpha"] = g_alpha
+    stats["beta"] = g_beta
+
+    if valid_mask.any():
+        mu = stats.loc[
+            valid_mask,
+            "mean",
+        ]
+
+        var = stats.loc[
+            valid_mask,
+            "var",
+        ]
+
+        m = (
+            mu
+            * (1.0 - mu)
+            / var
+        ) - 1.0
+
+        stats.loc[
+            valid_mask,
+            "alpha",
+        ] = (
+            mu * m
+        )
+
+        stats.loc[
+            valid_mask,
+            "beta",
+        ] = (
+            (1.0 - mu)
+            * m
+        )
+
+    prior_df = stats[
+        group_cols
+        + ["alpha", "beta"]
+    ].copy()
+
+    global_prior = (
+        float(g_alpha),
+        float(g_beta),
+    )
+
+    return (
+        prior_df,
+        global_prior,
+    )
+
+def apply_hbeb(
+    df,
+    group_cols,
+    n_col,
+    rate_col,
+    prior_df,
+    global_prior,
+):
+    lookup = (
+        df[group_cols]
+        .reset_index(drop=True)
+        .merge(
+            prior_df,
+            on=group_cols,
+            how="left",
+            sort=False,
+        )
+    )
+
+    alpha = (
+        lookup["alpha"]
+        .fillna(
+            global_prior[0]
+        )
+        .to_numpy(dtype=np.float64)
+    )
+
+    beta = (
+        lookup["beta"]
+        .fillna(
+            global_prior[1]
+        )
+        .to_numpy(dtype=np.float64)
+    )
+
+    n = (
+        pd.to_numeric(
+            df[n_col],
+            errors="coerce",
+        )
+        .fillna(0.0)
+        .clip(lower=0.0)
+        .to_numpy(dtype=np.float64)
+    )
+
+    rate = (
+        pd.to_numeric(
+            df[rate_col],
+            errors="coerce",
+        )
+        .fillna(0.0)
+        .clip(
+            lower=0.0,
+            upper=1.0,
+        )
+        .to_numpy(dtype=np.float64)
+    )
+
+    success_count = (
+        n * rate
+    )
+
+    denominator = (
+        n + alpha + beta
+    )
+
+    return np.divide(
+        success_count + alpha,
+        denominator,
+        out=np.full(
+            len(df),
+            np.nan,
+            dtype=np.float64,
+        ),
+        where=(
+            denominator > 0.0
+        ),
+    )
+
+def apply_hbeb_pair(
+    df_train,
+    df_apply,
+    base_features,
+):
+    """
+    df_train만으로 prior를 만들고
+    df_apply에 적용한다.
+    """
+
+    transformed = (
+        df_apply.copy()
+    )
+
+    features = list(
+        base_features
+    )
+
+    priors = {}
+
+    for config in HBEB_CONFIGS:
+        (
+            prior_df,
+            global_prior,
+        ) = compute_hbeb_priors(
+            df_train=df_train,
+            group_cols=config[
+                "group_cols"
+            ],
+            rate_col=config[
+                "rate_col"
+            ],
+        )
+
+        transformed[
+            config["new_col"]
+        ] = apply_hbeb(
+            df=transformed,
+            group_cols=config[
+                "group_cols"
+            ],
+            n_col=config[
+                "n_col"
+            ],
+            rate_col=config[
+                "rate_col"
+            ],
+            prior_df=prior_df,
+            global_prior=global_prior,
+        )
+
+        if (
+            config["rate_col"]
+            in features
+        ):
+            features.remove(
+                config["rate_col"]
+            )
+
+        if (
+            config["new_col"]
+            not in features
+        ):
+            features.append(
+                config["new_col"]
+            )
+
+        priors[
+            config["new_col"]
+        ] = {
+            "prior_df": prior_df,
+            "global_prior": (
+                global_prior
+            ),
+            "group_cols": list(
+                config[
+                    "group_cols"
+                ]
+            ),
+            "n_col": config[
+                "n_col"
+            ],
+            "rate_col": config[
+                "rate_col"
+            ],
+        }
+
+    return (
+        transformed,
+        features,
+        priors,
+    )
+
+def _ctx_frame_v15(frame):
+    x = frame.copy()
+    x["v15_count"] = (
+        x["balls_before"].astype(str)
+        + "_"
+        + x["strikes_before"].astype(str)
+    )
+    x["v15_inning_phase"] = pd.cut(
+        pd.to_numeric(x["inning"], errors="coerce"),
+        [-np.inf, 3, 6, 9, np.inf],
+        labels=["early", "middle", "late", "extra"],
+    ).astype(str)
+    x["v15_pressure"] = np.where(
+        (x["balls_before"] == 3) & (x["strikes_before"] == 2),
+        "full",
+        np.where(
+            x["balls_before"] == 3,
+            "three_ball",
+            np.where(x["strikes_before"] == 2, "two_strike", "normal"),
+        ),
+    )
+    x["v15_runners"] = np.where(
+        pd.to_numeric(x["num_runners_on"], errors="coerce").fillna(0) > 0,
+        "on",
+        "empty",
+    )
+    x["v15_li_bucket"] = pd.cut(
+        pd.to_numeric(x["li"], errors="coerce"),
+        [-np.inf, 0.7, 1.5, np.inf],
+        labels=["low", "mid", "high"],
+    ).astype(str)
+    return x
+
+def _pc_eb_table(history, keys, parent_keys=None, strength=40.0, parent_strength=80.0):
+    # Recovered V15 code와 동일한 empirical-Bayes shrinkage 식.
+    h = history
+    if len(h) == 0:
+        return pd.DataFrame(columns=keys + ["rate", "reliability", "delta", "log_n"])
+
+    league = float(h[TARGET].mean())
+    g = h.groupby(keys, sort=False)[TARGET].agg(["sum", "size"]).reset_index()
+
+    if parent_keys is None:
+        g["parent"] = league
+    else:
+        pg = h.groupby(parent_keys, sort=False)[TARGET].agg(["sum", "size"]).reset_index()
+        pg["parent_rate"] = (
+            pg["sum"] + parent_strength * league
+        ) / (
+            pg["size"] + parent_strength
+        )
+        g = g.merge(pg[parent_keys + ["parent_rate"]], on=parent_keys, how="left")
+        g["parent"] = g["parent_rate"].fillna(league)
+
+    g["rate"] = (
+        g["sum"] + strength * g["parent"]
+    ) / (
+        g["size"] + strength
+    )
+    g["reliability"] = g["size"] / (g["size"] + strength)
+    g["delta"] = g["rate"] - g["parent"]
+    g["log_n"] = np.log1p(g["size"])
+    return g[keys + ["rate", "reliability", "delta", "log_n"]]
+
+def _pc_lookup(table, rows, keys, field, default=0.0):
+    # 원본 V15의 unseen default=0.0을 그대로 유지.
+    if len(table) == 0:
+        return np.full(len(rows), default, dtype=np.float32)
+
+    if len(keys) == 1:
+        s = table.set_index(keys[0])[field]
+        return rows[keys[0]].map(s).fillna(default).to_numpy(np.float32)
+
+    idx = pd.MultiIndex.from_frame(rows[keys])
+    s = table.set_index(keys)[field]
+    return s.reindex(idx).fillna(default).to_numpy(np.float32)
+
+def _pc_coverage(table, rows, keys):
+    if len(rows) == 0 or len(table) == 0:
+        return 0.0
+    target_idx = pd.MultiIndex.from_frame(rows[keys].astype(str))
+    table_idx = pd.MultiIndex.from_frame(table[keys].astype(str))
+    return float(np.mean(target_idx.isin(table_idx)))
+
+def build_pitcher_conditional_for_rows(rows, available_history, scope):
+    """
+    각 target season y의 PC는 오직 y-1 labeled season으로 생성한다.
+
+    training rows:
+      2020 row <- 2019 labels
+      2021 row <- 2020 labels ...
+
+    validation rows:
+      2024 row <- fold-train의 2023 labels
+
+    같은 target season label은 절대 사용하지 않는다.
+    """
+    required = {
+        SEASON_COL, TARGET, "pitcher_id", "batter_hand", "base_state",
+        "balls_before", "strikes_before", "inning", "num_runners_on", "li",
+    }
+    missing_rows = sorted((required - {TARGET}) - set(rows.columns))
+    missing_hist = sorted(required - set(available_history.columns))
+    if missing_rows:
+        raise KeyError(f"PITCHER_CONDITIONAL row source missing: {missing_rows}")
+    if missing_hist:
+        raise KeyError(f"PITCHER_CONDITIONAL history source missing: {missing_hist}")
+
+    r_all = _ctx_frame_v15(rows.reset_index(drop=False).rename(columns={"index": "__orig_index"}))
+    h_all = _ctx_frame_v15(available_history.reset_index(drop=True))
+
+    out = pd.DataFrame(0.0, index=np.arange(len(r_all)), columns=PC_FEATURES, dtype=np.float32)
+    coverage_rows = []
+
+    seasons = pd.to_numeric(r_all[SEASON_COL], errors="raise").astype(int)
+    hist_seasons = pd.to_numeric(h_all[SEASON_COL], errors="raise").astype(int)
+
+    for target_year in sorted(seasons.unique()):
+        target_mask = seasons.eq(int(target_year)).to_numpy()
+        target_pos = np.flatnonzero(target_mask)
+        rr = r_all.loc[target_mask].reset_index(drop=True)
+        source_year = int(target_year) - 1
+        hh = h_all.loc[hist_seasons.eq(source_year)].reset_index(drop=True)
+
+        # source season 부재(예: 2019)는 원본 lookup의 neutral 0 vector.
+        if len(hh) == 0:
+            for ctx, strength in PC_CONTEXTS:
+                coverage_rows.append({
+                    "scope": scope,
+                    "target_season": int(target_year),
+                    "source_season": int(source_year),
+                    "context": ctx,
+                    "strength": float(strength),
+                    "n_rows": int(len(rr)),
+                    "source_rows": 0,
+                    "coverage": 0.0,
+                })
+            continue
+
+        for ctx, strength in PC_CONTEXTS:
+            table = _pc_eb_table(
+                hh,
+                ["pitcher_id", ctx],
+                ["pitcher_id"],
+                strength=float(strength),
+                parent_strength=PC_PARENT_STRENGTH,
+            )
+            prefix = f"pc__{ctx}"
+            keys = ["pitcher_id", ctx]
+            for field in PC_FIELDS:
+                out.loc[target_pos, f"{prefix}__{field}"] = _pc_lookup(
+                    table, rr, keys, field, 0.0
+                )
+
+            coverage_rows.append({
+                "scope": scope,
+                "target_season": int(target_year),
+                "source_season": int(source_year),
+                "context": ctx,
+                "strength": float(strength),
+                "n_rows": int(len(rr)),
+                "source_rows": int(len(hh)),
+                "coverage": _pc_coverage(table, rr, keys),
+            })
+
+    # 원래 rows index로 복원.
+    out.index = rows.index
+    if list(out.columns) != PC_FEATURES:
+        raise RuntimeError("PITCHER_CONDITIONAL feature order mismatch")
+    if out.columns.duplicated().any():
+        raise RuntimeError("PITCHER_CONDITIONAL duplicate columns")
+    if not np.isfinite(out.to_numpy(dtype=np.float64)).all():
+        raise RuntimeError("PITCHER_CONDITIONAL contains NaN/Inf")
+
+    return out, pd.DataFrame(coverage_rows)
+
+# =============================================================================
+# L2 adapter core
+# =============================================================================
+
+def numeric_series(frame: pd.DataFrame, col: str, default=np.nan) -> pd.Series:
+    if col not in frame.columns:
+        return pd.Series(
+            np.full(len(frame), default, dtype=np.float64),
+            index=frame.index,
+        )
+    return pd.to_numeric(frame[col], errors="coerce")
+
+
+def add_eng(frame: pd.DataFrame) -> pd.DataFrame:
+    x = frame.copy()
+    career = numeric_series(x, "asof_pitcher_success_rate", 0.5)
+    p1 = numeric_series(x, "asof_pitcher_prev1_game_success_rate", np.nan)
+    p3 = numeric_series(x, "asof_pitcher_prev3_game_success_rate", np.nan)
+    p5 = numeric_series(x, "asof_pitcher_prev5_game_success_rate", np.nan)
+    p1 = p1.fillna(career)
+    p3 = p3.fillna(p1)
+    p5 = p5.fillna(p3)
+    x["eng_recent35"] = 0.5 * p1 + 0.3 * p3 + 0.2 * p5
+    x["eng_recent_delta"] = x["eng_recent35"] - career
+    x["eng_sb"] = (
+        numeric_series(x, "asof_pitcher_strike_rate", np.nan)
+        - numeric_series(x, "asof_pitcher_ball_rate", np.nan)
+    )
+    if "pitcher_hand" in x.columns and "batter_hand" in x.columns:
+        x["eng_same"] = (
+            x["pitcher_hand"].astype(str)
+            .eq(x["batter_hand"].astype(str))
+            .astype(np.float32)
+        )
+    else:
+        x["eng_same"] = 0.0
+    x["eng_close"] = (
+        numeric_series(x, "score_diff_pitcher_team", np.nan)
+        .abs().le(1).astype(np.float32)
+    )
+    x["eng_late"] = (
+        numeric_series(x, "inning", np.nan)
+        .ge(7).astype(np.float32)
+    )
+    return x
+
+
+def fit_adapter_prep(map_rows: pd.DataFrame) -> dict:
+    m = add_eng(map_rows.reset_index(drop=True))
+    numeric_cols = [c for c in REFERENCE_RAWNUM if c in m.columns] + ENG_COLS
+    med = (
+        m[numeric_cols]
+        .apply(pd.to_numeric, errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
+        .median()
+        .fillna(0.0)
+        .to_dict()
+    )
+    cat_cols = [c for c in REFERENCE_CAT_SMALL if c in m.columns]
+    maps = {}
+    for col in cat_cols:
+        s = m[col].astype("string").fillna("<NA>").astype(str)
+        maps[col] = {value: idx for idx, value in enumerate(pd.Index(s.unique()))}
+    return {"numeric_cols": numeric_cols, "med": med, "maps": maps}
+
+
+def transform_adapter_core(prep: dict, rows: pd.DataFrame, base_pred) -> pd.DataFrame:
+    r = add_eng(rows.reset_index(drop=True))
+    A = (
+        r[prep["numeric_cols"]]
+        .apply(pd.to_numeric, errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
+        .copy()
+    )
+    for col in prep["numeric_cols"]:
+        A[col] = A[col].fillna(float(prep["med"].get(col, 0.0))).astype(np.float32)
+    for col, mapping in prep["maps"].items():
+        A["code_" + col] = (
+            r[col].astype("string").fillna("<NA>").astype(str)
+            .map(mapping).fillna(-1).astype(np.float32)
+        )
+    A["base_pred"] = np.asarray(base_pred, dtype=np.float32)
+    if not np.isfinite(A.to_numpy(dtype=np.float64)).all():
+        raise RuntimeError("adapter core contains NaN/Inf")
+    return A.reset_index(drop=True)
+
+
+def exact5_matrix(rows: pd.DataFrame, pitcher_season_stats: pd.DataFrame) -> pd.DataFrame:
+    transformed, _ = add_pitcher_exact_asof_features(rows, pitcher_season_stats)
+    exact = (
+        transformed[EXACT_FEATURES]
+        .apply(pd.to_numeric, errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+        .astype(np.float32)
+        .reset_index(drop=True)
+    )
+    if not np.isfinite(exact.to_numpy(dtype=np.float64)).all():
+        raise RuntimeError("Exact-ASOF5 matrix contains NaN/Inf")
+    return exact
+
+
+def fit_final_l2_models(X24, raw24, residual24):
+    gt = raw24[GAME_TYPE_COL].fillna("__MISSING__").astype(str).to_numpy()
+    r_mask = gt != "F"
+    f_mask = gt == "F"
+    n_r = int(r_mask.sum())
+    minimum = int(FINAL_ADAPTER_CFG["min_samples_leaf"]) * 2
+    if n_r <= minimum:
+        raise RuntimeError(f"Final L2 R rows insufficient: {n_r} <= {minimum}")
+
+    # E1b: 학습 표본을 R 로 제한할지 전 행으로 열지.
+    # L2_TRAIN_ON_ALL=False 면 r_mask 와 동일하므로 v002 와 비트 동일하다.
+    fit_mask = np.ones(len(raw24), dtype=bool) if L2_TRAIN_ON_ALL else r_mask
+
+    models = {}
+    diagnostics = []
+    for seed in ADAPTER_SEEDS:
+        model = ExtraTreesRegressor(
+            n_jobs=N_JOBS,
+            random_state=16200 + int(seed),
+            **FINAL_ADAPTER_CFG,
+        )
+        t0 = time.time()
+        model.fit(X24.loc[fit_mask], residual24[fit_mask])
+        elapsed = time.time() - t0
+        corr = np.asarray(model.predict(X24.loc[fit_mask]), dtype=np.float64)
+        models[int(seed)] = model
+        diagnostics.append({
+            "adapter_seed": int(seed),
+            "n_train_R": n_r,
+            "n_train_used": int(fit_mask.sum()),
+            "l2_train_on_all": bool(L2_TRAIN_ON_ALL),
+            "n_protected_F": int(f_mask.sum()),
+            "fit_elapsed_seconds": float(elapsed),
+            "train_correction_mean_R": float(corr.mean()),
+            "train_correction_std_R": float(corr.std()),
+            "train_correction_abs_mean_R": float(np.mean(np.abs(corr))),
+        })
+        print(
+            f"[L2 seed={seed}] R rows={n_r:,} | fit={elapsed:.1f}s | "
+            f"corr mean={corr.mean():+.6f} | corr abs={np.mean(np.abs(corr)):.6f}"
+        )
+    return models, pd.DataFrame(diagnostics), r_mask, f_mask
+
+
+def build_pc_tables_by_source_season(train: pd.DataFrame):
+    train_ctx = _ctx_frame_v15(train.reset_index(drop=True))
+    seasons = sorted(
+        pd.to_numeric(train_ctx[SEASON_COL], errors="raise").astype(int).unique().tolist()
+    )
+    result = {}
+    for source_year in seasons:
+        hh = train_ctx.loc[
+            pd.to_numeric(train_ctx[SEASON_COL], errors="raise").astype(int).eq(int(source_year))
+        ].copy().reset_index(drop=True)
+        season_tables = {}
+        for context, strength in PC_CONTEXTS:
+            table = _pc_eb_table(
+                hh,
+                ["pitcher_id", context],
+                ["pitcher_id"],
+                strength=float(strength),
+                parent_strength=float(PC_PARENT_STRENGTH),
+            )
+            season_tables[context] = table
+        result[int(source_year)] = season_tables
+    return result
+
+
+def to_jsonable(obj):
+    if isinstance(obj, dict):
+        return {str(k): to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [to_jsonable(v) for v in obj]
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.floating,)):
+        x = float(obj)
+        return None if not np.isfinite(x) else x
+    if isinstance(obj, float):
+        return None if not np.isfinite(obj) else obj
+    if isinstance(obj, Path):
+        return str(obj)
+    return obj
+
+
+
+# =============================================================================
+# Dynamic F Anchor
+# =============================================================================
+
+def build_season_league_means(df_train: pd.DataFrame) -> dict[int, float]:
+    """Build season-level league target means from official labeled train only."""
+    means = (
+        df_train.groupby(SEASON_COL, sort=True)[TARGET]
+        .mean()
+        .astype(np.float64)
+    )
+    return {int(k): float(v) for k, v in means.items()}
+
+
+def league_prev_for(target_year: int, season_league_means: dict[int, float]) -> float:
+    """Previous-season league prior with an older-season fallback."""
+    prev = int(target_year) - 1
+    if prev in season_league_means:
+        return float(season_league_means[prev])
+
+    older = [
+        value
+        for year, value in season_league_means.items()
+        if int(year) < int(target_year)
+    ]
+    if older:
+        return float(np.mean(older))
+    return float(ANCHOR_FALLBACK_RATE)
+
+
+def compute_prev_anchor(
+    rows: pd.DataFrame,
+    pitcher_season_stats: pd.DataFrame,
+    season_league_means: dict[int, float],
+) -> np.ndarray:
+    """
+    Reproduce the validated previous-season EB anchor.
+
+    For a row in target season t:
+      hist = the pitcher's official labeled history from seasons < t
+      league_prev = official league mean from t-1
+
+      A_prev = (hist_success + S * league_prev) / (hist_n + S)
+
+    No other validation/test row is used.
+    """
+    seasons = pd.to_numeric(rows[SEASON_COL], errors="raise").astype(int)
+    stats = pitcher_season_stats.copy()
+    stats[SEASON_COL] = pd.to_numeric(stats[SEASON_COL], errors="raise").astype(int)
+
+    anchor = np.full(len(rows), np.nan, dtype=np.float64)
+    positions = np.arange(len(rows))
+
+    for target_year in sorted(seasons.unique().tolist()):
+        mask = seasons.eq(int(target_year)).to_numpy()
+        pos = positions[mask]
+        sub = rows.loc[mask]
+
+        hist = stats.loc[stats[SEASON_COL] < int(target_year)]
+        if len(hist) > 0:
+            agg = (
+                hist.groupby("pitcher_id", sort=False, dropna=False)[["n", "success"]]
+                .sum()
+            )
+            hist_n = (
+                sub["pitcher_id"]
+                .map(agg["n"])
+                .fillna(0.0)
+                .to_numpy(dtype=np.float64)
+            )
+            hist_success = (
+                sub["pitcher_id"]
+                .map(agg["success"])
+                .fillna(0.0)
+                .to_numpy(dtype=np.float64)
+            )
+        else:
+            hist_n = np.zeros(len(sub), dtype=np.float64)
+            hist_success = np.zeros(len(sub), dtype=np.float64)
+
+        league_prev = league_prev_for(int(target_year), season_league_means)
+        anchor[pos] = (
+            hist_success + ANCHOR_STRENGTH * league_prev
+        ) / (
+            hist_n + ANCHOR_STRENGTH
+        )
+
+    if not np.isfinite(anchor).all():
+        raise RuntimeError("Previous anchor contains NaN/Inf")
+    return np.clip(anchor, 0.0, 1.0)
+
+
+def compute_dynamic_anchor(
+    exact_view: pd.DataFrame,
+    prev_anchor: np.ndarray,
+) -> tuple[np.ndarray, dict]:
+    """
+    Row-local Dynamic ASOF anchor.
+
+      A_t = (1-alpha_t) * A_prev + alpha_t * R_t
+      alpha_t = lambda * n_t / (n_t + kappa)
+
+    R_t and n_t are derived from the current row's official ASOF fields through
+    Exact-ASOF5. No other test row is referenced.
+    """
+    prev_anchor = np.asarray(prev_anchor, dtype=np.float64)
+    if len(prev_anchor) != len(exact_view):
+        raise RuntimeError("Dynamic anchor length mismatch")
+
+    n_t = (
+        pd.to_numeric(exact_view["exact_pitcher_season_n"], errors="coerce")
+        .fillna(0.0)
+        .clip(lower=0.0)
+        .to_numpy(dtype=np.float64)
+    )
+    r_t = pd.to_numeric(
+        exact_view["exact_pitcher_season_success_rate"], errors="coerce"
+    ).to_numpy(dtype=np.float64)
+
+    valid = (n_t > 0.0) & np.isfinite(r_t)
+    reliability = np.zeros(len(exact_view), dtype=np.float64)
+    reliability[valid] = n_t[valid] / (n_t[valid] + float(DYNAMIC_KAPPA))
+    alpha = np.clip(float(DYNAMIC_LAMBDA) * reliability, 0.0, 1.0)
+
+    current_state = prev_anchor.copy()
+    current_state[valid] = np.clip(r_t[valid], 0.0, 1.0)
+    dynamic_anchor = (1.0 - alpha) * prev_anchor + alpha * current_state
+
+    if not np.isfinite(dynamic_anchor).all():
+        raise RuntimeError("Dynamic anchor contains NaN/Inf")
+
+    diagnostics = {
+        "lambda": float(DYNAMIC_LAMBDA),
+        "kappa": float(DYNAMIC_KAPPA),
+        "asof_available_rate": float(np.mean(valid)),
+        "mean_current_n": float(np.mean(n_t)),
+        "median_current_n": float(np.median(n_t)),
+        "mean_alpha": float(np.mean(alpha)),
+        "p90_alpha": float(np.quantile(alpha, 0.90)),
+        "mean_abs_anchor_shift": float(np.mean(np.abs(dynamic_anchor - prev_anchor))),
+        "max_abs_anchor_shift": float(np.max(np.abs(dynamic_anchor - prev_anchor))),
+    }
+    return np.clip(dynamic_anchor, 0.0, 1.0), diagnostics
+
+
+def fit_dynamic_fold_model(
+    train_view,
+    val_view,
+    features,
+    cat_cols,
+    y_train,
+    y_val,
+    anchor_train,
+    anchor_val,
+    label,
+    seed=BASE_SEED,
+):
+    """Fit CatBoost to residual y - DynamicAnchor and return probability prediction."""
+    X_tr = prepare_features(train_view[features], cat_cols)
+    X_va = prepare_features(val_view[features], cat_cols)
+    # 3 seed 프로토콜
+    _params = dict(MODEL_PARAMS)
+    _params["random_seed"] = int(seed)
+    model = CatBoostRegressor(**_params)
+    print(
+        f"\n[{label}] fold4 training | rows={len(X_tr):,} -> {len(X_va):,} "
+        f"| features={len(features)}"
+    )
+    t0 = time.time()
+    model.fit(
+        X_tr,
+        np.asarray(y_train, dtype=np.float64) - np.asarray(anchor_train, dtype=np.float64),
+        eval_set=(
+            X_va,
+            np.asarray(y_val, dtype=np.float64) - np.asarray(anchor_val, dtype=np.float64),
+        ),
+        cat_features=cat_cols,
+        early_stopping_rounds=EARLY_STOPPING_ROUNDS,
+        use_best_model=True,
+        verbose=100,
+    )
+    elapsed = time.time() - t0
+    correction = np.asarray(model.predict(X_va), dtype=np.float64)
+    pred = np.clip(np.asarray(anchor_val, dtype=np.float64) + correction, 0.0, 1.0)
+    best_zero = int(model.get_best_iteration())
+    if best_zero < 0:
+        raise RuntimeError(f"{label} best iteration invalid: {best_zero}")
+    return model, pred, correction, best_zero, elapsed
+
+
+def fit_dynamic_full_model(
+    view,
+    features,
+    cat_cols,
+    y,
+    anchor,
+    iterations,
+    label,
+):
+    """Final full-data Dynamic-ASOF residual CatBoost. E5: L1_SEEDS 시드평균."""
+    seeds = tuple(L1_SEEDS)
+    iters = (list(iterations) if isinstance(iterations, (list, tuple))
+             else [int(iterations)] * len(seeds))
+    if len(iters) != len(seeds):
+        raise ValueError(f"{label}: iterations {len(iters)} != seeds {len(seeds)}")
+    X = prepare_features(view[features], cat_cols)
+    target = np.asarray(y, dtype=np.float64) - np.asarray(anchor, dtype=np.float64)
+    models, params_list, total = [], [], 0.0
+    for sd, it in zip(seeds, iters):
+        params = {**MODEL_PARAMS, "iterations": int(it), "random_seed": int(sd)}
+        model = CatBoostRegressor(**params)
+        print(
+            f"\n[{label} seed={sd}] final full training | rows={len(X):,} "
+            f"| features={len(features)} | trees={it}"
+        )
+        t0 = time.time()
+        model.fit(X, target, cat_features=cat_cols, verbose=100)
+        total += time.time() - t0
+        if hasattr(model, "feature_names_") and list(model.feature_names_) != list(features):
+            raise RuntimeError(f"{label} final feature order mismatch (seed={sd})")
+        models.append(model)
+        params_list.append(params)
+    return models, params_list, total
+
+
+# =============================================================================
+# L1 view construction / training
+# =============================================================================
+
+# =============================================================================
+# danker_v003 <- danker_v002(= danker_sj_v001): SJ v042 SUCCESS_FULL (원문 이식)
+# =============================================================================
+
+SEASON = SEASON_COL          # SJ 코드 호환 별칭
+GAME_TYPE = GAME_TYPE_COL
+
+SUCCESS_SPEC = {
+    "pitcher": {
+        "id_col": "pitcher_id",
+        "n_col": "asof_pitcher_n",
+        "rate_col": "asof_pitcher_success_rate",
+        "strengths": [40.0, 80.0, 160.0],
+        "reliability_strength": 80.0,
+    },
+    "batter": {
+        "id_col": "batter_id",
+        "n_col": "asof_batter_n",
+        "rate_col": "asof_batter_success_rate",
+        "strengths": [40.0, 80.0, 160.0],
+        "reliability_strength": 100.0,
+    },
+}
+
+SUCCESS_FEATURES = [
+    # pitcher
+    "gseason__pitcher_rate_k40",
+    "gseason__pitcher_rate_k80",
+    "gseason__pitcher_rate_k160",
+    "gseason__pitcher_reliability",
+    "gseason__pitcher_minus_career",
+
+    # batter
+    "gseason__batter_rate_k40",
+    "gseason__batter_rate_k80",
+    "gseason__batter_rate_k160",
+    "gseason__batter_raw",
+    "gseason__batter_log_n",
+    "gseason__batter_reliability",
+    "gseason__batter_minus_career",
+
+    # matchup current-state diff
+    "gseason__pitcher_minus_batter_k80",
+]
+
+
+def rounded_cumulative_count(
+    n,
+    rate,
+):
+    """
+    v038 current-state semantics:
+    cumulative event count ~= round(n * rate)
+    """
+    n = np.asarray(
+        n,
+        dtype=np.float64,
+    )
+
+    rate = np.asarray(
+        rate,
+        dtype=np.float64,
+    )
+
+    out = np.zeros(
+        len(n),
+        dtype=np.float64,
+    )
+
+    ok = (
+        (n > 0.0)
+        & np.isfinite(rate)
+    )
+
+    out[ok] = np.rint(
+        n[ok]
+        * rate[ok]
+    )
+
+    return out
+
+
+def build_success_bank(
+    history: pd.DataFrame,
+    entity: str,
+):
+    spec = (
+        SUCCESS_SPEC[
+            entity
+        ]
+    )
+
+    id_col = (
+        spec[
+            "id_col"
+        ]
+    )
+
+    if len(
+        history
+    ) == 0:
+        return {
+            "n": {},
+            "success": {},
+            "prior": 0.5,
+        }
+
+    agg = (
+        history
+        .groupby(
+            id_col,
+            sort=False,
+            dropna=False,
+        )[TARGET]
+        .agg(
+            [
+                "size",
+                "sum",
+            ]
+        )
+    )
+
+    max_year = int(
+        pd.to_numeric(
+            history[
+                SEASON
+            ],
+            errors="raise",
+        )
+        .max()
+    )
+
+    prior = float(
+        history.loc[
+            pd.to_numeric(
+                history[
+                    SEASON
+                ],
+                errors="coerce",
+            )
+            .eq(
+                max_year
+            ),
+            TARGET,
+        ]
+        .mean()
+    )
+
+    if not np.isfinite(
+        prior
+    ):
+        prior = 0.5
+
+    return {
+        "n": (
+            agg[
+                "size"
+            ]
+            .astype(
+                np.float64
+            )
+            .to_dict()
+        ),
+        "success": (
+            agg[
+                "sum"
+            ]
+            .astype(
+                np.float64
+            )
+            .to_dict()
+        ),
+        "prior": float(
+            prior
+        ),
+    }
+
+
+def build_state_bank(
+    available_history: pd.DataFrame,
+    target_year: int,
+):
+    hist = (
+        available_history.loc[
+            pd.to_numeric(
+                available_history[
+                    SEASON
+                ],
+                errors="raise",
+            )
+            .astype(int)
+            .lt(
+                int(
+                    target_year
+                )
+            )
+        ]
+        .copy()
+    )
+
+    return {
+        "target_year": int(
+            target_year
+        ),
+        "pitcher_success": (
+            build_success_bank(
+                hist,
+                "pitcher",
+            )
+        ),
+        "batter_success": (
+            build_success_bank(
+                hist,
+                "batter",
+            )
+        ),
+    }
+
+
+def transform_success_state(
+    rows: pd.DataFrame,
+    bank: dict,
+    entity: str,
+    out: pd.DataFrame,
+):
+    spec = (
+        SUCCESS_SPEC[
+            entity
+        ]
+    )
+
+    sb = (
+        bank[
+            f"{entity}_success"
+        ]
+    )
+
+    id_col = (
+        spec[
+            "id_col"
+        ]
+    )
+
+    n_col = (
+        spec[
+            "n_col"
+        ]
+    )
+
+    rate_col = (
+        spec[
+            "rate_col"
+        ]
+    )
+
+    ids = (
+        rows[
+            id_col
+        ]
+    )
+
+    hist_n = (
+        ids
+        .map(
+            sb[
+                "n"
+            ]
+        )
+        .fillna(0.0)
+        .to_numpy(
+            dtype=np.float64
+        )
+    )
+
+    hist_success = (
+        ids
+        .map(
+            sb[
+                "success"
+            ]
+        )
+        .fillna(0.0)
+        .to_numpy(
+            dtype=np.float64
+        )
+    )
+
+    asof_n = (
+        pd.to_numeric(
+            rows[
+                n_col
+            ],
+            errors="coerce",
+        )
+        .fillna(0.0)
+        .clip(lower=0.0)
+        .to_numpy(
+            dtype=np.float64
+        )
+    )
+
+    career = (
+        pd.to_numeric(
+            rows[
+                rate_col
+            ],
+            errors="coerce",
+        )
+        .to_numpy(
+            dtype=np.float64
+        )
+    )
+
+    prior = float(
+        sb[
+            "prior"
+        ]
+    )
+
+    career = np.where(
+        np.isfinite(
+            career
+        ),
+        career,
+        prior,
+    )
+
+    cumulative_success = (
+        rounded_cumulative_count(
+            asof_n,
+            career,
+        )
+    )
+
+    current_n = np.maximum(
+        asof_n
+        - hist_n,
+        0.0,
+    )
+
+    current_success = np.clip(
+        cumulative_success
+        - hist_success,
+        0.0,
+        current_n,
+    )
+
+    raw = np.divide(
+        current_success,
+        current_n,
+        out=np.full(
+            len(rows),
+            prior,
+            dtype=np.float64,
+        ),
+        where=(
+            current_n
+            > 0.0
+        ),
+    )
+
+    prefix = (
+        f"gseason__{entity}"
+    )
+
+    for k in (
+        spec[
+            "strengths"
+        ]
+    ):
+        out[
+            f"{prefix}_rate_k{int(k)}"
+        ] = (
+            (
+                current_success
+                + float(k)
+                * prior
+            )
+            / (
+                current_n
+                + float(k)
+            )
+        ).astype(
+            np.float32
+        )
+
+    out[
+        f"{prefix}_raw"
+    ] = (
+        raw.astype(
+            np.float32
+        )
+    )
+
+    out[
+        f"{prefix}_log_n"
+    ] = (
+        np.log1p(
+            current_n
+        )
+        .astype(
+            np.float32
+        )
+    )
+
+    rk = float(
+        spec[
+            "reliability_strength"
+        ]
+    )
+
+    out[
+        f"{prefix}_reliability"
+    ] = (
+        current_n
+        / (
+            current_n
+            + rk
+        )
+    ).astype(
+        np.float32
+    )
+
+    out[
+        f"{prefix}_minus_career"
+    ] = (
+        raw
+        - career
+    ).astype(
+        np.float32
+    )
+
+    return {
+        "current_n": (
+            current_n
+        ),
+        "raw": (
+            raw
+        ),
+        "k80": (
+            out[
+                f"{prefix}_rate_k80"
+            ]
+            .to_numpy(
+                dtype=np.float64
+            )
+        ),
+    }
+
+
+def build_success_state_for_rows(
+    rows: pd.DataFrame,
+    available_history: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    SUCCESS_FULL 13 features.
+
+    row target season y:
+      historical constants = labeled history season < y
+      current state = row-local official cumulative asof - historical constants
+    """
+    out = pd.DataFrame(
+        index=rows.index
+    )
+
+    for col in (
+        SUCCESS_FEATURES
+    ):
+        out[
+            col
+        ] = np.nan
+
+    seasons = (
+        pd.to_numeric(
+            rows[
+                SEASON
+            ],
+            errors="raise",
+        )
+        .astype(int)
+    )
+
+    for target_year in sorted(
+        seasons.unique()
+    ):
+        mask = (
+            seasons.eq(
+                int(
+                    target_year
+                )
+            )
+        )
+
+        rr = (
+            rows.loc[
+                mask
+            ]
+            .copy()
+        )
+
+        bank = (
+            build_state_bank(
+                available_history=(
+                    available_history
+                ),
+                target_year=int(
+                    target_year
+                ),
+            )
+        )
+
+        z = pd.DataFrame(
+            index=rr.index
+        )
+
+        pitcher_state = (
+            transform_success_state(
+                rows=rr,
+                bank=bank,
+                entity="pitcher",
+                out=z,
+            )
+        )
+
+        batter_state = (
+            transform_success_state(
+                rows=rr,
+                bank=bank,
+                entity="batter",
+                out=z,
+            )
+        )
+
+        z[
+            "gseason__pitcher_minus_batter_k80"
+        ] = (
+            pitcher_state[
+                "k80"
+            ]
+            - batter_state[
+                "k80"
+            ]
+        ).astype(
+            np.float32
+        )
+
+        z = (
+            z.reindex(
+                columns=SUCCESS_FEATURES
+            )
+            .replace(
+                [
+                    np.inf,
+                    -np.inf,
+                ],
+                np.nan,
+            )
+            .fillna(0.0)
+            .astype(
+                np.float32
+            )
+        )
+
+        out.loc[
+            rr.index,
+            SUCCESS_FEATURES,
+        ] = z[
+            SUCCESS_FEATURES
+        ]
+
+    out = (
+        out
+        .fillna(0.0)
+        .astype(
+            np.float32
+        )
+    )
+
+    if not np.isfinite(
+        out.to_numpy(
+            dtype=np.float64
+        )
+    ).all():
+        raise RuntimeError(
+            "SUCCESS_FULL contains NaN/Inf."
+        )
+
+    return out
+
+
+def build_success_history_artifact(
+    full_train: pd.DataFrame,
+) -> dict:
+    """
+    inference 시 raw train.csv 없이도 target season의
+    historical n/success/prior를 복원할 수 있게
+    season-level aggregated labeled history를 저장한다.
+    """
+    result = {}
+
+    for entity in [
+        "pitcher",
+        "batter",
+    ]:
+        id_col = (
+            SUCCESS_SPEC[
+                entity
+            ][
+                "id_col"
+            ]
+        )
+
+        stats = (
+            full_train
+            .groupby(
+                [
+                    id_col,
+                    SEASON,
+                ],
+                sort=False,
+                dropna=False,
+            )[TARGET]
+            .agg(
+                n="size",
+                success="sum",
+            )
+            .reset_index()
+        )
+
+        stats[
+            SEASON
+        ] = (
+            pd.to_numeric(
+                stats[
+                    SEASON
+                ],
+                errors="raise",
+            )
+            .astype(int)
+        )
+
+        result[
+            entity
+        ] = stats
+
+    season_prior = (
+        full_train
+        .groupby(
+            SEASON,
+            sort=False,
+        )[TARGET]
+        .mean()
+    )
+
+    result[
+        "season_prior"
+    ] = {
+        int(k): float(v)
+        for k, v in (
+            season_prior
+            .to_dict()
+            .items()
+        )
+    }
+
+    return result
+
+
+def make_l1_views(df_train_raw, df_apply_raw, base_features, scope):
+    pitcher_stats = build_pitcher_season_stats(df_train_raw)
+    tr_exact, tr_exact_diag = add_pitcher_exact_asof_features(df_train_raw, pitcher_stats)
+    ap_exact, ap_exact_diag = add_pitcher_exact_asof_features(df_apply_raw, pitcher_stats)
+
+    exact_features = list(base_features)
+    for col in EXACT_FEATURES:
+        if col not in exact_features:
+            exact_features.append(col)
+
+    tr_control, control_features, hbeb_priors = apply_hbeb_pair(
+        df_train=tr_exact,
+        df_apply=tr_exact,
+        base_features=exact_features,
+    )
+    ap_control, apply_features, _ = apply_hbeb_pair(
+        df_train=tr_exact,
+        df_apply=ap_exact,
+        base_features=exact_features,
+    )
+    if list(apply_features) != list(control_features):
+        raise RuntimeError("HB-EB feature order mismatch")
+
+    pc_tr, pc_cov_tr = build_pitcher_conditional_for_rows(
+        rows=df_train_raw,
+        available_history=df_train_raw,
+        scope=f"{scope}_train",
+    )
+    pc_ap, pc_cov_ap = build_pitcher_conditional_for_rows(
+        rows=df_apply_raw,
+        available_history=df_train_raw,
+        scope=f"{scope}_apply",
+    )
+    pc_tr = mask_pitcher_conditional_to_r_only(pc_tr, df_train_raw)
+    pc_ap = mask_pitcher_conditional_to_r_only(pc_ap, df_apply_raw)
+
+    tr_treat = tr_control.copy()
+    ap_treat = ap_control.copy()
+    for col in PC_FEATURES:
+        if col in tr_treat.columns or col in ap_treat.columns:
+            raise RuntimeError(f"Duplicate PC feature: {col}")
+        tr_treat[col] = pc_tr[col]
+        ap_treat[col] = pc_ap[col]
+
+    # --- SUCCESS_FULL 13 (v002 = SJ v042 이식본에서 승계) ---
+    state_tr = build_success_state_for_rows(
+        rows=df_train_raw, available_history=df_train_raw)
+    state_ap = build_success_state_for_rows(
+        rows=df_apply_raw, available_history=df_train_raw)
+    for col in SUCCESS_FEATURES:
+        if col in tr_treat.columns or col in ap_treat.columns:
+            raise RuntimeError(f"Duplicate SUCCESS feature: {col}")
+        tr_treat[col] = state_tr[col]
+        ap_treat[col] = state_ap[col]
+
+    treatment_features = (
+        list(control_features) + list(PC_FEATURES) + list(SUCCESS_FEATURES)
+    )
+    control_cat_cols = [c for c in CAT_COLS if c in control_features]
+    treatment_cat_cols = [c for c in CAT_COLS if c in treatment_features]
+
+    if len(control_features) != EXPECTED_CONTROL_FEATURES:
+        raise RuntimeError(
+            f"control feature count {len(control_features)} != {EXPECTED_CONTROL_FEATURES}"
+        )
+    if len(treatment_features) != EXPECTED_TREATMENT_FEATURES:
+        raise RuntimeError(
+            f"treatment feature count {len(treatment_features)} != {EXPECTED_TREATMENT_FEATURES}"
+        )
+
+    return {
+        "train_control": tr_control,
+        "apply_control": ap_control,
+        "train_treatment": tr_treat,
+        "apply_treatment": ap_treat,
+        "control_features": control_features,
+        "treatment_features": treatment_features,
+        "control_cat_cols": control_cat_cols,
+        "treatment_cat_cols": treatment_cat_cols,
+        "pitcher_season_stats": pitcher_stats,
+        "hbeb_priors": hbeb_priors,
+        "exact_diag_train": tr_exact_diag,
+        "exact_diag_apply": ap_exact_diag,
+        "pc_coverage_train": pc_cov_tr,
+        "pc_coverage_apply": pc_cov_ap,
+    }
+
+
+def fit_fold_model(
+    train_view, val_view, features, cat_cols, y_train, y_val, label, seed=BASE_SEED
+):
+    X_tr = prepare_features(train_view[features], cat_cols)
+    X_va = prepare_features(val_view[features], cat_cols)
+    # 3 seed 프로토콜 (38_* §8-3 조건 1)
+    _params = dict(MODEL_PARAMS)
+    _params["random_seed"] = int(seed)
+    model = CatBoostRegressor(**_params)
+    print(f"\n[{label}] fold4 training | rows={len(X_tr):,} -> {len(X_va):,} | features={len(features)}")
+    t0 = time.time()
+    model.fit(
+        X_tr,
+        y_train,
+        eval_set=(X_va, y_val),
+        cat_features=cat_cols,
+        early_stopping_rounds=EARLY_STOPPING_ROUNDS,
+        use_best_model=True,
+        verbose=100,
+    )
+    elapsed = time.time() - t0
+    pred = np.clip(np.asarray(model.predict(X_va), dtype=np.float64), 0.0, 1.0)
+    best_zero = int(model.get_best_iteration())
+    if best_zero < 0:
+        raise RuntimeError(f"{label} best iteration invalid: {best_zero}")
+    return model, pred, best_zero, elapsed
+
+
+def fit_fold_seeded(train_view, val_view, features, cat_cols, y_train, y_val,
+                    label, seeds):
+    """fold 를 시드마다 돌려 (평균 예측, 시드별 트리 수, 총 소요) 를 돌려준다 (E5).
+
+    배포 L1 이 시드평균이므로 L2 가 학습할 base_pred 도 시드평균이어야 한다.
+    단일 시드 fold 로 L2 를 적합하면 배포 시 base_pred 가 13.3%(std 기준) 어긋난다.
+    """
+    preds, trees, total = [], [], 0.0
+    for sd in tuple(seeds):
+        _, pred, best_zero, sec = fit_fold_model(
+            train_view, val_view, features, cat_cols, y_train, y_val,
+            f"{label}[seed={sd}]", seed=int(sd),
+        )
+        preds.append(np.asarray(pred, dtype=np.float64))
+        trees.append(int(best_zero) + 1)
+        total += sec
+    return np.mean(np.column_stack(preds), axis=1), trees, total
+
+
+def fit_dynamic_fold_seeded(train_view, val_view, features, cat_cols,
+                            y_train, y_val, anchor_train, anchor_val,
+                            label, seeds):
+    """DYNAMIC fold 시드 루프. 예측과 보정을 각각 평균한다 (E5)."""
+    preds, corrs, trees, total = [], [], [], 0.0
+    for sd in tuple(seeds):
+        _, pred, corr, best_zero, sec = fit_dynamic_fold_model(
+            train_view=train_view, val_view=val_view,
+            features=features, cat_cols=cat_cols,
+            y_train=y_train, y_val=y_val,
+            anchor_train=anchor_train, anchor_val=anchor_val,
+            label=f"{label}[seed={sd}]", seed=int(sd),
+        )
+        preds.append(np.asarray(pred, dtype=np.float64))
+        corrs.append(np.asarray(corr, dtype=np.float64))
+        trees.append(int(best_zero) + 1)
+        total += sec
+    return (np.mean(np.column_stack(preds), axis=1),
+            np.mean(np.column_stack(corrs), axis=1),
+            trees, total)
+
+
+def fit_full_model(view, features, cat_cols, y, iterations, label, seeds=None):
+    """최종 full-fit. L1_SEEDS 개수만큼 학습해 모델 리스트를 돌려준다 (E5).
+
+    seeds=(BASE_SEED,) 이면 시드평균 도입 이전과 비트 단위 동일하다.
+    """
+    seeds = tuple(L1_SEEDS if seeds is None else seeds)
+    iters = (list(iterations) if isinstance(iterations, (list, tuple))
+             else [int(iterations)] * len(seeds))
+    if len(iters) != len(seeds):
+        raise ValueError(f"{label}: iterations {len(iters)} != seeds {len(seeds)}")
+    X = prepare_features(view[features], cat_cols)
+    models, params_list, total = [], [], 0.0
+    for sd, it in zip(seeds, iters):
+        params = {**MODEL_PARAMS, "iterations": int(it), "random_seed": int(sd)}
+        model = CatBoostRegressor(**params)
+        print(f"\n[{label} seed={sd}] final full training | rows={len(X):,} "
+              f"| features={len(features)} | trees={it}")
+        t0 = time.time()
+        model.fit(X, y, cat_features=cat_cols, verbose=100)
+        total += time.time() - t0
+        if hasattr(model, "feature_names_") and list(model.feature_names_) != list(features):
+            raise RuntimeError(f"{label} final feature order mismatch (seed={sd})")
+        models.append(model)
+        params_list.append(params)
+    return models, params_list, total
+
+
+# =============================================================================
+# Main
+# =============================================================================
+
+def main():
+    total_start = time.time()
+
+    print("=" * 112)
+    print(EXPERIMENT_NAME)
+    print("=" * 112)
+    print("Standalone    : YES (no existing model/validation artifact)")
+    print("L1 base       : CatBoost Exact-ASOF5 + HB-EB + R-only PC FULL")
+    print(
+        f"R branch      : (1-{W_R:g})*TREATMENT + {W_R:g}*DYNAMIC_ASOF"
+        + ("   [W_R=0 → v002 라우팅과 비트 동일]" if W_R == 0.0 else "   [E2b]")
+    )
+    print("F branch      : 0.75 * CONTROL + 0.25 * DYNAMIC_ASOF")
+    print(f"Dynamic λ     : {DYNAMIC_LAMBDA}")
+    print(f"Dynamic κ     : {DYNAMIC_KAPPA}")
+    print(f"F blend w     : {F_BLEND_WEIGHT}")
+    print("b_F           : OFF")
+    print("L2            : ExtraTrees residual adapter")
+    print("L2 features   : adapter core + Exact-ASOF5")
+    print("PC in L2      : NO")
+    print("Exact in L2   : YES")
+    print("L2 routing    : R=L1+L2 / F=L1 protected")
+    print(f"Adapter seeds : {ADAPTER_SEEDS}")
+    print(f"FINAL ET cfg  : {FINAL_ADAPTER_CFG}")
+    print(f"Shrink        : {ADAPTER_SHRINK}")
+    print("L3            : OFF")
+    print("Test usage    : HEADER ONLY")
+    print("=" * 112)
+
+    # -----------------------------------------------------------------
+    # 0) Input / artifact guards
+    # -----------------------------------------------------------------
+    for path in [TRAIN_PATH, TEST_PATH]:
+        if not path.exists():
+            raise FileNotFoundError(path)
+
+    if MODEL_DIR.exists():
+        raise FileExistsError(
+            f"기존 model 보호를 위해 중단: {MODEL_DIR}\n"
+            "기존 폴더를 이동/삭제하거나 EXPERIMENT_NAME을 변경하세요."
+        )
+    if VALIDATION_DIR.exists():
+        raise FileExistsError(
+            f"기존 validation 보호를 위해 중단: {VALIDATION_DIR}\n"
+            "기존 폴더를 이동/삭제하거나 EXPERIMENT_NAME을 변경하세요."
+        )
+
+    # test.csv는 schema(header)만 사용한다.
+    test_cols = pd.read_csv(TEST_PATH, encoding="utf-8-sig", nrows=0).columns.tolist()
+    base_features = [c for c in test_cols if c != ID]
+    if "asof_pitcher_pitchmix_n" not in base_features:
+        raise RuntimeError("canonical feature asof_pitcher_pitchmix_n missing from test schema")
+
+    train = pd.read_csv(TRAIN_PATH, encoding="utf-8-sig", low_memory=False)
+    train[SEASON_COL] = pd.to_numeric(train[SEASON_COL], errors="raise").astype(int)
+    if int(train[SEASON_COL].max()) != SOURCE_YEAR:
+        raise RuntimeError(
+            f"latest train season={int(train[SEASON_COL].max())}; expected {SOURCE_YEAR}"
+        )
+
+    required = {
+        ID,
+        TARGET,
+        SEASON_COL,
+        GAME_TYPE_COL,
+        "pitcher_id",
+        "batter_hand",
+        "base_state",
+        "balls_before",
+        "strikes_before",
+        "inning",
+        "num_runners_on",
+        "li",
+        "asof_pitcher_n",
+        "asof_pitcher_success_rate",
+        "asof_batter_n",
+        "asof_batter_success_rate",
+    }
+    missing = sorted(required - set(train.columns))
+    if missing:
+        raise KeyError(f"train required columns missing: {missing}")
+
+    # -----------------------------------------------------------------
+    # 1) Latest OOT fold: 2019~2023 -> 2024
+    #    - CONTROL tree count
+    #    - TREATMENT tree count
+    #    - DYNAMIC tree count
+    #    - actual danker L1 OOT prediction
+    #    - R-only L2 residual source
+    # -----------------------------------------------------------------
+    fold_train = train.loc[train[SEASON_COL] < SOURCE_YEAR].copy().reset_index(drop=True)
+    fold_val = train.loc[train[SEASON_COL] == SOURCE_YEAR].copy().reset_index(drop=True)
+    if len(fold_train) == 0 or len(fold_val) == 0:
+        raise RuntimeError("fold4 source/validation rows missing")
+
+    fold_views = make_l1_views(
+        df_train_raw=fold_train,
+        df_apply_raw=fold_val,
+        base_features=base_features,
+        scope="fold4",
+    )
+
+    y_tr = fold_train[TARGET].to_numpy(dtype=np.float64)
+    y24 = fold_val[TARGET].to_numpy(dtype=np.float64)
+
+    # CONTROL
+    pred_control24, control_trees, control_fold_time = fit_fold_seeded(
+        fold_views["train_control"],
+        fold_views["apply_control"],
+        fold_views["control_features"],
+        fold_views["control_cat_cols"],
+        y_tr,
+        y24,
+        "CONTROL",
+        L1_SEEDS,
+    )
+
+    # R TREATMENT
+    pred_treat24, treatment_trees, treatment_fold_time = fit_fold_seeded(
+        fold_views["train_treatment"],
+        fold_views["apply_treatment"],
+        fold_views["treatment_features"],
+        fold_views["treatment_cat_cols"],
+        y_tr,
+        y24,
+        "TREATMENT",
+        L1_SEEDS,
+    )
+
+    # F DYNAMIC-ASOF expert
+    fold_season_league_means = build_season_league_means(fold_train)
+    prev_anchor_train = compute_prev_anchor(
+        rows=fold_train,
+        pitcher_season_stats=fold_views["pitcher_season_stats"],
+        season_league_means=fold_season_league_means,
+    )
+    prev_anchor24 = compute_prev_anchor(
+        rows=fold_val,
+        pitcher_season_stats=fold_views["pitcher_season_stats"],
+        season_league_means=fold_season_league_means,
+    )
+    dynamic_anchor_train, dynamic_diag_train = compute_dynamic_anchor(
+        exact_view=fold_views["train_control"],
+        prev_anchor=prev_anchor_train,
+    )
+    dynamic_anchor24, dynamic_diag24 = compute_dynamic_anchor(
+        exact_view=fold_views["apply_control"],
+        prev_anchor=prev_anchor24,
+    )
+    (
+        pred_dynamic24,
+        dynamic_correction24,
+        dynamic_trees,
+        dynamic_fold_time,
+    ) = fit_dynamic_fold_seeded(
+        train_view=fold_views["train_control"],
+        val_view=fold_views["apply_control"],
+        features=fold_views["control_features"],
+        cat_cols=fold_views["control_cat_cols"],
+        y_train=y_tr,
+        y_val=y24,
+        anchor_train=dynamic_anchor_train,
+        anchor_val=dynamic_anchor24,
+        label="DYNAMIC_ASOF",
+        seeds=L1_SEEDS,
+    )
+
+    gt24 = fold_val[GAME_TYPE_COL].fillna("__MISSING__").astype(str).to_numpy()
+    r24 = gt24 != "F"
+    f24 = gt24 == "F"
+    if not r24.any() or not f24.any():
+        raise RuntimeError("2024 R/F routing rows missing")
+
+    f_blend24 = np.clip(
+        (1.0 - F_BLEND_WEIGHT) * pred_control24
+        + F_BLEND_WEIGHT * pred_dynamic24,
+        0.0,
+        1.0,
+    )
+    # --- L1 합성: 라우팅을 곱셈 가중치로 (I2) --------------------------------
+    # W_R = 0 이면 아래는 v002 의 np.where 라우팅과 비트 단위 동일하다.
+    #   R 행 : (1-0)*treatment + 0*dynamic          = treatment
+    #   F 행 : (1-0.25)*control + 0.25*dynamic      = 기존 f_blend
+    # 주의: p_main24 는 여전히 CONTROL / TREATMENT 를 게임타입으로 고른다.
+    # 두 L1 예측기를 하나로 합치는 것은 별개 축이며 D0~E2 범위 밖이다
+    # (36_* §6-2: 트리 예산 70.8% 가 11.84% 행에 배정된 문제).
+    p_main24 = np.where(f24, pred_control24, pred_treat24)
+    w24 = blend_weights(gt24, w_r=W_R, w_f=F_BLEND_WEIGHT)
+    l1_oof24 = blend(p_main24, pred_dynamic24, w24)
+
+    if W_R == 0.0:                                  # I5 회귀
+        _ref = np.clip(np.where(r24, pred_treat24, f_blend24), 0.0, 1.0)
+        if not np.array_equal(l1_oof24, _ref):
+            raise RuntimeError(
+                "L1 합성 회귀 실패: W_R=0 인데 v002 라우팅과 값이 다르다 "
+                f"(max|diff|={float(np.abs(l1_oof24 - _ref).max()):.3e})"
+            )
+
+    # control_trees / treatment_trees / dynamic_trees 는 fit_fold_seeded 가
+    # 시드별 리스트로 돌려준다 (E5). 각 시드가 자기 fold best iteration 을 쓴다.
+
+    # Paired 2024 F diagnostics.
+    y24_f = y24[f24]
+    control_f_brier = brier_score(y24_f, pred_control24[f24])
+    dynamic_f_brier = brier_score(y24_f, pred_dynamic24[f24])
+    blend_f_brier = brier_score(y24_f, f_blend24[f24])
+    f_baseline = float(np.mean(y24_f) * (1.0 - np.mean(y24_f)))
+    if f_baseline > 0.0:
+        dynamic_f_gain_pt = 100000.0 * (control_f_brier - dynamic_f_brier) / f_baseline
+        blend_f_gain_pt = 100000.0 * (control_f_brier - blend_f_brier) / f_baseline
+    else:
+        dynamic_f_gain_pt = 0.0
+        blend_f_gain_pt = 0.0
+
+    print("\n" + "=" * 112)
+    print("LATEST FOLD RESULT (2019~2023 -> 2024)")
+    print("=" * 112)
+    print(f"CONTROL best tree count  : {control_trees}")
+    print(f"TREATMENT best tree count: {treatment_trees}")
+    print(f"DYNAMIC best tree count  : {dynamic_trees}")
+    print(f"CONTROL 2024 Brier       : {brier_score(y24, pred_control24):.10f}")
+    print(f"TREATMENT 2024 Brier     : {brier_score(y24, pred_treat24):.10f}")
+    print(f"DYNAMIC 2024 Brier       : {brier_score(y24, pred_dynamic24):.10f}")
+    print(f"DANKER L1 2024 Brier     : {brier_score(y24, l1_oof24):.10f}")
+    print(f"DANKER L1 2024 BSS       : {calculate_bss(y24, l1_oof24):+.4f}")
+    print(f"2024 R/F rows            : {int(r24.sum()):,} / {int(f24.sum()):,}")
+    print(f"CONTROL F Brier          : {control_f_brier:.10f}")
+    print(f"DYNAMIC F Brier          : {dynamic_f_brier:.10f}")
+    print(f"BLEND F Brier            : {blend_f_brier:.10f}")
+    print(f"DYNAMIC F gain           : {dynamic_f_gain_pt:+.3f} pt")
+    print(f"BLEND F gain             : {blend_f_gain_pt:+.3f} pt")
+    print(f"Dynamic mean alpha       : {dynamic_diag24['mean_alpha']:.6f}")
+    print(f"Dynamic mean |shift|     : {dynamic_diag24['mean_abs_anchor_shift']:.6f}")
+
+    # Save the actual OOT L1 source before final training.
+    VALIDATION_DIR.mkdir(parents=True, exist_ok=False)
+    oof_df = pd.DataFrame({
+        ID: fold_val[ID].to_numpy(),
+        SEASON_COL: fold_val[SEASON_COL].to_numpy(),
+        GAME_TYPE_COL: fold_val[GAME_TYPE_COL].to_numpy(),
+        "y_true": y24,
+        "CONTROL": pred_control24,
+        "TREATMENT": pred_treat24,
+        "DYNAMIC_ANCHOR": dynamic_anchor24,
+        "DYNAMIC": pred_dynamic24,
+        "F_BLEND": f_blend24,
+        "L1_ROUTED": l1_oof24,
+    })
+    oof_df.to_csv(OOF_2024_PATH, index=False, encoding="utf-8-sig")
+
+    # -----------------------------------------------------------------
+    # 2) Final full L1 from all official train (2019~2024)
+    # -----------------------------------------------------------------
+    final_views = make_l1_views(
+        df_train_raw=train,
+        df_apply_raw=train,
+        base_features=base_features,
+        scope="final",
+    )
+    y_full = train[TARGET].to_numpy(dtype=np.float64)
+
+    control_models, control_final_params, control_final_time = fit_full_model(
+        final_views["train_control"],
+        final_views["control_features"],
+        final_views["control_cat_cols"],
+        y_full,
+        control_trees,
+        "CONTROL",
+    )
+
+    treatment_models, treatment_final_params, treatment_final_time = fit_full_model(
+        final_views["train_treatment"],
+        final_views["treatment_features"],
+        final_views["treatment_cat_cols"],
+        y_full,
+        treatment_trees,
+        "TREATMENT",
+    )
+
+    # Dynamic-ASOF expert final fit.  The full-history bank is saved in the artifact
+    # so script.py can reconstruct A_prev and A_t for each 2025 row independently.
+    full_season_league_means = build_season_league_means(train)
+    full_pitcher_stats = final_views["pitcher_season_stats"]
+    prev_anchor_full = compute_prev_anchor(
+        rows=train,
+        pitcher_season_stats=full_pitcher_stats,
+        season_league_means=full_season_league_means,
+    )
+    dynamic_anchor_full, dynamic_diag_full = compute_dynamic_anchor(
+        exact_view=final_views["train_control"],
+        prev_anchor=prev_anchor_full,
+    )
+    dynamic_models, dynamic_final_params, dynamic_final_time = fit_dynamic_full_model(
+        view=final_views["train_control"],
+        features=final_views["control_features"],
+        cat_cols=final_views["control_cat_cols"],
+        y=y_full,
+        anchor=dynamic_anchor_full,
+        iterations=dynamic_trees,
+        label="DYNAMIC_ASOF",
+    )
+
+    pc_tables_by_source_season = build_pc_tables_by_source_season(train)
+    success_history_artifact = build_success_history_artifact(train)
+
+    # -----------------------------------------------------------------
+    # 3) Final R-only L2 on genuine 2024 OOT residuals from danker L1
+    # -----------------------------------------------------------------
+    raw24 = fold_val.copy().reset_index(drop=True)
+    residual24 = y24 - l1_oof24
+
+    adapter_prep = fit_adapter_prep(raw24)
+    core24 = transform_adapter_core(adapter_prep, raw24, l1_oof24)
+
+    # Safe: Exact-ASOF transform uses each row's own official ASOF plus only
+    # completed prior-season labeled history.  It does not aggregate test rows.
+    exact24 = exact5_matrix(raw24, full_pitcher_stats)
+    X24 = pd.concat([core24, exact24], axis=1)
+
+    if X24.columns.duplicated().any():
+        dup = X24.columns[X24.columns.duplicated()].tolist()
+        raise RuntimeError(f"Duplicate L2 columns: {dup}")
+    if not np.isfinite(X24.to_numpy(dtype=np.float64)).all():
+        raise RuntimeError("L2 X24 contains NaN/Inf")
+
+    print("\n" + "=" * 112)
+    print("FINAL L2 TRAINING")
+    print("=" * 112)
+    print(f"2024 rows      : {len(raw24):,}")
+    print(f"R residual rows: {int(r24.sum()):,}")
+    print(f"L2 features    : {X24.shape[1]} ({core24.shape[1]} core + {exact24.shape[1]} Exact)")
+    print(f"Residual mean  : {residual24.mean():+.8f}")
+    print(f"Residual std   : {residual24.std():.8f}")
+
+    l2_models, l2_fit_diag, l2_r_mask, l2_f_mask = fit_final_l2_models(
+        X24=X24,
+        raw24=raw24,
+        residual24=residual24,
+    )
+
+    # -----------------------------------------------------------------
+    # 4) Save one self-contained artifact
+    # -----------------------------------------------------------------
+    MODEL_DIR.mkdir(parents=True, exist_ok=False)
+
+    artifact = {
+        "experiment_name": EXPERIMENT_NAME,
+        "model_type": "Danker weighted-blend CatBoost L1 + R-only ExtraTrees L2",
+        "random_seed": BASE_SEED,
+        "expected_target_year": EXPECTED_TARGET_YEAR,
+
+        "control": {
+            "models": control_models,
+            "features": list(final_views["control_features"]),
+            "cat_cols": list(final_views["control_cat_cols"]),
+            "final_iterations": control_trees,
+            "model_params": control_final_params,
+            "seeds": [int(x) for x in L1_SEEDS],
+        },
+
+        "treatment": {
+            "models": treatment_models,
+            "features": list(final_views["treatment_features"]),
+            "cat_cols": list(final_views["treatment_cat_cols"]),
+            "final_iterations": treatment_trees,
+            "model_params": treatment_final_params,
+            "seeds": [int(x) for x in L1_SEEDS],
+            "pc_features": list(PC_FEATURES),
+        },
+
+        "dynamic": {
+            "models": dynamic_models,
+            "features": list(final_views["control_features"]),
+            "cat_cols": list(final_views["control_cat_cols"]),
+            "final_iterations": dynamic_trees,
+            "model_params": dynamic_final_params,
+            "seeds": [int(x) for x in L1_SEEDS],
+            "target_definition": "control_success - dynamic_anchor",
+            "anchor_strength": float(ANCHOR_STRENGTH),
+            "anchor_fallback_rate": float(ANCHOR_FALLBACK_RATE),
+            "dynamic_lambda": float(DYNAMIC_LAMBDA),
+            "dynamic_kappa": float(DYNAMIC_KAPPA),
+            "f_blend_weight": float(F_BLEND_WEIGHT),
+            "season_league_means": full_season_league_means,
+            "pitcher_season_stats": full_pitcher_stats,
+            "formula": "A_t=(1-alpha_t)*A_prev+alpha_t*R_t; alpha_t=lambda*n_t/(n_t+kappa)",
+            "R_t": "exact_pitcher_season_success_rate",
+            "n_t": "exact_pitcher_season_n",
+        },
+
+        "shared_l1_state": {
+            "base_features": list(base_features),
+            "exact_features": list(EXACT_FEATURES),
+            "pitcher_season_stats": full_pitcher_stats,
+            "hbeb_priors": final_views["hbeb_priors"],
+            "hbeb_configs": HBEB_CONFIGS,
+            "pc_contexts": [
+                {"context": c, "strength": float(s)} for c, s in PC_CONTEXTS
+            ],
+            "pc_parent_strength": float(PC_PARENT_STRENGTH),
+            "pc_fields": list(PC_FIELDS),
+            "pc_tables_by_source_season": pc_tables_by_source_season,
+            "pc_unseen_default": 0.0,
+            "success_spec": SUCCESS_SPEC,
+            "success_features": list(SUCCESS_FEATURES),
+            "success_history": success_history_artifact,
+        },
+
+        "l1_routing": {
+            "column": GAME_TYPE_COL,
+            "R_rule": "game_type != 'F'",
+            "F_rule": "game_type == 'F'",
+            # 라우팅은 곱셈 가중치다 (blend_weights / blend).
+            #   p_main = where(F, CONTROL, TREATMENT)
+            #   w      = where(F, w_f, w_r)
+            #   L1     = clip((1 - w) * p_main + w * DYNAMIC_ASOF, 0, 1)
+            "R_main": "TREATMENT",
+            "F_main": "CONTROL",
+            "R_prediction": "(1 - w_r) * TREATMENT + w_r * DYNAMIC_ASOF",
+            "F_prediction": "(1 - w_f) * CONTROL + w_f * DYNAMIC_ASOF",
+            # 기술용 사본. 추론 측 단일 진실원은 artifact 최상위 "w_r" 이며,
+            # script.py 가 두 값의 일치를 검사한다.
+            "w_r": float(W_R),
+            "f_blend_weight": float(F_BLEND_WEIGHT),
+            "b_F": False,
+        },
+
+        "l2": {
+            "source_year": SOURCE_YEAR,
+            "residual_definition": "official_y_2024 - danker_L1_2019_2023_to_2024_routed_prediction",
+            "adapter_models": l2_models,
+            "adapter_seeds": list(ADAPTER_SEEDS),
+            "validation_crossfit_cfg": dict(V15_CF_CFG),
+            "final_adapter_cfg": dict(FINAL_ADAPTER_CFG),
+            "adapter_shrink": float(ADAPTER_SHRINK),
+            "adapter_prep": adapter_prep,
+            "adapter_feature_cols": list(X24.columns),
+            "adapter_core_feature_cols": list(core24.columns),
+            "exact_cols": list(EXACT_FEATURES),
+            "pitcher_season_stats": full_pitcher_stats,
+            "reference_rawnum": list(REFERENCE_RAWNUM),
+            "reference_cat_small": list(REFERENCE_CAT_SMALL),
+            "eng_cols": list(ENG_COLS),
+            "pc_in_l2": False,
+            "exact_in_l2": True,
+            "fit_scope": "all official 2024 R rows",
+        },
+
+        "l2_routing": {
+            "column": GAME_TYPE_COL,
+            "L2_rule": "game_type != 'F'",
+            "protected_rule": "game_type == 'F'",
+            "R_prediction": "clip(L1 + 0.50 * mean(3 ExtraTrees corrections), 0, 1)",
+            "F_prediction": "L1 exactly (Control/Dynamic blend protected)",
+        },
+
+        "prediction_policy": "np.clip(prediction, 0.0, 1.0)",
+        "rule_compliance": {
+            "test_rows_used_during_training": False,
+            "test_usage_during_training": "header_only",
+            "test_row_aggregation": False,
+            "other_test_rows_used": False,
+            "dynamic_state_source": "current row official ASOF only",
+            "dynamic_historical_source": "official labeled train only",
+            "l2_residual_source": "official 2024 labels + genuine danker 2024 L1 OOT prediction",
+            "exact_asof": "row-local official ASOF minus completed prior-season train labels",
+            "pc_source": "exactly previous labeled season only",
+        },
+    }
+
+    # 후처리 상수를 artifact 에 동결한다.
+    # script.py 는 test 분포에서 어떤 상수도 재추정하지 않는다 (평가 데이터 독립 추론).
+    artifact.update(freeze())
+    artifact.setdefault("shift_model", None)
+    artifact.setdefault("sens_mu", None)
+    artifact.setdefault("sens_sd", None)
+    artifact.setdefault("add_tables", tuple())
+    if float(artifact["affine_offset"]) != 0.0:
+        raise RuntimeError("affine_offset must be 0.0 (38_* §5)")
+
+    joblib.dump(artifact, MODEL_PATH, compress=3)
+
+    # Keep the exact training source next to the artifact for reproducibility.
+    try:
+        shutil.copy2(Path(__file__), MODEL_DIR / "train.py")
+    except Exception:
+        pass
+
+    # -----------------------------------------------------------------
+    # 5) Metadata
+    # -----------------------------------------------------------------
+    fold_meta = {
+        "train_seasons": sorted(fold_train[SEASON_COL].unique().tolist()),
+        "validation_season": SOURCE_YEAR,
+        "n_train": int(len(fold_train)),
+        "n_validation": int(len(fold_val)),
+        "n_R": int(r24.sum()),
+        "n_F": int(f24.sum()),
+
+        # E5: 시드별 리스트다. L1_SEEDS 와 같은 순서.
+        "l1_seeds": [int(x) for x in L1_SEEDS],
+        "control_final_tree_count": list(control_trees),
+        "treatment_final_tree_count": list(treatment_trees),
+        "dynamic_final_tree_count": list(dynamic_trees),
+
+        "control_brier_2024": brier_score(y24, pred_control24),
+        "treatment_brier_2024": brier_score(y24, pred_treat24),
+        "dynamic_brier_2024": brier_score(y24, pred_dynamic24),
+        "danker_l1_brier_2024": brier_score(y24, l1_oof24),
+        "danker_l1_bss_2024": calculate_bss(y24, l1_oof24),
+
+        "control_brier_2024_F": control_f_brier,
+        "dynamic_brier_2024_F": dynamic_f_brier,
+        "blend_brier_2024_F": blend_f_brier,
+        "dynamic_gain_2024_F_pt": dynamic_f_gain_pt,
+        "blend_gain_2024_F_pt": blend_f_gain_pt,
+
+        "dynamic_lambda": float(DYNAMIC_LAMBDA),
+        "dynamic_kappa": float(DYNAMIC_KAPPA),
+        "f_blend_weight": float(F_BLEND_WEIGHT),
+        "dynamic_diag_train": dynamic_diag_train,
+        "dynamic_diag_2024": dynamic_diag24,
+
+        "control_fold_seconds": control_fold_time,
+        "treatment_fold_seconds": treatment_fold_time,
+        "dynamic_fold_seconds": dynamic_fold_time,
+        "dynamic_correction_mean_2024": float(np.mean(dynamic_correction24)),
+        "dynamic_correction_std_2024": float(np.std(dynamic_correction24)),
+        "dynamic_correction_abs_mean_2024": float(np.mean(np.abs(dynamic_correction24))),
+    }
+    FOLD4_META_PATH.write_text(
+        json.dumps(to_jsonable(fold_meta), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    metadata = {
+        "experiment_name": EXPERIMENT_NAME,
+        "standalone_training": True,
+        "external_model_dependency": False,
+        "external_validation_dependency": False,
+        "architecture": {
+            "L1_R": (
+                f"(1-{W_R:g})*Treatment + {W_R:g}*Dynamic-ASOF  "
+                "| Treatment = CatBoost Exact-ASOF5 + HB-EB + R-only PC FULL"
+            ),
+            "L1_F": (
+                f"(1-{F_BLEND_WEIGHT:g})*Control + {F_BLEND_WEIGHT:g}*Dynamic-ASOF"
+            ),
+            "Dynamic": "A_t=(1-alpha)A_prev+alpha*R_t; lambda=1; kappa=100; no b_F",
+            "L2": "ExtraTrees residual adapter; core + Exact-ASOF5; no PC; R-only correction",
+            "L3": False,
+        },
+        "validated_source": {
+            "f_blend_experiment": "fanchor_blend_v001",
+            "f_blend_primary_gate": "2024 F gain > 0 for 3/3 CatBoost seeds",
+            "f_blend_temporal_mean_gate": "2021~2024 positive in 4/4 folds",
+            "settings_frozen": {
+                "dynamic_lambda": float(DYNAMIC_LAMBDA),
+                "dynamic_kappa": float(DYNAMIC_KAPPA),
+                "f_blend_weight": float(F_BLEND_WEIGHT),
+            },
+        },
+        "latest_fold": fold_meta,
+        "final_l1": {
+            "control_tree_count": control_trees,
+            "treatment_tree_count": treatment_trees,
+            "dynamic_tree_count": dynamic_trees,
+            "control_fit_seconds": control_final_time,
+            "treatment_fit_seconds": treatment_final_time,
+            "dynamic_fit_seconds": dynamic_final_time,
+            "control_features": len(final_views["control_features"]),
+            "treatment_features": len(final_views["treatment_features"]),
+            "dynamic_features": len(final_views["control_features"]),
+            "dynamic_full_diag": dynamic_diag_full,
+        },
+        "l2": {
+            "source_year": SOURCE_YEAR,
+            "n_source_rows": int(len(raw24)),
+            "n_R": int(l2_r_mask.sum()),
+            "n_F_protected": int(l2_f_mask.sum()),
+            "n_features": int(X24.shape[1]),
+            "n_core_features": int(core24.shape[1]),
+            "n_exact_features": int(exact24.shape[1]),
+            "residual_mean_all": float(residual24.mean()),
+            "residual_std_all": float(residual24.std()),
+            "residual_mean_R": float(residual24[r24].mean()),
+            "residual_std_R": float(residual24[r24].std()),
+            "adapter_seeds": list(ADAPTER_SEEDS),
+            "final_cfg": dict(FINAL_ADAPTER_CFG),
+            "shrink": float(ADAPTER_SHRINK),
+            "fit_diagnostics": l2_fit_diag.to_dict(orient="records"),
+        },
+        "rule_compliance": artifact["rule_compliance"],
+        "elapsed_seconds": float(time.time() - total_start),
+    }
+    META_PATH.write_text(
+        json.dumps(to_jsonable(metadata), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    print("\n" + "=" * 112)
+    print("DONE")
+    print("=" * 112)
+    print(f"Model         : {MODEL_PATH}")
+    print(f"Metadata      : {META_PATH}")
+    print(f"2024 L1 OOF   : {OOF_2024_PATH}")
+    print(f"Fold4 meta    : {FOLD4_META_PATH}")
+    print(f"CONTROL trees : {control_trees}")
+    print(f"TREATMENT trees: {treatment_trees}")
+    print(f"DYNAMIC trees : {dynamic_trees}")
+    print(f"F blend       : {1.0 - F_BLEND_WEIGHT:.2f} CONTROL + {F_BLEND_WEIGHT:.2f} DYNAMIC")
+    print(f"Final ET cfg  : {FINAL_ADAPTER_CFG}")
+    print(f"Total elapsed : {time.time() - total_start:.1f}s")
+    print("=" * 112)
+
+
+if __name__ == "__main__":
+    main()

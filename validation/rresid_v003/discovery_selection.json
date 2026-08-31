@@ -1,0 +1,103 @@
+{
+  "2024_metric_used_by_selector": false,
+  "protocol": {
+    "F_gate": "not_measured; R-only correction contract",
+    "base_seeds": [
+      42,
+      2026,
+      314
+    ],
+    "experiment_name": "rresid_v003",
+    "extra_trees": "excluded: exact v001 execution source unavailable",
+    "families": [
+      "RIDGE_CODED49",
+      "RIDGE_SENS25"
+    ],
+    "final_model_saved": false,
+    "fixed_weak_scale": 0.15,
+    "fixed_weak_scale_origin": "posthoc hypothesis after viewing v001/v002 2024",
+    "historical_posthoc": true,
+    "native_scale": {
+      "RIDGE_CODED49": 0.5,
+      "RIDGE_SENS25": 0.75
+    },
+    "report_year": 2024,
+    "report_year_previously_seen": true,
+    "residual_training": "strict previous-year Treatment OOF residual only",
+    "runtime": {
+      "numpy": "1.26.4",
+      "pandas": "2.0.3",
+      "python": "3.11.15",
+      "sklearn": "1.8.0"
+    },
+    "scale_grid": [
+      0.0,
+      0.025,
+      0.05,
+      0.1,
+      0.15,
+      0.2,
+      0.25,
+      0.35,
+      0.5,
+      0.75,
+      1.0
+    ],
+    "seed_predictions_averaged": false,
+    "selection_rule": "equal-year mean Shape; ties smaller scale; scale <= native",
+    "selection_years": [
+      2021,
+      2022,
+      2023
+    ],
+    "source_files": {
+      "frozen_bank": {
+        "path": "/home/brik0519/AIMERS2026/validation/rresid_v001/residual_bank.csv",
+        "sha256": "401f0c661b8b7155a27d3e31f581597e1bd8f4dd6e752df2d7066e1af20d31f0"
+      },
+      "official_train": {
+        "path": "/home/brik0519/AIMERS2026/data/train.csv",
+        "sha256": "d2081186b458b49f60b082be480c273135833e15ba59a76d033af28bcf8763ff"
+      },
+      "this_script": {
+        "path": "/home/brik0519/AIMERS2026/train2.py",
+        "sha256": "baf14e568cbfcf78e1d476701c1052704e649992e44cf4a6a0875a02c6d5af6a"
+      },
+      "v002_metrics": {
+        "path": "/home/brik0519/AIMERS2026/validation/rresid_v002/ridge_metrics.csv",
+        "sha256": "f327be88d8cb6927da1f1b90b1e3a2b25902b47135d93cf77cb455fae935dd22"
+      },
+      "v002_predictions": {
+        "path": "/home/brik0519/AIMERS2026/validation/rresid_v002/ridge_predictions.csv",
+        "sha256": "d2f024a3646a7be655adebf19f2c1b4a250e4e95cd3476a71a986c9b3c68afeb"
+      }
+    },
+    "source_mode": "replay_frozen_v002_corrections",
+    "target_year_correction_recentered": false,
+    "validation_only": true
+  },
+  "selection": {
+    "RIDGE_CODED49": {
+      "family": "RIDGE_CODED49",
+      "max_abs_year_mean_level_pt": 39.773054243429755,
+      "mean_total_gain_pt": 44.80113596760875,
+      "positive_shape_seed_fold_count": 6,
+      "positive_shape_year_count": 2,
+      "reason": "maximize equal-weight mean of discovery-year mean Shape gains; ties choose smaller scale; scale 0 allows no change",
+      "scale": 0.5,
+      "score_equal_year_mean_shape_pt": 30.817602837101077,
+      "worst_year_mean_shape_pt": -31.89161633567716
+    },
+    "RIDGE_SENS25": {
+      "family": "RIDGE_SENS25",
+      "max_abs_year_mean_level_pt": 4.696930708806703,
+      "mean_total_gain_pt": 28.165232569822624,
+      "positive_shape_seed_fold_count": 9,
+      "positive_shape_year_count": 3,
+      "reason": "maximize equal-weight mean of discovery-year mean Shape gains; ties choose smaller scale; scale 0 allows no change",
+      "scale": 0.75,
+      "score_equal_year_mean_shape_pt": 30.23807251005674,
+      "worst_year_mean_shape_pt": 7.052505979177655
+    }
+  }
+}

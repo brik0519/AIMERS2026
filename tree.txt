@@ -1,0 +1,2179 @@
+.
+├── 01 hyeon
+│   └── Anker Concept
+│       ├── model
+│       │   ├── cb_reg_v007
+│       │   │   ├── cb_reg_v007.pkl
+│       │   │   ├── final_metadata.json
+│       │   │   └── train.py
+│       │   ├── cb_reg_v008
+│       │   │   ├── cb_reg_v008.pkl
+│       │   │   ├── final_metadata.json
+│       │   │   └── train.py
+│       │   ├── cb_reg_v009
+│       │   │   ├── cb_reg_v009.pkl
+│       │   │   ├── final_metadata.json
+│       │   │   └── train.py
+│       │   ├── cb_reg_v010
+│       │   │   ├── cb_reg_v010.pkl
+│       │   │   ├── final_metadata.json
+│       │   │   └── train.py
+│       │   ├── cb_reg_v012
+│       │   │   ├── cb_reg_v012.pkl
+│       │   │   └── final_metadata.json
+│       │   ├── cb_reg_v013
+│       │   │   ├── cb_reg_v013.pkl
+│       │   │   └── final_metadata.json
+│       │   ├── cb_reg_v014
+│       │   │   ├── cb_reg_v014.pkl
+│       │   │   ├── final_metadata.json
+│       │   │   └── train.py
+│       │   ├── cb_reg_v015
+│       │   │   ├── cb_reg_v015.pkl
+│       │   │   ├── final_metadata.json
+│       │   │   └── train.py
+│       │   └── cb_reg_v018
+│       │       ├── cb_reg_v018.pkl
+│       │       ├── final_metadata.json
+│       │       └── train.py
+│       └── validation
+│           ├── cb_reg_v007
+│           │   ├── fold_2021
+│           │   │   ├── metadata.json
+│           │   │   ├── pred.csv
+│           │   │   └── validation.npz
+│           │   ├── fold_2022
+│           │   │   ├── metadata.json
+│           │   │   ├── pred.csv
+│           │   │   └── validation.npz
+│           │   ├── fold_2023
+│           │   │   ├── metadata.json
+│           │   │   ├── pred.csv
+│           │   │   └── validation.npz
+│           │   ├── fold_2024
+│           │   │   ├── metadata.json
+│           │   │   ├── pred.csv
+│           │   │   └── validation.npz
+│           │   ├── metadata.json
+│           │   └── oof_validation.npz
+│           ├── cb_reg_v008
+│           │   ├── fold_2021
+│           │   │   ├── metadata.json
+│           │   │   ├── pred.csv
+│           │   │   └── validation.npz
+│           │   ├── fold_2022
+│           │   │   ├── metadata.json
+│           │   │   ├── pred.csv
+│           │   │   └── validation.npz
+│           │   ├── fold_2023
+│           │   │   ├── corrected_total_trajectory.csv
+│           │   │   ├── metadata.json
+│           │   │   ├── pred.csv
+│           │   │   └── validation.npz
+│           │   ├── fold_2024
+│           │   │   ├── metadata.json
+│           │   │   ├── pred.csv
+│           │   │   └── validation.npz
+│           │   ├── metadata.json
+│           │   └── oof_validation.npz
+│           ├── cb_reg_v009
+│           │   ├── fold_2021
+│           │   │   ├── metadata.json
+│           │   │   ├── pred.csv
+│           │   │   └── validation.npz
+│           │   ├── fold_2022
+│           │   │   ├── metadata.json
+│           │   │   ├── pred.csv
+│           │   │   └── validation.npz
+│           │   ├── fold_2023
+│           │   │   ├── corrected_total_trajectory.csv
+│           │   │   ├── metadata.json
+│           │   │   ├── pred.csv
+│           │   │   └── validation.npz
+│           │   ├── fold_2024
+│           │   │   ├── corrected_total_trajectory.csv
+│           │   │   ├── metadata.json
+│           │   │   ├── pred.csv
+│           │   │   └── validation.npz
+│           │   ├── metadata.json
+│           │   └── oof_validation.npz
+│           ├── cb_reg_v010
+│           │   ├── conditional_diagnostics.csv
+│           │   ├── conditional_leakage_audit.csv
+│           │   ├── fold_2021
+│           │   │   ├── conditional_reliability_bins.csv
+│           │   │   ├── metadata.json
+│           │   │   └── pred.csv
+│           │   ├── fold_2022
+│           │   │   ├── conditional_reliability_bins.csv
+│           │   │   ├── metadata.json
+│           │   │   └── pred.csv
+│           │   ├── fold_2023
+│           │   │   ├── conditional_reliability_bins.csv
+│           │   │   ├── metadata.json
+│           │   │   └── pred.csv
+│           │   ├── fold_2024
+│           │   │   ├── conditional_reliability_bins.csv
+│           │   │   ├── metadata.json
+│           │   │   └── pred.csv
+│           │   ├── parity_fixture_expected.csv
+│           │   └── parity_fixture_test.csv
+│           ├── cb_reg_v011
+│           │   ├── fold_2021
+│           │   │   └── metadata.json
+│           │   ├── fold_2022
+│           │   │   └── metadata.json
+│           │   ├── fold_2023
+│           │   │   └── metadata.json
+│           │   ├── fold_2024
+│           │   │   └── metadata.json
+│           │   ├── summary.json
+│           │   └── train_anker_test.py
+│           ├── cb_reg_v012
+│           │   ├── fold_2021
+│           │   │   ├── metadata.json
+│           │   │   ├── pred.csv
+│           │   │   └── train_anchor_diagnostics.csv
+│           │   ├── fold_2022
+│           │   │   ├── metadata.json
+│           │   │   ├── pred.csv
+│           │   │   └── train_anchor_diagnostics.csv
+│           │   ├── fold_2023
+│           │   │   ├── metadata.json
+│           │   │   ├── pred.csv
+│           │   │   └── train_anchor_diagnostics.csv
+│           │   ├── fold_2024
+│           │   │   ├── metadata.json
+│           │   │   ├── pred.csv
+│           │   │   └── train_anchor_diagnostics.csv
+│           │   └── metadata.json
+│           ├── cb_reg_v013
+│           │   ├── fold_2021
+│           │   │   ├── metadata.json
+│           │   │   ├── pred.csv
+│           │   │   └── train_anchor_diagnostics.csv
+│           │   ├── fold_2022
+│           │   │   ├── metadata.json
+│           │   │   ├── pred.csv
+│           │   │   └── train_anchor_diagnostics.csv
+│           │   ├── fold_2023
+│           │   │   ├── metadata.json
+│           │   │   ├── pred.csv
+│           │   │   └── train_anchor_diagnostics.csv
+│           │   ├── fold_2024
+│           │   │   ├── metadata.json
+│           │   │   ├── pred.csv
+│           │   │   └── train_anchor_diagnostics.csv
+│           │   └── metadata.json
+│           ├── cb_reg_v014
+│           │   ├── conditional_leakage_audit.csv
+│           │   ├── fold_2021
+│           │   │   ├── metadata.json
+│           │   │   ├── pred_A0_ZERO.csv
+│           │   │   ├── pred_A1_NAN.csv
+│           │   │   ├── pred_A2_ZERO_FLAG.csv
+│           │   │   ├── pred_CONTROL.csv
+│           │   │   └── representation_breakdown.csv
+│           │   ├── fold_2022
+│           │   │   ├── metadata.json
+│           │   │   ├── pred_A0_ZERO.csv
+│           │   │   ├── pred_A1_NAN.csv
+│           │   │   ├── pred_A2_ZERO_FLAG.csv
+│           │   │   ├── pred_CONTROL.csv
+│           │   │   └── representation_breakdown.csv
+│           │   ├── fold_2023
+│           │   │   ├── metadata.json
+│           │   │   ├── pred_A0_ZERO.csv
+│           │   │   ├── pred_A1_NAN.csv
+│           │   │   ├── pred_A2_ZERO_FLAG.csv
+│           │   │   ├── pred_CONTROL.csv
+│           │   │   └── representation_breakdown.csv
+│           │   ├── fold_2024
+│           │   │   ├── metadata.json
+│           │   │   ├── pred_A0_ZERO.csv
+│           │   │   ├── pred_A1_NAN.csv
+│           │   │   ├── pred_A2_ZERO_FLAG.csv
+│           │   │   ├── pred_CONTROL.csv
+│           │   │   └── representation_breakdown.csv
+│           │   ├── parity_fixture_expected.csv
+│           │   ├── parity_fixture_test.csv
+│           │   ├── representation_breakdown.csv
+│           │   └── summary.csv
+│           ├── cb_reg_v015
+│           │   ├── causal_seen_unseen.csv
+│           │   ├── conditional_leakage_audit.csv
+│           │   ├── fold_2021
+│           │   │   ├── metadata.json
+│           │   │   └── pred.csv
+│           │   ├── fold_2022
+│           │   │   ├── metadata.json
+│           │   │   └── pred.csv
+│           │   ├── fold_2023
+│           │   │   ├── metadata.json
+│           │   │   └── pred.csv
+│           │   ├── fold_2024
+│           │   │   ├── metadata.json
+│           │   │   └── pred.csv
+│           │   └── summary.csv
+│           ├── cb_reg_v017
+│           │   ├── residual_mean_diagnostics.csv
+│           │   ├── residual_shrink_by_fold.csv
+│           │   ├── residual_shrink_causal.csv
+│           │   ├── residual_shrink_pooled.csv
+│           │   ├── residual_shrink_stability.csv
+│           │   ├── residual_shrink_summary.json
+│           │   ├── residual_shrink_wide.csv
+│           │   └── source_manifest.csv
+│           └── cb_reg_v018
+│               ├── fold_2021
+│               │   ├── metadata.json
+│               │   └── pred.csv
+│               ├── fold_2022
+│               │   ├── metadata.json
+│               │   └── pred.csv
+│               ├── fold_2023
+│               │   ├── metadata.json
+│               │   └── pred.csv
+│               ├── fold_2024
+│               │   ├── metadata.json
+│               │   └── pred.csv
+│               ├── layer_comparison.csv
+│               └── pooled_layer_comparison.csv
+├── 02 SJ
+│   ├── Asof_GatedResidual_EX
+│   │   ├── Experiment_code
+│   │   │   ├── v003_recent_method_ablation_v001.py
+│   │   │   └── v18_on_exact_asof_v001.py
+│   │   ├── final_metadata.json
+│   │   ├── submits
+│   │   │   ├── model
+│   │   │   │   └── cb_reg_v019_asof_residual.pkl
+│   │   │   ├── requirements.txt
+│   │   │   └── script.py
+│   │   ├── train.py
+│   │   └── validation
+│   │       ├── exact_asof_diagnostics.csv
+│   │       ├── fold_results.csv
+│   │       └── oof_predictions.csv
+│   ├── Base_exact
+│   │   ├── base_script.py
+│   │   └── base_train.py
+│   ├── cb_reg_v003_exact_pc_l2
+│   │   ├── Experiment_code
+│   │   │   ├── cb_reg_v027_pc_placement_l1_vs_l2.py
+│   │   │   ├── cb_reg_v028_l1pc_l2_extratrees_no_pc.py
+│   │   │   ├── cb_reg_v029_l3_temporal_ridge_on_l1pc_l2.py
+│   │   │   ├── cb_reg_v030_l2_pc_duplicate_ablation.py
+│   │   │   ├── cb_reg_v031_l2_exact_duplicate_ablation.py
+│   │   │   └── find_reference_domain_definition.py
+│   │   ├── submits
+│   │   │   ├── model
+│   │   │   │   └── cb_reg_v003_exact_pc_l2.pkl
+│   │   │   ├── requirements.txt
+│   │   │   └── script.py
+│   │   └── train.py
+│   ├── EDA feature experiment
+│   │   ├── experiments.csv
+│   │   ├── PitchMix_Experiments
+│   │   │   ├── train_pitchmix_both.py
+│   │   │   ├── train_pitchmix_breaking.py
+│   │   │   ├── train_pitchmix_offspeed_multiseed.py
+│   │   │   └── train_pitchmix_offspeed.py
+│   │   └── Temporal_Experiments
+│   │       ├── analyze_middle5_2024_cause.py
+│   │       ├── analyze_temporal_exp3.py
+│   │       ├── train_basic_vs_middle5_multiseed.py
+│   │       ├── train_expanding_exp3.py
+│   │       ├── train_expanding.py
+│   │       ├── train_middle_level_trend_interaction.py
+│   │       ├── train_middle_temporal_split.py
+│   │       ├── train_temporal_group_split.py
+│   │       ├── train_xgb_basic_and_analyze_ensemble.py
+│   │       └── train_xgb_exp3_shap_compare.py
+│   ├── Exact_Pc_Feature_EX
+│   │   ├── Experiment_code
+│   │   │   ├── analyze_v020_pitcher_conditional_rf_by_fold.py
+│   │   │   ├── cb_reg_v020_pitcher_conditional_ablation.py
+│   │   │   ├── cb_reg_v021_pitcher_conditional_r_only_ablation.py
+│   │   │   ├── cb_reg_v022_routed_pc_gated_residual_stack.py
+│   │   │   ├── cb_reg_v024_pitcher_conditional_block_ablation.py
+│   │   │   ├── cb_reg_v025_pitcher_conditional_lean_subset.py
+│   │   │   └── cb_reg_v026_pc_full_lean4_multiseed3.py
+│   │   ├── submits
+│   │   │   ├── model
+│   │   │   │   └── cb_reg_v003_exact_pc.pkl
+│   │   │   ├── requirements.txt
+│   │   │   └── script.py
+│   │   └── train.py
+│   ├── Gated_Residual_EX
+│   │   ├── Experiment_code
+│   │   │   ├── v18_gated_residual_v002.py
+│   │   │   └── v18_temporal_residual_v001.py
+│   │   ├── submits
+│   │   │   ├── model
+│   │   │   │   └── cb_reg_v018_gated.pkl
+│   │   │   ├── requirements.txt
+│   │   │   └── script.py
+│   │   └── train.py
+│   ├── Residual_EX
+│   │   ├── conditional_residual_transfer_v001.py
+│   │   ├── stable_hand_residual_correction_v001.py
+│   │   ├── stable_residual_search_v001.py
+│   │   └── walkforward_platt_v001.py
+│   ├── RF_EX
+│   │   ├── analyze_global_r_residual_domains_v001.py
+│   │   ├── diagnose_cb_reg_v003_vs_core_a_v001.py
+│   │   ├── train_cb_reg_global_r_expert_softblend_v001.py
+│   │   ├── train_cb_reg_rf_group_es_transfer_2023_to_2024_v001.py
+│   │   ├── train_cb_reg_rf_group_es_v001.py
+│   │   ├── train_cb_reg_r_group_es_f_global_base_v001.py
+│   │   ├── train_cb_reg_r_specialist_f_global_transfer_v001.py
+│   │   └── train_cb_reg_r_subgroup_base_exploration_v001.py
+│   ├── Temporal Feature Experiment
+│   │   ├── basic_ensenble
+│   │   │   ├── basic_ensenble_train.py
+│   │   │   └── submit
+│   │   │       ├── model
+│   │   │       │   └── rf.pkl
+│   │   │       ├── requirements.txt
+│   │   │       └── script.py
+│   │   ├── exp1_s
+│   │   │   ├── model
+│   │   │   │   └── ensemble.pkl
+│   │   │   ├── requirements.txt
+│   │   │   └── script.py
+│   │   ├── exp3_s
+│   │   │   ├── model
+│   │   │   │   └── ensemble.pkl
+│   │   │   ├── requirements.txt
+│   │   │   └── script.py
+│   │   ├── exp4_s
+│   │   │   ├── model
+│   │   │   │   └── ensemble.pkl
+│   │   │   ├── requirements.txt
+│   │   │   └── script.py
+│   │   ├── exp_code
+│   │   │   ├── error_analysis.py
+│   │   │   ├── error_analysis_v001
+│   │   │   │   ├── error_base_state.csv
+│   │   │   │   ├── error_count_state.csv
+│   │   │   │   ├── error_inning.csv
+│   │   │   │   ├── error_li_bin.csv
+│   │   │   │   ├── error_recent_vs_career_bin.csv
+│   │   │   │   ├── summary.csv
+│   │   │   │   └── validation_predictions.csv
+│   │   │   ├── exp1_core_fe_2024.py
+│   │   │   ├── exp1_core_fe_2024_v001
+│   │   │   │   ├── core_features.csv
+│   │   │   │   ├── summary.csv
+│   │   │   │   └── validation_predictions.csv
+│   │   │   ├── exp1_core_fe.py
+│   │   │   ├── exp1_core_fe_v001
+│   │   │   │   ├── core_features.csv
+│   │   │   │   ├── summary.csv
+│   │   │   │   └── validation_predictions.csv
+│   │   │   ├── exp2_recent_form.py
+│   │   │   ├── exp2_recent_form_v001
+│   │   │   │   ├── features.csv
+│   │   │   │   ├── summary.csv
+│   │   │   │   ├── validation_predictions_2023.csv
+│   │   │   │   └── validation_predictions_2024.csv
+│   │   │   ├── exp3_temporal_only.py
+│   │   │   ├── exp3_temporal_only_v001
+│   │   │   │   ├── summary.csv
+│   │   │   │   ├── temporal_features.csv
+│   │   │   │   ├── validation_predictions_2023.csv
+│   │   │   │   └── validation_predictions_2024.csv
+│   │   │   ├── exp4_count_only.py
+│   │   │   └── exp4_count_only_v001
+│   │   │       ├── count_features.csv
+│   │   │       ├── summary.csv
+│   │   │       ├── validation_predictions_2023.csv
+│   │   │       └── validation_predictions_2024.csv
+│   │   ├── exp_train.py
+│   │   └── README.md
+│   ├── v042_success_EX
+│   │   ├── experiment_code
+│   │   │   ├── cb_reg_v036_base_residual_structure_audit.py
+│   │   │   ├── cb_reg_v037_reference_domain_audit.py
+│   │   │   ├── cb_reg_v038_current_season_asof_state_ablation.py
+│   │   │   ├── cb_reg_v039_shadow_control_state_sanity.py
+│   │   │   ├── cb_reg_v040_shadow_rf_equivalence_audit.py
+│   │   │   └── cb_reg_v041_current_state_block_ablation.py
+│   │   ├── submits
+│   │   │   ├── model
+│   │   │   │   └── cb_reg_v042_success_full_r_only_submit.pkl
+│   │   │   ├── requirements.txt
+│   │   │   └── script.py
+│   │   └── train.py
+│   ├── v20_temporal_role_usage
+│   │   ├── v20_v18_baseline_summary.json
+│   │   ├── v20_v18_months.csv
+│   │   └── v20_v18_strict_temporal_transfer.csv
+│   ├── v20_temporal_role_usage_deploy
+│   │   ├── _extract
+│   │   │   ├── data
+│   │   │   │   └── test.csv
+│   │   │   ├── model
+│   │   │   │   ├── adapter_seed2026_F.joblib
+│   │   │   │   ├── adapter_seed2026_R_ANCHOR.joblib
+│   │   │   │   ├── adapter_seed2026_R_CORE.joblib
+│   │   │   │   ├── adapter_seed314_F.joblib
+│   │   │   │   ├── adapter_seed314_R_ANCHOR.joblib
+│   │   │   │   ├── adapter_seed314_R_CORE.joblib
+│   │   │   │   ├── adapter_seed42_F.joblib
+│   │   │   │   ├── adapter_seed42_R_ANCHOR.joblib
+│   │   │   │   ├── adapter_seed42_R_CORE.joblib
+│   │   │   │   ├── base_exact_lgb.joblib
+│   │   │   │   ├── base_ridge.joblib
+│   │   │   │   ├── base_trend_lgb.joblib
+│   │   │   │   ├── preprocess.joblib
+│   │   │   │   └── v18_stable_ridge.joblib
+│   │   │   ├── output
+│   │   │   │   └── submission.csv
+│   │   │   ├── requirements.txt
+│   │   │   └── script.py
+│   │   ├── model
+│   │   │   ├── adapter_seed2026_F.joblib
+│   │   │   ├── adapter_seed2026_R_ANCHOR.joblib
+│   │   │   ├── adapter_seed2026_R_CORE.joblib
+│   │   │   ├── adapter_seed314_F.joblib
+│   │   │   ├── adapter_seed314_R_ANCHOR.joblib
+│   │   │   ├── adapter_seed314_R_CORE.joblib
+│   │   │   ├── adapter_seed42_F.joblib
+│   │   │   ├── adapter_seed42_R_ANCHOR.joblib
+│   │   │   ├── adapter_seed42_R_CORE.joblib
+│   │   │   ├── base_exact_lgb.joblib
+│   │   │   ├── base_ridge.joblib
+│   │   │   ├── base_trend_lgb.joblib
+│   │   │   ├── preprocess.joblib
+│   │   │   └── v18_stable_ridge.joblib
+│   │   ├── requirements.txt
+│   │   ├── script.py
+│   │   ├── _smoke
+│   │   │   ├── data
+│   │   │   │   └── test.csv
+│   │   │   ├── model
+│   │   │   │   ├── adapter_seed2026_F.joblib
+│   │   │   │   ├── adapter_seed2026_R_ANCHOR.joblib
+│   │   │   │   ├── adapter_seed2026_R_CORE.joblib
+│   │   │   │   ├── adapter_seed314_F.joblib
+│   │   │   │   ├── adapter_seed314_R_ANCHOR.joblib
+│   │   │   │   ├── adapter_seed314_R_CORE.joblib
+│   │   │   │   ├── adapter_seed42_F.joblib
+│   │   │   │   ├── adapter_seed42_R_ANCHOR.joblib
+│   │   │   │   ├── adapter_seed42_R_CORE.joblib
+│   │   │   │   ├── base_exact_lgb.joblib
+│   │   │   │   ├── base_ridge.joblib
+│   │   │   │   ├── base_trend_lgb.joblib
+│   │   │   │   ├── preprocess.joblib
+│   │   │   │   └── v18_stable_ridge.joblib
+│   │   │   ├── output
+│   │   │   │   └── submission.csv
+│   │   │   └── script.py
+│   │   └── submit.zip
+│   └── v50_L2
+│       ├── experiment_code
+│       │   ├── cb_reg_v048_v42_l2_temporal_transfer_shrink_sweep.py
+│       │   ├── cb_reg_v049_l2_fine_shrink_resweep.py
+│       │   ├── l2_adapter_exact_extract.txt
+│       │   ├── l2_extract_exact_adapter_builder_to_file.py
+│       │   └── l2_preflight_recover_old_adapter.py
+│       ├── submits
+│       │   ├── model
+│       │   │   └── cb_reg_v050_v42_l2_all_r_shrink015_submit.pkl
+│       │   ├── requirements.txt
+│       │   └── script.py
+│       └── train.py
+├── baseline
+│   ├── Baseline_Inference.ipynb
+│   ├── Baseline_Train.ipynb
+│   ├── data_description.md
+│   ├── kaggle_kbo_v18_RECOVERED_FROM_V20_exact.ipynb
+│   └── requirements.txt
+├── data
+│   ├── data_analyzer.ipynb
+│   ├── mlp
+│   │   ├── hybrid
+│   │   │   ├── expanding
+│   │   │   │   ├── fold_2021
+│   │   │   │   │   ├── preprocessor.json
+│   │   │   │   │   ├── train
+│   │   │   │   │   │   ├── categorical.npy
+│   │   │   │   │   │   ├── numeric.npy
+│   │   │   │   │   │   ├── row_id.npy
+│   │   │   │   │   │   └── target.npy
+│   │   │   │   │   └── valid
+│   │   │   │   │       ├── categorical.npy
+│   │   │   │   │       ├── numeric.npy
+│   │   │   │   │       ├── row_id.npy
+│   │   │   │   │       └── target.npy
+│   │   │   │   ├── fold_2022
+│   │   │   │   │   ├── preprocessor.json
+│   │   │   │   │   ├── train
+│   │   │   │   │   │   ├── categorical.npy
+│   │   │   │   │   │   ├── numeric.npy
+│   │   │   │   │   │   ├── row_id.npy
+│   │   │   │   │   │   └── target.npy
+│   │   │   │   │   └── valid
+│   │   │   │   │       ├── categorical.npy
+│   │   │   │   │       ├── numeric.npy
+│   │   │   │   │       ├── row_id.npy
+│   │   │   │   │       └── target.npy
+│   │   │   │   ├── fold_2023
+│   │   │   │   │   ├── preprocessor.json
+│   │   │   │   │   ├── train
+│   │   │   │   │   │   ├── categorical.npy
+│   │   │   │   │   │   ├── numeric.npy
+│   │   │   │   │   │   ├── row_id.npy
+│   │   │   │   │   │   └── target.npy
+│   │   │   │   │   └── valid
+│   │   │   │   │       ├── categorical.npy
+│   │   │   │   │       ├── numeric.npy
+│   │   │   │   │       ├── row_id.npy
+│   │   │   │   │       └── target.npy
+│   │   │   │   └── fold_2024
+│   │   │   │       ├── preprocessor.json
+│   │   │   │       ├── train
+│   │   │   │       │   ├── categorical.npy
+│   │   │   │       │   ├── numeric.npy
+│   │   │   │       │   ├── row_id.npy
+│   │   │   │       │   └── target.npy
+│   │   │   │       └── valid
+│   │   │   │           ├── categorical.npy
+│   │   │   │           ├── numeric.npy
+│   │   │   │           ├── row_id.npy
+│   │   │   │           └── target.npy
+│   │   │   └── final
+│   │   │       ├── preprocessor.json
+│   │   │       ├── test
+│   │   │       │   ├── categorical.npy
+│   │   │       │   ├── numeric.npy
+│   │   │       │   └── row_id.npy
+│   │   │       └── train
+│   │   │           ├── categorical.npy
+│   │   │           ├── numeric.npy
+│   │   │           ├── row_id.npy
+│   │   │           └── target.npy
+│   │   ├── mlp_dataset.py
+│   │   ├── mlp_preprocess.py
+│   │   └── processed
+│   │       ├── expanding
+│   │       │   ├── fold_2021
+│   │       │   │   ├── preprocessor.json
+│   │       │   │   ├── train
+│   │       │   │   │   ├── categorical.npy
+│   │       │   │   │   ├── numeric.npy
+│   │       │   │   │   ├── row_id.npy
+│   │       │   │   │   └── target.npy
+│   │       │   │   └── valid
+│   │       │   │       ├── categorical.npy
+│   │       │   │       ├── numeric.npy
+│   │       │   │       ├── row_id.npy
+│   │       │   │       └── target.npy
+│   │       │   ├── fold_2022
+│   │       │   │   ├── preprocessor.json
+│   │       │   │   ├── train
+│   │       │   │   │   ├── categorical.npy
+│   │       │   │   │   ├── numeric.npy
+│   │       │   │   │   ├── row_id.npy
+│   │       │   │   │   └── target.npy
+│   │       │   │   └── valid
+│   │       │   │       ├── categorical.npy
+│   │       │   │       ├── numeric.npy
+│   │       │   │       ├── row_id.npy
+│   │       │   │       └── target.npy
+│   │       │   ├── fold_2023
+│   │       │   │   ├── preprocessor.json
+│   │       │   │   ├── train
+│   │       │   │   │   ├── categorical.npy
+│   │       │   │   │   ├── numeric.npy
+│   │       │   │   │   ├── row_id.npy
+│   │       │   │   │   └── target.npy
+│   │       │   │   └── valid
+│   │       │   │       ├── categorical.npy
+│   │       │   │       ├── numeric.npy
+│   │       │   │       ├── row_id.npy
+│   │       │   │       └── target.npy
+│   │       │   └── fold_2024
+│   │       │       ├── preprocessor.json
+│   │       │       ├── train
+│   │       │       │   ├── categorical.npy
+│   │       │       │   ├── numeric.npy
+│   │       │       │   ├── row_id.npy
+│   │       │       │   └── target.npy
+│   │       │       └── valid
+│   │       │           ├── categorical.npy
+│   │       │           ├── numeric.npy
+│   │       │           ├── row_id.npy
+│   │       │           └── target.npy
+│   │       └── final
+│   │           ├── preprocessor.json
+│   │           ├── test
+│   │           │   ├── categorical.npy
+│   │           │   ├── numeric.npy
+│   │           │   └── row_id.npy
+│   │           └── train
+│   │               ├── categorical.npy
+│   │               ├── numeric.npy
+│   │               ├── row_id.npy
+│   │               └── target.npy
+│   ├── mlp_2024Validation
+│   │   ├── hybrid
+│   │   │   └── validation
+│   │   │       ├── preprocessor.json
+│   │   │       ├── train
+│   │   │       │   ├── categorical.npy
+│   │   │       │   ├── numeric.npy
+│   │   │       │   ├── row_id.npy
+│   │   │       │   └── target.npy
+│   │   │       └── valid
+│   │   │           ├── categorical.npy
+│   │   │           ├── numeric.npy
+│   │   │           ├── row_id.npy
+│   │   │           └── target.npy
+│   │   ├── mlp_dataset.py
+│   │   ├── mlp_preprocess.py
+│   │   └── processed
+│   │       ├── final
+│   │       │   ├── preprocessor.json
+│   │       │   ├── test
+│   │       │   │   ├── categorical.npy
+│   │       │   │   ├── numeric.npy
+│   │       │   │   └── row_id.npy
+│   │       │   └── train
+│   │       │       ├── categorical.npy
+│   │       │       ├── numeric.npy
+│   │       │       ├── row_id.npy
+│   │       │       └── target.npy
+│   │       └── validation
+│   │           ├── preprocessor.json
+│   │           ├── train
+│   │           │   ├── categorical.npy
+│   │           │   ├── numeric.npy
+│   │           │   ├── row_id.npy
+│   │           │   └── target.npy
+│   │           └── valid
+│   │               ├── categorical.npy
+│   │               ├── numeric.npy
+│   │               ├── row_id.npy
+│   │               └── target.npy
+│   ├── sample_submission.csv
+│   ├── test.csv
+│   ├── trackman
+│   │   ├── candidate_game_audit.csv
+│   │   ├── fold_summary.csv
+│   │   ├── pitcher_mapping_audit.csv
+│   │   ├── pitcher_mapping.csv
+│   │   ├── pitcher_mapping_fold_2021.csv
+│   │   ├── pitcher_mapping_fold_2022.csv
+│   │   ├── pitcher_mapping_fold_2023.csv
+│   │   ├── pitcher_mapping_fold_2024.csv
+│   │   ├── preprocess_trackman.py
+│   │   ├── trackman_history.csv
+│   │   ├── trackman_pitcher_profiles.csv
+│   │   ├── trackman_pitcher_profiles_fold_2021.csv
+│   │   ├── trackman_pitcher_profiles_fold_2022.csv
+│   │   ├── trackman_pitcher_profiles_fold_2023.csv
+│   │   └── trackman_pitcher_profiles_fold_2024.csv
+│   ├── trackman_history.csv
+│   └── train.csv
+├── ensemble
+│   ├── ensemble_v001
+│   │   └── metadata.json
+│   ├── ensemble_v002
+│   │   └── metadata.json
+│   ├── ensemble_v003
+│   │   ├── metadata.json
+│   │   └── train.py
+│   ├── ensemble_v004
+│   │   ├── metadata.json
+│   │   └── train.py
+│   ├── ensemble_v005
+│   │   ├── metadata.json
+│   │   └── train.py
+│   ├── ensemble_v006
+│   │   ├── ensemble_v006.pkl
+│   │   ├── metadata.json
+│   │   └── train.py
+│   ├── ensemble_v007
+│   │   ├── ensemble_v007.pkl
+│   │   ├── metadata.json
+│   │   └── train.py
+│   ├── ensemble_v008
+│   │   ├── ensemble_v008.pkl
+│   │   ├── metadata.json
+│   │   └── train.py
+│   ├── ensemble_v009
+│   │   └── metadata.json
+│   ├── ensemble_v010
+│   │   └── metadata.json
+│   └── ensemble_v011_h1
+│       ├── ensemble_search.py
+│       └── metadata.json
+├── experiments.csv
+├── model
+│   ├── base_v001
+│   │   ├── rf_v001.pkl
+│   │   └── train.py
+│   ├── cb_reg_shilft_v001
+│   │   ├── cb_reg_shilft_v001.pkl
+│   │   ├── final_metadata.json
+│   │   └── train.py
+│   ├── cb_reg_v001
+│   │   ├── cb_reg_v001.pkl
+│   │   └── train.py
+│   ├── cb_reg_v002
+│   │   ├── cb_reg_v002.pkl
+│   │   ├── final_metadata.json
+│   │   ├── folds
+│   │   │   ├── fold_2021
+│   │   │   │   └── cb_reg_v002_fold_2021.pkl
+│   │   │   ├── fold_2022
+│   │   │   │   └── cb_reg_v002_fold_2022.pkl
+│   │   │   ├── fold_2023
+│   │   │   │   └── cb_reg_v002_fold_2023.pkl
+│   │   │   └── fold_2024
+│   │   │       └── cb_reg_v002_fold_2024.pkl
+│   │   └── train.py
+│   ├── cb_reg_v003
+│   │   ├── cb_reg_v003.pkl
+│   │   ├── final_metadata.json
+│   │   └── train.py
+│   ├── cb_reg_v003_exact
+│   │   ├── cb_reg_v003_exact.pkl
+│   │   ├── final_metadata.json
+│   │   └── train.py
+│   ├── cb_reg_v003_exact_add
+│   │   ├── cb_reg_v003_exact_add.pkl
+│   │   ├── final_metadata.json
+│   │   └── train.py
+│   ├── cb_reg_v003_exact_h1
+│   │   ├── cb_reg_v003_exact_h1.pkl
+│   │   ├── metadata.json
+│   │   └── train.py
+│   ├── cb_reg_v004
+│   │   ├── cb_reg_v004.pkl
+│   │   ├── final_metadata.json
+│   │   └── train.py
+│   ├── cb_reg_v005
+│   │   ├── cb_reg_v005.pkl
+│   │   ├── metadata.json
+│   │   └── train.py
+│   ├── cb_reg_v006
+│   │   ├── cb_reg_v006.pkl
+│   │   ├── final_metadata.json
+│   │   └── train.py
+│   ├── cb_reg_v007
+│   │   ├── cb_reg_v007.pkl
+│   │   ├── final_metadata.json
+│   │   └── train.py
+│   ├── cb_v001
+│   │   ├── cb_v001.pkl
+│   │   └── train.py
+│   ├── cb_v002
+│   │   ├── cb_v002.pkl
+│   │   ├── final_metadata.json
+│   │   ├── fold_2021
+│   │   │   └── cb_v002_fold_2021.pkl
+│   │   ├── fold_2022
+│   │   │   └── cb_v002_fold_2022.pkl
+│   │   ├── fold_2023
+│   │   │   └── cb_v002_fold_2023.pkl
+│   │   ├── fold_2024
+│   │   │   └── cb_v002_fold_2024.pkl
+│   │   └── train.py
+│   ├── cb_v003
+│   │   ├── cb_v003.pkl
+│   │   └── train.py
+│   ├── cb_v004
+│   │   ├── cb_v003.py
+│   │   ├── cb_v004.pkl
+│   │   └── metadata.json
+│   ├── danker_v001
+│   │   ├── danker_v001.pkl
+│   │   ├── final_metadata.json
+│   │   ├── __pycache__
+│   │   │   └── train.cpython-311.pyc
+│   │   └── train.py
+│   ├── danker_v002
+│   │   ├── danker_sj_v001.pkl
+│   │   ├── final_metadata.json
+│   │   └── train.py
+│   ├── danker_v003
+│   │   ├── danker_v003.pkl
+│   │   ├── final_metadata.json
+│   │   ├── __pycache__
+│   │   │   └── train.cpython-311.pyc
+│   │   ├── run_d0.py
+│   │   └── train.py
+│   ├── ensemble_v010
+│   │   ├── ensemble_v010.pkl
+│   │   ├── metadata.json
+│   │   └── train.py
+│   ├── ensemble_v011
+│   │   ├── ensemble_v011.pkl
+│   │   ├── metadata.json
+│   │   └── train.py
+│   ├── ensemble_v011_h1
+│   │   ├── ensemble_v011_h1.pkl
+│   │   ├── metadata.json
+│   │   └── train.py
+│   ├── et_v001
+│   │   └── train.py
+│   ├── lgb_v001
+│   │   ├── lgb_v001.pkl
+│   │   └── train.py
+│   ├── mlp_v001
+│   │   ├── metadata.json
+│   │   └── mlp_v001.pkl
+│   ├── mlp_v002
+│   │   ├── mlp_v002_metadata.json
+│   │   ├── mlp_v002.pkl
+│   │   ├── mlp_v002_preprocessor.json
+│   │   └── train.py
+│   ├── mlp_v003
+│   │   ├── mlp_v003_metadata.json
+│   │   ├── mlp_v003.pkl
+│   │   ├── mlp_v003_preprocessor.json
+│   │   ├── mlp_v003_train.py
+│   │   └── mlp_v003.zip
+│   ├── mlp_v003_hybrid
+│   │   ├── mlp_v003_hybrid_metadata.json
+│   │   ├── mlp_v003_hybrid.pkl
+│   │   ├── mlp_v003_hybrid_preprocessor.json
+│   │   └── mlp_v003_hybrid_train.py
+│   ├── shift_v001
+│   │   ├── metadata.json
+│   │   ├── requirements.txt
+│   │   ├── shift_v001.pkl
+│   │   └── train.py
+│   ├── shift_v002
+│   │   ├── metadata.json
+│   │   ├── requirements.txt
+│   │   ├── shift_v002.pkl
+│   │   └── train.py
+│   ├── shift_v003
+│   │   ├── metadata.json
+│   │   ├── requirements.txt
+│   │   ├── shift_v003.pkl
+│   │   └── train.py
+│   ├── shift_v004a
+│   │   ├── metadata.json
+│   │   ├── requirements.txt
+│   │   └── shift_v004a.pkl
+│   ├── shift_v005
+│   │   ├── metadata.json
+│   │   ├── requirements.txt
+│   │   └── shift_v005.pkl
+│   ├── skill_v001
+│   │   ├── skill_v001.pkl
+│   │   └── train.py
+│   ├── v18_repro_v001
+│   │   ├── metadata.json
+│   │   ├── requirements.txt
+│   │   ├── v18_anchor_input_gate.py
+│   │   ├── v18_gate_check.py
+│   │   ├── v18_phase8_audit.py
+│   │   ├── v18_phase8_localize.py
+│   │   ├── v18_reference_dump.py
+│   │   ├── v18_repro_v001.pkl
+│   │   └── v18_row_independence.py
+│   ├── xgb_v001
+│   │   ├── train.py
+│   │   └── xgb_v001.pkl
+│   ├── xgb_v001_h1
+│   │   ├── metadata.json
+│   │   ├── train.py
+│   │   └── xgb_v001_h1.pkl
+│   ├── xgb_v002
+│   │   ├── final_metadata.json
+│   │   ├── fold_2021
+│   │   │   └── xgb_v002_fold_2021.pkl
+│   │   ├── fold_2022
+│   │   │   └── xgb_v002_fold_2022.pkl
+│   │   ├── fold_2023
+│   │   │   └── xgb_v002_fold_2023.pkl
+│   │   ├── fold_2024
+│   │   │   └── xgb_v002_fold_2024.pkl
+│   │   ├── train.py
+│   │   └── xgb_v002.pkl
+│   └── xgb_v003
+│       ├── requirements.txt
+│       ├── script.py
+│       ├── train.py
+│       └── xgb_v003.pkl
+├── output
+│   ├── script_selfcheck.json
+│   └── submission.csv
+├── package.py
+├── __pycache__
+│   └── train.cpython-311.pyc
+├── README.md
+├── requirements.txt
+├── run_d0.py
+├── run_phases.py
+├── script.py
+├── submits
+│   ├── anchor_v001(1028.65)
+│   │   ├── anchor_v001.zip
+│   │   ├── model
+│   │   │   └── anchor_v001
+│   │   │       └── anchor_v001.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── baseline(549.64)
+│   │   ├── model
+│   │   │   └── rf_v001.pkl
+│   │   ├── requirements.txt
+│   │   ├── rf_v001.zip
+│   │   └── script.py
+│   ├── cb_reg_shilft_v001(931.44)
+│   │   ├── cb_reg_shilft_v001.zip
+│   │   ├── model
+│   │   │   └── cb_reg_shilft_v001
+│   │   │       └── cb_reg_shilft_v001.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── cb_reg_v001(774.54)
+│   │   ├── model
+│   │   │   └── cb_reg_v001.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── cb_reg_v002(829.22)
+│   │   ├── cb_reg_v002.zip
+│   │   ├── model
+│   │   │   └── cb_reg_v002
+│   │   │       └── cb_reg_v002.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── cb_reg_v003(840.80)
+│   │   ├── cb_reg_v003.zip
+│   │   ├── model
+│   │   │   └── cb_reg_v003
+│   │   │       └── cb_reg_v003.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── cb_reg_v003_exact(956.08)
+│   │   ├── cb_reg_v003_exact.zip
+│   │   ├── model
+│   │   │   └── cb_reg_v003_exact
+│   │   │       └── cb_reg_v003_exact.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── cb_reg_v003_exact_add(931.44)
+│   │   ├── cb_reg_v003_exact_add.zip
+│   │   ├── model
+│   │   │   └── cb_reg_v003_exact_add
+│   │   │       └── cb_reg_v003_exact_add.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── cb_reg_v004(799.28)
+│   │   ├── cb_reg_v004.zip
+│   │   ├── model
+│   │   │   └── cb_reg_v004
+│   │   │       └── cb_reg_v004.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── cb_reg_v005(827.12)
+│   │   ├── cb_reg_v005.zip
+│   │   ├── model
+│   │   │   └── cb_reg_v005
+│   │   │       └── cb_reg_v005.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── cb_reg_v006
+│   │   ├── cb_reg_v006.zip
+│   │   ├── model
+│   │   │   └── cb_reg_v006
+│   │   │       └── cb_reg_v006.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── cb_reg_v006(843.23)
+│   │   ├── cb_reg_v006.zip
+│   │   ├── model
+│   │   │   └── cb_reg_v006
+│   │   │       └── cb_reg_v006.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── cb_reg_v009(840.55)
+│   │   ├── cb_reg_v009.zip
+│   │   ├── model
+│   │   │   └── cb_reg_v009
+│   │   │       └── cb_reg_v009.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── cb_reg_v010(808.23)
+│   │   ├── cb_reg_v010.zip
+│   │   ├── model
+│   │   │   └── cb_reg_v010
+│   │   │       └── cb_reg_v010.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── cb_v001(783.26)
+│   │   ├── cb_v001.zip
+│   │   ├── model
+│   │   │   └── cb_v001.pkl
+│   │   ├── output
+│   │   │   └── submission.csv
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── cb_v002(809.11)
+│   │   ├── cb_v002.zip
+│   │   ├── model
+│   │   │   └── cb_v002.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── cb_v003(797.36)
+│   │   ├── cb_v003.zip
+│   │   ├── model
+│   │   │   └── cb_v003
+│   │   │       └── cb_v003.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── cb_v004_claude(839.21)
+│   │   ├── cb_v004_claude.zip
+│   │   ├── model
+│   │   │   └── cb_v004_claude
+│   │   │       └── cb_v004_claude.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── danker_v001(994.59)
+│   │   ├── danker_v001.zip
+│   │   ├── model
+│   │   │   └── danker_v001
+│   │   │       └── danker_v001.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── danker_v002(1036.84)
+│   │   ├── danker_sj_v001.zip
+│   │   ├── model
+│   │   │   └── danker_sj_v001
+│   │   │       └── danker_sj_v001.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── ensemble_v001(807.34)
+│   │   ├── essemble_v002.zip
+│   │   ├── model
+│   │   │   ├── cb_v001
+│   │   │   │   └── cb_v001.pkl
+│   │   │   └── xgb_v001
+│   │   │       └── xgb_v001.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── ensemble_v002(818.88)
+│   │   ├── ensemble_v002.zip
+│   │   ├── model
+│   │   │   ├── cb_v001
+│   │   │   │   ├── cb_v001.pkl
+│   │   │   │   └── train.py
+│   │   │   ├── mlp_v001
+│   │   │   │   ├── metadata.json
+│   │   │   │   └── mlp_v001.pkl
+│   │   │   └── xgb_v001
+│   │   │       ├── train.py
+│   │   │       └── xgb_v001.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── ensemble_v003(840.53)
+│   │   ├── ensemble_v003.zip
+│   │   ├── model
+│   │   │   ├── cb_v001.pkl
+│   │   │   ├── mlp_v002.pkl
+│   │   │   └── xgb_v001.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── ensemble_v004(825.10)
+│   │   ├── ensemble_v004.zip
+│   │   ├── model
+│   │   │   ├── cb_v002
+│   │   │   │   └── cb_v002.pkl
+│   │   │   ├── mlp_v003
+│   │   │   │   └── mlp_v003.pkl
+│   │   │   └── xgb_v002
+│   │   │       └── xgb_v002.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── ensemble_v005(830.98)
+│   │   ├── ensemble_v005.zip
+│   │   ├── model
+│   │   │   ├── cb_v002
+│   │   │   │   └── cb_v002.pkl
+│   │   │   ├── mlp_v003
+│   │   │   │   └── mlp_v003.pkl
+│   │   │   └── xgb_v002
+│   │   │       └── xgb_v002.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── ensemble_v009(833.87)
+│   │   ├── ensemble_v009.zip
+│   │   ├── model
+│   │   │   ├── cb_v002
+│   │   │   │   └── cb_v002.pkl
+│   │   │   ├── mlp_v003_hybrid
+│   │   │   │   └── mlp_v003_hybrid.pkl
+│   │   │   └── xgb_v002
+│   │   │       └── xgb_v002.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── et_v001(510.49)
+│   │   ├── model
+│   │   │   └── et_v001.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── lgb_v002(748.22)
+│   │   ├── model
+│   │   │   └── lgb_v001.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── mlp_v001(632.41)
+│   │   ├── mlp_v001.zip
+│   │   ├── model
+│   │   │   └── mlp_v001.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── mlp_v002(689.82)
+│   │   ├── mlp_v002.zip
+│   │   ├── model
+│   │   │   └── mlp_v002.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── mlp_v002_hybrid(691.64)
+│   │   ├── mlp_v003_hybrid.zip
+│   │   ├── model
+│   │   │   └── mlp_v003_hybrid
+│   │   │       └── mlp_v003_hybrid.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── mlp_v003(684.25)
+│   │   ├── model
+│   │   │   └── mlp_v003.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── shift_v001(1081.76)
+│   │   ├── model
+│   │   │   └── shift_v001
+│   │   │       └── shift_v001.pkl
+│   │   ├── requirements.txt
+│   │   ├── script.py
+│   │   └── shift_v001.zip
+│   ├── shift_v002(1081.76)
+│   │   ├── model
+│   │   │   └── shift_v002
+│   │   │       └── shift_v002.pkl
+│   │   ├── requirements.txt
+│   │   ├── script.py
+│   │   └── shift_v002.zip
+│   ├── shift_v003(1065.22)
+│   │   ├── model
+│   │   │   └── shift_v003
+│   │   │       └── shift_v003.pkl
+│   │   ├── requirements.txt
+│   │   ├── script.py
+│   │   └── shilft_v003.zip
+│   ├── skill_v001(747.96)
+│   │   ├── model
+│   │   │   └── skill_v001.pkl
+│   │   ├── requirements.txt
+│   │   └── script.py
+│   ├── v18_repro_v001
+│   │   ├── model
+│   │   │   └── v18_repro_v001
+│   │   │       └── v18_repro_v001.pkl
+│   │   ├── requirements.txt
+│   │   ├── script.py
+│   │   └── v18_repro_v001.zip
+│   ├── xgb_v001(759.36)
+│   │   ├── model
+│   │   │   └── xgb_v001.pkl
+│   │   ├── requirements.txt
+│   │   ├── script.py
+│   │   └── xgb_v001.zip
+│   └── xgb_v002(759.36)
+│       ├── model
+│       │   └── xgb_v002.pkl
+│       ├── requirements.txt
+│       ├── script.py
+│       └── xgb_v002.zip
+├── train.py
+├── tree.txt
+└── validation
+    ├── cb_reg_shilft_v001
+    │   ├── metadata.json
+    │   ├── oof_pred.csv
+    │   └── rounding_audit.json
+    ├── cb_reg_v001
+    │   ├── metadata.json
+    │   ├── pred.csv
+    │   └── validation.npz
+    ├── cb_reg_v002
+    │   ├── fold_2021
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── fold_2022
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── fold_2023
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── fold_2024
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── metadata.json
+    │   ├── oof_pred.csv
+    │   └── oof_validation.npz
+    ├── cb_reg_v003
+    │   ├── fold_2021
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── fold_2022
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── fold_2023
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── fold_2024
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── metadata.json
+    │   ├── oof_pred.csv
+    │   └── oof_validation.npz
+    ├── cb_reg_v003_exact
+    │   ├── metadata.json
+    │   └── oof_pred.csv
+    ├── cb_reg_v003_exact_add
+    │   ├── exact_asof_diagnostics.csv
+    │   ├── fold_results.csv
+    │   └── oof_predictions.csv
+    ├── cb_reg_v003_exact_h1
+    │   ├── metadata.json
+    │   ├── oof_pred.csv
+    │   └── pred.csv
+    ├── cb_reg_v004
+    │   ├── fold_2021
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── fold_2022
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── fold_2023
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── fold_2024
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── metadata.json
+    │   ├── oof_pred.csv
+    │   └── oof_validation.npz
+    ├── cb_reg_v005
+    │   └── metadata.json
+    ├── cb_reg_v006
+    │   ├── fold_2021
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── fold_2022
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── fold_2023
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── fold_2024
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── metadata.json
+    │   ├── oof_pred.csv
+    │   └── oof_validation.npz
+    ├── cb_reg_v007
+    │   ├── blend_analysis.json
+    │   ├── metadata.json
+    │   └── oof_pred.csv
+    ├── cb_v001
+    │   ├── metadata.json
+    │   ├── pred.csv
+    │   └── validation.npz
+    ├── cb_v002
+    │   ├── fold_2021
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── fold_2022
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── fold_2023
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── fold_2024
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── metadata.json
+    │   ├── oof_pred.csv
+    │   └── oof_validation.npz
+    ├── cb_v003
+    │   ├── fold_2021
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── fold_2022
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── fold_2023
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── fold_2024
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── metadata.json
+    │   ├── oof_pred.csv
+    │   └── oof_validation.npz
+    ├── cb_v004
+    │   ├── metadata.json
+    │   ├── oof_pred.csv
+    │   └── pred.csv
+    ├── ctr_v001
+    │   ├── decision.json
+    │   └── m4_pred_2024.npz
+    ├── danker_v001
+    │   ├── fold4_metadata.json
+    │   └── l1_2024_oof.csv
+    ├── danker_v002
+    │   ├── fold4_metadata.json
+    │   └── l1_2024_oof.csv
+    ├── danker_v003
+    │   ├── fold4_metadata.json
+    │   └── l1_2024_oof.csv
+    ├── deployval_v001
+    │   ├── deploy_transitions.csv
+    │   ├── gap_vs_validation.csv
+    │   ├── matrices
+    │   │   ├── deploy_2021.npz
+    │   │   ├── deploy_2022.npz
+    │   │   ├── deploy_2023.npz
+    │   │   └── deploy_2024.npz
+    │   ├── scale_grid.csv
+    │   ├── shrink_grid.csv
+    │   └── summary.json
+    ├── ensemble_v001
+    │   ├── best_prediction.csv
+    │   ├── best_prediction.npz
+    │   ├── metadata.json
+    │   ├── pair_comparison.csv
+    │   ├── pair_exact_optimum.csv
+    │   ├── pair_grid_best.csv
+    │   ├── pair_grid_search.csv
+    │   ├── prediction_correlation.csv
+    │   ├── residual_correlation.csv
+    │   ├── single_model_summary.csv
+    │   ├── triple_grid_search.csv
+    │   └── validation_predictions.csv
+    ├── ensemble_v002
+    │   ├── best_prediction.csv
+    │   ├── best_prediction.npz
+    │   ├── metadata.json
+    │   ├── mlp_incremental_value.csv
+    │   ├── pair_comparison.csv
+    │   ├── pair_exact_optimum.csv
+    │   ├── pair_grid_best.csv
+    │   ├── pair_grid_search.csv
+    │   ├── prediction_correlation.csv
+    │   ├── residual_correlation.csv
+    │   ├── single_model_summary.csv
+    │   ├── triple_exact_optimum.csv
+    │   ├── triple_grid_best.csv
+    │   ├── triple_grid_search.csv
+    │   └── validation_predictions.csv
+    ├── ensemble_v003
+    │   ├── best_prediction.csv
+    │   ├── best_prediction.npz
+    │   ├── incremental_value.csv
+    │   ├── metadata.json
+    │   ├── pair_comparison.csv
+    │   ├── pair_exact_optimum.csv
+    │   ├── pair_grid_best.csv
+    │   ├── pair_grid_search.csv
+    │   ├── prediction_correlation.csv
+    │   ├── residual_correlation.csv
+    │   ├── single_model_summary.csv
+    │   ├── triple_exact_optimum.csv
+    │   ├── triple_grid_best.csv
+    │   ├── triple_grid_search.csv
+    │   └── validation_predictions.csv
+    ├── ensemble_v004
+    │   ├── best_prediction.csv
+    │   ├── best_prediction.npz
+    │   ├── fold_ensemble_performance.csv
+    │   ├── fold_exact_optimum.csv
+    │   ├── fold_prediction_correlation.csv
+    │   ├── fold_residual_correlation.csv
+    │   ├── fold_single_model_summary.csv
+    │   ├── incremental_value.csv
+    │   ├── metadata.json
+    │   ├── pair_comparison.csv
+    │   ├── pair_exact_optimum.csv
+    │   ├── pair_grid_best.csv
+    │   ├── pair_grid_search.csv
+    │   ├── prediction_correlation.csv
+    │   ├── residual_correlation.csv
+    │   ├── single_model_summary.csv
+    │   ├── triple_exact_optimum.csv
+    │   ├── triple_grid_best.csv
+    │   ├── triple_grid_search.csv
+    │   └── validation_predictions.csv
+    ├── ensemble_v005
+    │   ├── best_prediction.csv
+    │   ├── best_prediction.npz
+    │   ├── fold_ensemble_performance.csv
+    │   ├── fold_exact_optimum.csv
+    │   ├── fold_prediction_correlation.csv
+    │   ├── fold_residual_correlation.csv
+    │   ├── fold_single_model_summary.csv
+    │   ├── incremental_value.csv
+    │   ├── metadata.json
+    │   ├── optimization_predictions.csv
+    │   ├── optimization_single_model_summary.csv
+    │   ├── pair_comparison.csv
+    │   ├── pair_exact_optimum.csv
+    │   ├── pair_grid_best.csv
+    │   ├── pair_grid_search.csv
+    │   ├── prediction_correlation.csv
+    │   ├── residual_correlation.csv
+    │   ├── single_model_summary.csv
+    │   ├── triple_exact_optimum.csv
+    │   ├── triple_grid_best.csv
+    │   ├── triple_grid_search.csv
+    │   ├── validation_predictions.csv
+    │   └── weight_comparison.csv
+    ├── ensemble_v006
+    │   ├── feature_manifest.json
+    │   ├── fold_2021
+    │   │   ├── metadata.json
+    │   │   └── pred.csv
+    │   ├── fold_2022
+    │   │   ├── metadata.json
+    │   │   └── pred.csv
+    │   ├── fold_2023
+    │   │   ├── metadata.json
+    │   │   └── pred.csv
+    │   ├── fold_2024
+    │   │   ├── metadata.json
+    │   │   └── pred.csv
+    │   ├── fold_metrics.csv
+    │   └── metadata.json
+    ├── ensemble_v007
+    │   ├── feature_manifest.json
+    │   ├── fold_2021
+    │   │   ├── metadata.json
+    │   │   └── pred.csv
+    │   ├── fold_2022
+    │   │   ├── metadata.json
+    │   │   └── pred.csv
+    │   ├── fold_2023
+    │   │   ├── metadata.json
+    │   │   └── pred.csv
+    │   ├── fold_2024
+    │   │   ├── metadata.json
+    │   │   └── pred.csv
+    │   ├── fold_metrics.csv
+    │   └── metadata.json
+    ├── ensemble_v008
+    │   ├── asof_denominator_audit.json
+    │   ├── feature_manifest.json
+    │   ├── fold_2021
+    │   │   ├── metadata.json
+    │   │   └── pred.csv
+    │   ├── fold_2022
+    │   │   ├── metadata.json
+    │   │   └── pred.csv
+    │   ├── fold_2023
+    │   │   ├── metadata.json
+    │   │   └── pred.csv
+    │   ├── fold_2024
+    │   │   ├── metadata.json
+    │   │   └── pred.csv
+    │   ├── fold_metrics.csv
+    │   └── metadata.json
+    ├── ensemble_v009
+    │   ├── best_prediction.csv
+    │   ├── best_prediction.npz
+    │   ├── fold_ensemble_performance.csv
+    │   ├── fold_exact_optimum.csv
+    │   ├── fold_prediction_correlation.csv
+    │   ├── fold_residual_correlation.csv
+    │   ├── fold_single_model_summary.csv
+    │   ├── incremental_value.csv
+    │   ├── metadata.json
+    │   ├── optimization_predictions.csv
+    │   ├── optimization_single_model_summary.csv
+    │   ├── pair_comparison.csv
+    │   ├── pair_exact_optimum.csv
+    │   ├── pair_grid_best.csv
+    │   ├── pair_grid_search.csv
+    │   ├── prediction_correlation.csv
+    │   ├── residual_correlation.csv
+    │   ├── single_model_summary.csv
+    │   ├── triple_exact_optimum.csv
+    │   ├── triple_grid_best.csv
+    │   ├── triple_grid_search.csv
+    │   └── validation_predictions.csv
+    ├── ensemble_v010
+    │   ├── metadata.json
+    │   └── oof_pred.csv
+    ├── ensemble_v011(902.32)
+    │   ├── metadata.json
+    │   └── oof_pred.csv
+    ├── ensemble_v011_test
+    │   └── metadata.json
+    ├── esfix_v001
+    │   ├── arm_summary.csv
+    │   ├── fold_results.csv
+    │   ├── metadata.json
+    │   └── oof_predictions.csv
+    ├── et_v001
+    │   ├── metadata.json
+    │   ├── pred.csv
+    │   └── validation.npz
+    ├── fanchor_blend_v001
+    │   ├── anchor_diagnostics.csv
+    │   ├── blend_metrics.csv
+    │   ├── confirmation.json
+    │   ├── f_predictions.csv
+    │   ├── seed_summary.csv
+    │   └── year_summary.csv
+    ├── fanchor_dyn_v001
+    │   ├── dynamic_anchor_only.csv
+    │   ├── dynamic_metrics.csv
+    │   ├── final_metadata.json
+    │   ├── f_predictions.csv
+    │   └── lambda_summary.csv
+    ├── fanchor_gran_v001
+    │   ├── anchor_only_metrics.csv
+    │   ├── arm_summary.csv
+    │   ├── final_metadata.json
+    │   ├── f_predictions.csv
+    │   └── residual_metrics.csv
+    ├── fanchor_v001
+    │   ├── arm_summary.csv
+    │   ├── decomp_2024.json
+    │   ├── fold_results.csv
+    │   ├── metadata.json
+    │   ├── oof_predictions.csv
+    │   └── seed_summary.csv
+    ├── hybrid_v001
+    │   ├── anchor_diagnostics.csv
+    │   ├── fold_summary.csv
+    │   ├── gate.json
+    │   ├── metadata.json
+    │   └── seed_summary.csv
+    ├── hyb_v001
+    │   ├── fbranch_local_check.json
+    │   ├── fold4_metadata.json
+    │   └── l1_2024_oof.csv
+    ├── lgb_v001
+    │   ├── metadata.json
+    │   ├── pred.csv
+    │   └── validation.npz
+    ├── mlp_hybrid_v002
+    │   ├── history.csv
+    │   ├── metadata.json
+    │   ├── pred.csv
+    │   └── validation.npz
+    ├── mlp_v001
+    │   ├── history.csv
+    │   ├── metadata.json
+    │   ├── pred.csv
+    │   └── validation.npz
+    ├── mlp_v002
+    │   ├── history.csv
+    │   ├── metadata.json
+    │   ├── pred.csv
+    │   └── validation.npz
+    ├── mlp_v003
+    │   ├── fold_2021
+    │   │   ├── history.csv
+    │   │   ├── metadata.json
+    │   │   └── pred.csv
+    │   ├── fold_2022
+    │   │   ├── history.csv
+    │   │   ├── metadata.json
+    │   │   └── pred.csv
+    │   ├── fold_2023
+    │   │   ├── history.csv
+    │   │   ├── metadata.json
+    │   │   └── pred.csv
+    │   ├── fold_2024
+    │   │   ├── history.csv
+    │   │   ├── metadata.json
+    │   │   └── pred.csv
+    │   ├── metadata.json
+    │   ├── oof_pred.csv
+    │   └── oof_validation.npz
+    ├── mlp_v003_hybrid
+    │   ├── fold_2021
+    │   │   ├── history.csv
+    │   │   ├── metadata.json
+    │   │   └── pred.csv
+    │   ├── fold_2022
+    │   │   ├── history.csv
+    │   │   ├── metadata.json
+    │   │   └── pred.csv
+    │   ├── fold_2023
+    │   │   ├── history.csv
+    │   │   ├── metadata.json
+    │   │   └── pred.csv
+    │   ├── fold_2024
+    │   │   ├── history.csv
+    │   │   ├── metadata.json
+    │   │   └── pred.csv
+    │   ├── metadata.json
+    │   ├── oof_pred.csv
+    │   └── oof_validation.npz
+    ├── rresid_v001
+    │   ├── arm_metrics.csv
+    │   ├── final_metadata.json
+    │   ├── residual_bank.csv
+    │   ├── r_predictions.csv
+    │   ├── seed_summary.csv
+    │   └── year_summary.csv
+    ├── rresid_v002
+    │   ├── final_metadata.json
+    │   ├── ridge_metrics.csv
+    │   ├── ridge_predictions.csv
+    │   ├── seed_summary.csv
+    │   └── year_summary.csv
+    ├── rresid_v003
+    │   ├── final_metadata.json
+    │   ├── predictions.csv
+    │   ├── router_audit.csv
+    │   ├── seed_summary.csv
+    │   ├── segment_metrics.csv
+    │   ├── transition_metrics.csv
+    │   └── year_summary.csv
+    ├── shift_v001
+    │   ├── adjusted_oof_2020.csv
+    │   ├── adjusted_oof_2021.csv
+    │   ├── adjusted_oof_2022.csv
+    │   ├── adjusted_oof_2023.csv
+    │   ├── adjusted_oof_2024.csv
+    │   ├── base_2020.csv
+    │   ├── base_2021.csv
+    │   ├── base_2022.csv
+    │   ├── base_2023.csv
+    │   ├── base_2024.csv
+    │   ├── feature_parity
+    │   ├── fold_2021.csv
+    │   ├── fold_2022.csv
+    │   ├── fold_2023.csv
+    │   ├── fold_2024.csv
+    │   ├── gate.json
+    │   ├── matrices
+    │   │   ├── adjusted_oof_2020.npz
+    │   │   ├── adjusted_oof_2021.npz
+    │   │   ├── adjusted_oof_2022.npz
+    │   │   ├── adjusted_oof_2023.npz
+    │   │   ├── adjusted_oof_2024.npz
+    │   │   ├── anchor_2020.npz
+    │   │   ├── anchor_2021.npz
+    │   │   ├── anchor_2022.npz
+    │   │   ├── anchor_2023.npz
+    │   │   ├── anchor_2024.npz
+    │   │   ├── asof_state_2020.npz
+    │   │   ├── asof_state_2021.npz
+    │   │   ├── asof_state_2022.npz
+    │   │   ├── asof_state_2023.npz
+    │   │   ├── asof_state_2024.npz
+    │   │   ├── batter_conditional_2020.npz
+    │   │   ├── batter_conditional_2021.npz
+    │   │   ├── batter_conditional_2022.npz
+    │   │   ├── batter_conditional_2023.npz
+    │   │   ├── batter_conditional_2024.npz
+    │   │   ├── cross_domain_profile_2020.npz
+    │   │   ├── cross_domain_profile_2021.npz
+    │   │   ├── cross_domain_profile_2022.npz
+    │   │   ├── cross_domain_profile_2023.npz
+    │   │   ├── cross_domain_profile_2024.npz
+    │   │   ├── data_2020.npz
+    │   │   ├── data_2021.npz
+    │   │   ├── data_2022.npz
+    │   │   ├── data_2023.npz
+    │   │   ├── data_2024.npz
+    │   │   ├── deploy_2025.npz
+    │   │   ├── final_2021.npz
+    │   │   ├── final_2022.npz
+    │   │   ├── final_2023.npz
+    │   │   ├── final_2024.npz
+    │   │   ├── gseason_2020.npz
+    │   │   ├── gseason_2021.npz
+    │   │   ├── gseason_2022.npz
+    │   │   ├── gseason_2023.npz
+    │   │   ├── gseason_2024.npz
+    │   │   ├── pitcher_context_2020.npz
+    │   │   ├── pitcher_context_2021.npz
+    │   │   ├── pitcher_context_2022.npz
+    │   │   ├── pitcher_context_2023.npz
+    │   │   ├── pitcher_context_2024.npz
+    │   │   ├── residual_matrix_2020.npz
+    │   │   ├── residual_matrix_2021.npz
+    │   │   ├── residual_matrix_2022.npz
+    │   │   ├── residual_matrix_2023.npz
+    │   │   ├── residual_matrix_2024.npz
+    │   │   ├── residual_matrix_surrogate_2020.npz
+    │   │   ├── residual_matrix_surrogate_2021.npz
+    │   │   ├── residual_matrix_surrogate_2022.npz
+    │   │   ├── residual_matrix_surrogate_2023.npz
+    │   │   ├── residual_matrix_surrogate_2024.npz
+    │   │   ├── role_deployment_2020.npz
+    │   │   ├── role_deployment_2021.npz
+    │   │   ├── role_deployment_2022.npz
+    │   │   ├── role_deployment_2023.npz
+    │   │   ├── role_deployment_2024.npz
+    │   │   ├── self_state_2020.npz
+    │   │   ├── self_state_2021.npz
+    │   │   ├── self_state_2022.npz
+    │   │   ├── self_state_2023.npz
+    │   │   ├── self_state_2024.npz
+    │   │   ├── sensitivity_2020.npz
+    │   │   ├── sensitivity_2021.npz
+    │   │   ├── sensitivity_2022.npz
+    │   │   ├── sensitivity_2023.npz
+    │   │   └── sensitivity_2024.npz
+    │   ├── metadata.json
+    │   ├── months.csv
+    │   ├── oof.csv
+    │   ├── phase2_summary.json
+    │   ├── phase3_summary.json
+    │   ├── phase4_summary.json
+    │   ├── phase5_summary.json
+    │   ├── phase6_summary.json
+    │   ├── residual_fold_scores_2020.csv
+    │   ├── residual_fold_scores_2021.csv
+    │   ├── residual_fold_scores_2022.csv
+    │   ├── residual_fold_scores_2023.csv
+    │   ├── residual_fold_scores_2024.csv
+    │   ├── residual_seed_scores_2020.csv
+    │   ├── residual_seed_scores_2021.csv
+    │   ├── residual_seed_scores_2022.csv
+    │   ├── residual_seed_scores_2023.csv
+    │   ├── residual_seed_scores_2024.csv
+    │   ├── scale_stress.csv
+    │   ├── segments.csv
+    │   └── transitions.csv
+    ├── shift_v002
+    │   ├── feature_parity
+    │   ├── fold_2021.csv
+    │   ├── fold_2022.csv
+    │   ├── fold_2023.csv
+    │   ├── fold_2024.csv
+    │   ├── gate.json
+    │   ├── matrices
+    │   │   ├── deploy_2025.npz
+    │   │   ├── final_2021.npz
+    │   │   ├── final_2022.npz
+    │   │   ├── final_2023.npz
+    │   │   └── final_2024.npz
+    │   ├── metadata.json
+    │   ├── months.csv
+    │   ├── oof.csv
+    │   ├── phase2_summary.json
+    │   ├── phase3_summary.json
+    │   ├── phase5_summary.json
+    │   ├── phase6_summary.json
+    │   ├── scale_stress.csv
+    │   ├── script_selfcheck.json
+    │   ├── segments.csv
+    │   ├── submission_phase6.csv
+    │   └── transitions.csv
+    ├── shift_v003
+    │   ├── feature_parity
+    │   ├── fold_2021.csv
+    │   ├── fold_2022.csv
+    │   ├── fold_2023.csv
+    │   ├── fold_2024.csv
+    │   ├── gate.json
+    │   ├── matrices
+    │   │   ├── deploy_2025.npz
+    │   │   ├── final_2021.npz
+    │   │   ├── final_2022.npz
+    │   │   ├── final_2023.npz
+    │   │   └── final_2024.npz
+    │   ├── metadata.json
+    │   ├── months.csv
+    │   ├── oof.csv
+    │   ├── phase2_summary.json
+    │   ├── phase3_summary.json
+    │   ├── phase5_summary.json
+    │   ├── phase6_summary.json
+    │   ├── scale_stress.csv
+    │   ├── script_selfcheck.json
+    │   ├── segments.csv
+    │   ├── submission_phase6.csv
+    │   └── transitions.csv
+    ├── shift_v004a
+    │   ├── gate.json
+    │   ├── matrices
+    │   │   ├── adjusted_oof_2020.npz
+    │   │   ├── adjusted_oof_2021.npz
+    │   │   ├── adjusted_oof_2022.npz
+    │   │   ├── adjusted_oof_2023.npz
+    │   │   ├── adjusted_oof_2024.npz
+    │   │   ├── anchor_2020.npz
+    │   │   ├── anchor_2021.npz
+    │   │   ├── anchor_2022.npz
+    │   │   ├── anchor_2023.npz
+    │   │   ├── anchor_2024.npz
+    │   │   ├── asof_state_2020.npz
+    │   │   ├── asof_state_2021.npz
+    │   │   ├── asof_state_2022.npz
+    │   │   ├── asof_state_2023.npz
+    │   │   ├── asof_state_2024.npz
+    │   │   ├── batter_conditional_2020.npz
+    │   │   ├── batter_conditional_2021.npz
+    │   │   ├── batter_conditional_2022.npz
+    │   │   ├── batter_conditional_2023.npz
+    │   │   ├── batter_conditional_2024.npz
+    │   │   ├── cross_domain_profile_2020.npz
+    │   │   ├── cross_domain_profile_2021.npz
+    │   │   ├── cross_domain_profile_2022.npz
+    │   │   ├── cross_domain_profile_2023.npz
+    │   │   ├── cross_domain_profile_2024.npz
+    │   │   ├── data_2020.npz
+    │   │   ├── data_2021.npz
+    │   │   ├── data_2022.npz
+    │   │   ├── data_2023.npz
+    │   │   ├── data_2024.npz
+    │   │   ├── deploy_2025.npz
+    │   │   ├── final_2021.npz
+    │   │   ├── final_2022.npz
+    │   │   ├── final_2023.npz
+    │   │   ├── final_2024.npz
+    │   │   ├── gseason_2020.npz
+    │   │   ├── gseason_2021.npz
+    │   │   ├── gseason_2022.npz
+    │   │   ├── gseason_2023.npz
+    │   │   ├── gseason_2024.npz
+    │   │   ├── pitcher_context_2020.npz
+    │   │   ├── pitcher_context_2021.npz
+    │   │   ├── pitcher_context_2022.npz
+    │   │   ├── pitcher_context_2023.npz
+    │   │   ├── pitcher_context_2024.npz
+    │   │   ├── residual_matrix_2020.npz
+    │   │   ├── residual_matrix_2021.npz
+    │   │   ├── residual_matrix_2022.npz
+    │   │   ├── residual_matrix_2023.npz
+    │   │   ├── residual_matrix_2024.npz
+    │   │   ├── residual_matrix_surrogate_2020.npz
+    │   │   ├── residual_matrix_surrogate_2021.npz
+    │   │   ├── residual_matrix_surrogate_2022.npz
+    │   │   ├── residual_matrix_surrogate_2023.npz
+    │   │   ├── residual_matrix_surrogate_2024.npz
+    │   │   ├── role_deployment_2020.npz
+    │   │   ├── role_deployment_2021.npz
+    │   │   ├── role_deployment_2022.npz
+    │   │   ├── role_deployment_2023.npz
+    │   │   ├── role_deployment_2024.npz
+    │   │   ├── self_state_2020.npz
+    │   │   ├── self_state_2021.npz
+    │   │   ├── self_state_2022.npz
+    │   │   ├── self_state_2023.npz
+    │   │   ├── self_state_2024.npz
+    │   │   ├── sensitivity_2020.npz
+    │   │   ├── sensitivity_2021.npz
+    │   │   ├── sensitivity_2022.npz
+    │   │   ├── sensitivity_2023.npz
+    │   │   └── sensitivity_2024.npz
+    │   ├── metadata.json
+    │   ├── phase2_summary.json
+    │   ├── phase3_summary.json
+    │   ├── phase4_summary.json
+    │   ├── phase5_summary.json
+    │   ├── phase6_summary.json
+    │   └── script_selfcheck.json
+    ├── shift_v005
+    │   ├── feature_parity
+    │   ├── fold_2021.csv
+    │   ├── fold_2022.csv
+    │   ├── fold_2023.csv
+    │   ├── fold_2024.csv
+    │   ├── gate.json
+    │   ├── matrices
+    │   │   ├── deploy_2025.npz
+    │   │   ├── final_2021.npz
+    │   │   ├── final_2022.npz
+    │   │   ├── final_2023.npz
+    │   │   └── final_2024.npz
+    │   ├── metadata.json
+    │   ├── months.csv
+    │   ├── oof.csv
+    │   ├── phase2_summary.json
+    │   ├── phase3_summary.json
+    │   ├── phase5_summary.json
+    │   ├── phase6_summary.json
+    │   ├── scale_stress.csv
+    │   ├── segments.csv
+    │   └── transitions.csv
+    ├── skill_v001
+    │   ├── A_LONG_TERM
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   ├── subgroup_brier.csv
+    │   │   └── validation.npz
+    │   ├── BASELINE
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   └── validation.npz
+    │   ├── B_UNCERTAINTY
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   ├── subgroup_brier.csv
+    │   │   └── validation.npz
+    │   ├── C_RECENT_FORM
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   ├── subgroup_brier.csv
+    │   │   └── validation.npz
+    │   ├── D_MULTI_SCALE
+    │   │   ├── metadata.json
+    │   │   ├── pred.csv
+    │   │   ├── subgroup_brier.csv
+    │   │   └── validation.npz
+    │   └── summary.json
+    ├── spec_v001
+    │   ├── decision.json
+    │   └── spec_pred_2024.npz
+    ├── v18_repro_v001
+    │   ├── base_2020.csv
+    │   ├── base_2021.csv
+    │   ├── base_2022.csv
+    │   ├── base_2023.csv
+    │   ├── base_2024.csv
+    │   ├── feature_parity
+    │   │   ├── adapter_matrix_surrogate.csv
+    │   │   ├── batter_conditional.csv
+    │   │   ├── cross_domain_profile.csv
+    │   │   ├── exact_asof_state.csv
+    │   │   ├── gseason.csv
+    │   │   ├── pitcher_conditional.csv
+    │   │   ├── role_deployment.csv
+    │   │   ├── self_state.csv
+    │   │   └── v18_stable.csv
+    │   ├── fold_2021.csv
+    │   ├── fold_2022.csv
+    │   ├── fold_2023.csv
+    │   ├── fold_2024.csv
+    │   ├── gamma_stress.csv
+    │   ├── gate.json
+    │   ├── gate_r1_r2_r3.csv
+    │   ├── gate_r1_r2_r3.json
+    │   ├── gate_r8_row_independence.json
+    │   ├── matrices
+    │   │   ├── adapter_matrix_2020.npz
+    │   │   ├── adapter_matrix_2021.npz
+    │   │   ├── adapter_matrix_2022.npz
+    │   │   ├── adapter_matrix_2023.npz
+    │   │   ├── adapter_matrix_2024.npz
+    │   │   ├── adapter_matrix_surrogate_2020.npz
+    │   │   ├── adapter_matrix_surrogate_2021.npz
+    │   │   ├── adapter_matrix_surrogate_2022.npz
+    │   │   ├── adapter_matrix_surrogate_2023.npz
+    │   │   ├── adapter_matrix_surrogate_2024.npz
+    │   │   ├── anchor_2020.npz
+    │   │   ├── anchor_2021.npz
+    │   │   ├── anchor_2022.npz
+    │   │   ├── anchor_2023.npz
+    │   │   ├── anchor_2024.npz
+    │   │   ├── batter_conditional_2020.npz
+    │   │   ├── batter_conditional_2021.npz
+    │   │   ├── batter_conditional_2022.npz
+    │   │   ├── batter_conditional_2023.npz
+    │   │   ├── batter_conditional_2024.npz
+    │   │   ├── cross_domain_profile_2020.npz
+    │   │   ├── cross_domain_profile_2021.npz
+    │   │   ├── cross_domain_profile_2022.npz
+    │   │   ├── cross_domain_profile_2023.npz
+    │   │   ├── cross_domain_profile_2024.npz
+    │   │   ├── data_2020.npz
+    │   │   ├── data_2021.npz
+    │   │   ├── data_2022.npz
+    │   │   ├── data_2023.npz
+    │   │   ├── data_2024.npz
+    │   │   ├── deploy_2025_hardened.npz
+    │   │   ├── deploy_2025.npz
+    │   │   ├── exact_asof_state_2020.npz
+    │   │   ├── exact_asof_state_2021.npz
+    │   │   ├── exact_asof_state_2022.npz
+    │   │   ├── exact_asof_state_2023.npz
+    │   │   ├── exact_asof_state_2024.npz
+    │   │   ├── gseason_2020.npz
+    │   │   ├── gseason_2021.npz
+    │   │   ├── gseason_2022.npz
+    │   │   ├── gseason_2023.npz
+    │   │   ├── gseason_2024.npz
+    │   │   ├── p18_2021.npz
+    │   │   ├── p18_2022.npz
+    │   │   ├── p18_2023.npz
+    │   │   ├── p18_2024.npz
+    │   │   ├── pitcher_conditional_2020.npz
+    │   │   ├── pitcher_conditional_2021.npz
+    │   │   ├── pitcher_conditional_2022.npz
+    │   │   ├── pitcher_conditional_2023.npz
+    │   │   ├── pitcher_conditional_2024.npz
+    │   │   ├── role_deployment_2020.npz
+    │   │   ├── role_deployment_2021.npz
+    │   │   ├── role_deployment_2022.npz
+    │   │   ├── role_deployment_2023.npz
+    │   │   ├── role_deployment_2024.npz
+    │   │   ├── self_state_2020.npz
+    │   │   ├── self_state_2021.npz
+    │   │   ├── self_state_2022.npz
+    │   │   ├── self_state_2023.npz
+    │   │   ├── self_state_2024.npz
+    │   │   ├── v15_oof_2020.npz
+    │   │   ├── v15_oof_2021.npz
+    │   │   ├── v15_oof_2022.npz
+    │   │   ├── v15_oof_2023.npz
+    │   │   ├── v15_oof_2024.npz
+    │   │   ├── v18_stable_2020.npz
+    │   │   ├── v18_stable_2021.npz
+    │   │   ├── v18_stable_2022.npz
+    │   │   ├── v18_stable_2023.npz
+    │   │   └── v18_stable_2024.npz
+    │   ├── metadata.json
+    │   ├── oof.csv
+    │   ├── phase2_summary.json
+    │   ├── phase3_summary.json
+    │   ├── phase4_summary.json
+    │   ├── phase5_summary.json
+    │   ├── phase6_summary.json
+    │   ├── reference
+    │   │   ├── adapter_matrix_surrogate_2020.npz
+    │   │   ├── adapter_matrix_surrogate_2021.npz
+    │   │   ├── adapter_matrix_surrogate_2022.npz
+    │   │   ├── adapter_matrix_surrogate_2023.npz
+    │   │   ├── adapter_matrix_surrogate_2024.npz
+    │   │   ├── anchor_2020.npz
+    │   │   ├── anchor_2021.npz
+    │   │   ├── anchor_2022.npz
+    │   │   ├── anchor_2023.npz
+    │   │   ├── anchor_2024.npz
+    │   │   ├── batter_conditional_2020.npz
+    │   │   ├── batter_conditional_2021.npz
+    │   │   ├── batter_conditional_2022.npz
+    │   │   ├── batter_conditional_2023.npz
+    │   │   ├── batter_conditional_2024.npz
+    │   │   ├── cross_domain_profile_2020.npz
+    │   │   ├── cross_domain_profile_2021.npz
+    │   │   ├── cross_domain_profile_2022.npz
+    │   │   ├── cross_domain_profile_2023.npz
+    │   │   ├── cross_domain_profile_2024.npz
+    │   │   ├── data_2020.npz
+    │   │   ├── data_2021.npz
+    │   │   ├── data_2022.npz
+    │   │   ├── data_2023.npz
+    │   │   ├── data_2024.npz
+    │   │   ├── deploy_2025.npz
+    │   │   ├── exact_asof_state_2020.npz
+    │   │   ├── exact_asof_state_2021.npz
+    │   │   ├── exact_asof_state_2022.npz
+    │   │   ├── exact_asof_state_2023.npz
+    │   │   ├── exact_asof_state_2024.npz
+    │   │   ├── gseason_2020.npz
+    │   │   ├── gseason_2021.npz
+    │   │   ├── gseason_2022.npz
+    │   │   ├── gseason_2023.npz
+    │   │   ├── gseason_2024.npz
+    │   │   ├── manifest_2020_v15_oof.json
+    │   │   ├── manifest_2021_v15_oof.json
+    │   │   ├── manifest_2022_v15_oof.json
+    │   │   ├── manifest_2023_v15_oof.json
+    │   │   ├── manifest_2024_v15_oof.json
+    │   │   ├── manifest_deploy.json
+    │   │   ├── pitcher_conditional_2020.npz
+    │   │   ├── pitcher_conditional_2021.npz
+    │   │   ├── pitcher_conditional_2022.npz
+    │   │   ├── pitcher_conditional_2023.npz
+    │   │   ├── pitcher_conditional_2024.npz
+    │   │   ├── role_deployment_2020.npz
+    │   │   ├── role_deployment_2021.npz
+    │   │   ├── role_deployment_2022.npz
+    │   │   ├── role_deployment_2023.npz
+    │   │   ├── role_deployment_2024.npz
+    │   │   ├── script_reference.py
+    │   │   ├── self_state_2020.npz
+    │   │   ├── self_state_2021.npz
+    │   │   ├── self_state_2022.npz
+    │   │   ├── self_state_2023.npz
+    │   │   ├── self_state_2024.npz
+    │   │   ├── v15_oof_2020.npz
+    │   │   ├── v15_oof_2021.npz
+    │   │   ├── v15_oof_2022.npz
+    │   │   ├── v15_oof_2023.npz
+    │   │   ├── v15_oof_2024.npz
+    │   │   ├── v18_stable_2020.npz
+    │   │   ├── v18_stable_2021.npz
+    │   │   ├── v18_stable_2022.npz
+    │   │   ├── v18_stable_2023.npz
+    │   │   └── v18_stable_2024.npz
+    │   ├── v15_fold_scores_2020.csv
+    │   ├── v15_fold_scores_2021.csv
+    │   ├── v15_fold_scores_2022.csv
+    │   ├── v15_fold_scores_2023.csv
+    │   ├── v15_fold_scores_2024.csv
+    │   ├── v15_oof_2020.csv
+    │   ├── v15_oof_2021.csv
+    │   ├── v15_oof_2022.csv
+    │   ├── v15_oof_2023.csv
+    │   ├── v15_oof_2024.csv
+    │   ├── v15_seed_scores_2020.csv
+    │   ├── v15_seed_scores_2021.csv
+    │   ├── v15_seed_scores_2022.csv
+    │   ├── v15_seed_scores_2023.csv
+    │   ├── v15_seed_scores_2024.csv
+    │   ├── v18_domains.csv
+    │   ├── v18_months.csv
+    │   └── v18_strict_temporal_transfer.csv
+    ├── xgb_v001
+    │   ├── metadata.json
+    │   ├── pred.csv
+    │   └── validation.npz
+    └── xgb_v002
+        ├── fold_2021
+        │   ├── metadata.json
+        │   ├── pred.csv
+        │   └── validation.npz
+        ├── fold_2022
+        │   ├── metadata.json
+        │   ├── pred.csv
+        │   └── validation.npz
+        ├── fold_2023
+        │   ├── metadata.json
+        │   ├── pred.csv
+        │   └── validation.npz
+        ├── fold_2024
+        │   ├── metadata.json
+        │   ├── pred.csv
+        │   └── validation.npz
+        ├── metadata.json
+        ├── oof_pred.csv
+        └── oof_validation.npz
+
+484 directories, 1692 files

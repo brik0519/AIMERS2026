@@ -1,248 +1,49 @@
-"""rresid_v003 — Sens25 Ridge + original CORE routing temporal audit.
+"""rresid_v004: fixed Sens25 x 0.15 on frozen FINAL temporal OOF residuals.
 
-Purpose
--------
-rresid_v002 showed that shift_v002/v003-style Sens25 Ridge is materially more
-stable than generic residual representations, but the v002 audit applied the
-correction to ALL R rows.  The original shift layer applied its sensitivity
-correction only to route_segment == 'CORE'.
-
-This experiment reuses the frozen Treatment OOF residual bank from rresid_v001
-and asks whether restoring that router rescues the 2024 transition.
-
-Important scope
----------------
-* Base = Treatment OOF from rresid_v001.
-* Ridge fit source = ALL source-year R residual rows, as in rresid_v002.
-* Apply target = CORE only for the main routed arms.
-* FUTURES/F rows are outside this R-branch audit.
-* The full shift_v003 Phase-5 used its own adjusted OOF over all segments;
-  this experiment intentionally tests the shift Sens25/router inductive bias
-  on the current Treatment R branch instead.
-* No final model is trained. No test rows are used.
-
-Arms
-----
-R0 CONSTANT_S05
-   previous-year mean R residual * 0.50 on all R (Level reference)
-
-R1 SENS25_SHIFT_ALLR_S075
-   rresid_v002 reproduction: Sens25 Ridge(no intercept) * 0.75 on all R
-
-R2 SENS25_SHIFT_CORE_S075   [PRIMARY]
-   same correction, applied only to route_segment == CORE
-
-R3 SENS25_REFERENCE_CORE_S075
-   same Sens25 but fit_intercept=True, CORE only; Level/intercept diagnostic
-
-R4 CONST_S05_PLUS_SENS25_SHIFT_CORE_S075
-   all-R Constant Level correction + CORE-only Sens25 Shape correction
-   (secondary decomposition candidate; no additional fit/tuning)
-
-Temporal protocol
------------------
-For target t in [2021, 2022, 2023, 2024]:
-  fit correction on Treatment OOF residuals from t-1 only
-  apply to Treatment OOF predictions in t.
-
-Router
-------
-Original shift router:
-  FUTURES     : game_type == 'F'
-  ANCHOR_TEAM : non-F and anchor team involved
-  CORE        : remaining non-F rows
-
-The original anchor team was discovered from F rows with season <= 2022.
-For strict temporal audit, each transition also discovers the anchor using only
-F history <= source_year.  The script asserts that this causal anchor equals the
-original fixed anchor; if not, it fails loudly.
+Validation only. Requires a full-stack OOF bank and its provenance manifest.
+No baseline refit, model serialization, test access, or submission generation.
+Paths default to the repository working directory, never a machine-specific path.
 """
-
 from __future__ import annotations
 
+import argparse
+import hashlib
 import json
-import os
-import time
+import math
+import platform
+import shutil
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import sklearn
 from sklearn.linear_model import Ridge
 
-
-# =============================================================================
-# Paths / identifiers
-# =============================================================================
-
-EXPERIMENT_NAME = "rresid_v003"
-
+EXPERIMENT_NAME = "rresid_v004"
 DATA_DIR = Path("./data")
-TRAIN_PATH = DATA_DIR / "train.csv"
-
 MODEL_ROOT = Path("./model")
 MODEL_DIR = MODEL_ROOT / EXPERIMENT_NAME
-MODEL_PATH = MODEL_DIR / f"{EXPERIMENT_NAME}.pkl"  # intentionally not written
-
+MODEL_PATH = MODEL_DIR / f"{EXPERIMENT_NAME}.pkl"  # Reserved; never written.
 VALIDATION_ROOT = Path("./validation")
 VALIDATION_DIR = VALIDATION_ROOT / EXPERIMENT_NAME
-
 OUTPUT_DIR = Path("./output")
-
-DEFAULT_BANK_PATH = VALIDATION_ROOT / "rresid_v001" / "residual_bank.csv"
-BANK_SOURCE_PATH = Path(os.environ.get("RRESID_BANK_SOURCE", str(DEFAULT_BANK_PATH)))
-
-TRANSITION_METRICS_PATH = VALIDATION_DIR / "transition_metrics.csv"
-SEGMENT_METRICS_PATH = VALIDATION_DIR / "segment_metrics.csv"
-PREDICTIONS_PATH = VALIDATION_DIR / "predictions.csv"
-YEAR_SUMMARY_PATH = VALIDATION_DIR / "year_summary.csv"
-SEED_SUMMARY_PATH = VALIDATION_DIR / "seed_summary.csv"
-ROUTER_AUDIT_PATH = VALIDATION_DIR / "router_audit.csv"
-META_PATH = VALIDATION_DIR / "final_metadata.json"
-
-ID = "row_id"
-TARGET = "control_success"
-SEASON_COL = "season"
-GAME_TYPE_COL = "game_type"
-
-EVAL_YEARS = [2021, 2022, 2023, 2024]
-
-# shift_v002/v003 frozen settings
+TEST_PATH = DATA_DIR / "test.csv"  # Never opened.
+SAMPLE_SUB_PATH = DATA_DIR / "sample_submission.csv"  # Never opened.
+OUTPUT_PATH = OUTPUT_DIR / "submission.csv"  # Never written.
+ID, TARGET, SEASON_COL, GAME_TYPE_COL = "row_id", "control_success", "season", "game_type"
 RIDGE_ALPHA = 1000.0
-SHIFT_SCALE = 0.75
-CONSTANT_SCALE = 0.50
-SHIFT_SEGMENT = "CORE"
-ANCHOR_DISCOVERY_MAX_SEASON = 2022
-
+FIXED_SCALE = 0.15
 SENS_HISTORY_YEARS = 3
 SENS_DECAY = 0.65
 SENS_PARENT_STRENGTH = 100.0
 SENS_HAND_STRENGTH = 35.0
 SENS_PRESSURE_HAND_STRENGTH = 45.0
+POINT_EPS = 1e-6
+SENS25_HELPERS_SHA256 = "6f10fb32f37d61c28ec1a4ed6018bbd78703bd751faad3e7ec31df092dbe3715"
 
-PRIMARY_ARM = "SENS25_SHIFT_CORE_S075"
-COMBINED_ARM = "CONST_S05_PLUS_SENS25_SHIFT_CORE_S075"
-
-ARMS = [
-    "CONSTANT_S05",
-    "SENS25_SHIFT_ALLR_S075",
-    PRIMARY_ARM,
-    "SENS25_REFERENCE_CORE_S075",
-    COMBINED_ARM,
-]
-
-
-# =============================================================================
-# Metrics
-# =============================================================================
-
-
-def error_decomposition(y_true, y_pred) -> dict:
-    y = np.asarray(y_true, dtype=np.float64)
-    p = np.asarray(y_pred, dtype=np.float64)
-    err = p - y
-    level = float(np.mean(err) ** 2)
-    total = float(np.mean(err ** 2))
-    shape = float(total - level)
-    return {"total": total, "level": level, "shape": shape}
-
-
-def gain_decomposition(y, base, pred) -> dict:
-    y = np.asarray(y, dtype=np.float64)
-    base = np.asarray(base, dtype=np.float64)
-    pred = np.asarray(pred, dtype=np.float64)
-    b0 = error_decomposition(y, base)
-    b1 = error_decomposition(y, pred)
-    rate = float(np.mean(y))
-    baseline = rate * (1.0 - rate)
-    if baseline <= 0.0:
-        raise RuntimeError("baseline Brier <= 0")
-    g = {
-        k: 100000.0 * (b0[k] - b1[k]) / baseline
-        for k in ["total", "level", "shape"]
-    }
-    if abs(g["total"] - g["level"] - g["shape"]) > 1e-6:
-        raise RuntimeError("Total != Level + Shape")
-    return g
-
-
-def metric_row(*, arm, year, source_year, seed, segment, y, base, pred, correction):
-    g = gain_decomposition(y, base, pred)
-    corr = np.asarray(correction, dtype=np.float64)
-    return {
-        "arm": arm,
-        "validation_year": int(year),
-        "source_year": int(source_year),
-        "base_seed": int(seed),
-        "segment": str(segment),
-        "n_rows": int(len(y)),
-        "R_total_gain_pt": float(g["total"]),
-        "R_level_gain_pt": float(g["level"]),
-        "R_shape_gain_pt": float(g["shape"]),
-        "total_win": bool(g["total"] > 1e-8),
-        "shape_win": bool(g["shape"] > 1e-6),
-        "correction_mean": float(np.mean(corr)) if len(corr) else 0.0,
-        "correction_std": float(np.std(corr)) if len(corr) else 0.0,
-        "correction_abs_mean": float(np.mean(np.abs(corr))) if len(corr) else 0.0,
-    }
-
-
-# =============================================================================
-# Original shift router
-# =============================================================================
-
-
-def discover_anchor_team(screen: pd.DataFrame, max_season: int) -> int:
-    """Discover the persistent F anchor using only rows up to max_season."""
-    f_hist = screen.loc[
-        screen[GAME_TYPE_COL].eq("F")
-        & pd.to_numeric(screen[SEASON_COL], errors="raise").astype(int).le(int(max_season))
-    ]
-    if f_hist.empty:
-        raise RuntimeError(f"no F history for router cutoff={max_season}")
-
-    teams = sorted(
-        set(f_hist["pitcher_team_id"].dropna().unique())
-        | set(f_hist["batter_team_id"].dropna().unique())
-    )
-    involvement = {
-        int(t): float(
-            (
-                (f_hist["pitcher_team_id"] == t)
-                | (f_hist["batter_team_id"] == t)
-            ).mean()
-        )
-        for t in teams
-    }
-    anchors = [t for t, v in involvement.items() if v > 0.999999]
-    if len(anchors) != 1:
-        raise RuntimeError(
-            f"expected exactly one persistent F anchor at cutoff={max_season}; "
-            f"anchors={anchors}, involvement={involvement}"
-        )
-    return int(anchors[0])
-
-
-def attach_route_segment(frame: pd.DataFrame, anchor_team_id: int) -> pd.DataFrame:
-    out = frame.copy()
-    out["route_segment"] = np.where(
-        out[GAME_TYPE_COL].eq("F"),
-        "FUTURES",
-        np.where(
-            (out["pitcher_team_id"] == anchor_team_id)
-            | (out["batter_team_id"] == anchor_team_id),
-            "ANCHOR_TEAM",
-            "CORE",
-        ),
-    )
-    return out
-
-
-# =============================================================================
-# shift_v002/v003 Sens25 — faithful representation
-# =============================================================================
-
-
-def _pressure_frame(frame: pd.DataFrame) -> pd.DataFrame:
+# The Sens25 feature functions below are copied verbatim from rresid_v003.
+def _pressure_frame(frame):
     r = frame.copy()
     balls = pd.to_numeric(r["balls_before"], errors="coerce").fillna(0).astype(int)
     strikes = pd.to_numeric(r["strikes_before"], errors="coerce").fillna(0).astype(int)
@@ -251,32 +52,20 @@ def _pressure_frame(frame: pd.DataFrame) -> pd.DataFrame:
         "full",
         np.where(balls == 3, "3ball", np.where(strikes == 2, "2strike", "normal")),
     )
-    r["sens_pressure_bhand"] = (
-        r["sens_pressure"].astype(str) + "|" + r["batter_hand"].astype(str)
-    )
+    r["sens_pressure_bhand"] = r["sens_pressure"].astype(str) + "|" + r["batter_hand"].astype(str)
     return r
-
 
 def _weighted_sensitivity_table(history, ctx, strength, cutoff_year):
     h = _pressure_frame(history.reset_index(drop=True))
-    seasons = pd.to_numeric(h[SEASON_COL], errors="raise").astype(int)
     h["_w"] = np.power(
         SENS_DECAY,
-        np.maximum(int(cutoff_year) - 1 - seasons, 0),
+        np.maximum(int(cutoff_year) - 1 - pd.to_numeric(h[SEASON_COL], errors="raise").astype(int), 0),
     ).astype(np.float64)
     h["_wy"] = h["_w"] * pd.to_numeric(h[TARGET], errors="coerce").to_numpy(np.float64)
-
     mu = float(np.average(h[TARGET].to_numpy(np.float64), weights=h["_w"]))
-    pg = (
-        h.groupby("pitcher_id", sort=False)
-        .agg(sw=("_w", "sum"), sy=("_wy", "sum"))
-        .reset_index()
-    )
-    pg["parent_rate"] = (
-        pg["sy"] + SENS_PARENT_STRENGTH * mu
-    ) / (
-        pg["sw"] + SENS_PARENT_STRENGTH
-    )
+
+    pg = h.groupby("pitcher_id", sort=False).agg(sw=("_w", "sum"), sy=("_wy", "sum")).reset_index()
+    pg["parent_rate"] = (pg["sy"] + SENS_PARENT_STRENGTH * mu) / (pg["sw"] + SENS_PARENT_STRENGTH)
 
     g = (
         h.groupby(["pitcher_id", ctx], sort=False)
@@ -284,20 +73,15 @@ def _weighted_sensitivity_table(history, ctx, strength, cutoff_year):
         .reset_index()
         .merge(pg[["pitcher_id", "parent_rate"]], on="pitcher_id", how="left")
     )
-    g["rate"] = (
-        g["sy"] + float(strength) * g["parent_rate"]
-    ) / (
-        g["sw"] + float(strength)
-    )
+    g["rate"] = (g["sy"] + float(strength) * g["parent_rate"]) / (g["sw"] + float(strength))
     g["delta"] = g["rate"] - g["parent_rate"]
     g["reliability"] = g["sw"] / (g["sw"] + float(strength))
     return g[["pitcher_id", ctx, "delta", "reliability"]]
 
-
-def build_sensitivity_specs(train: pd.DataFrame, cutoff_year: int) -> list:
-    seasons = pd.to_numeric(train[SEASON_COL], errors="raise").astype(int)
-    min_year = int(seasons.min())
+def build_sensitivity_specs(train, cutoff_year):
+    min_year = int(pd.to_numeric(train[SEASON_COL], errors="raise").min())
     lo = max(min_year, int(cutoff_year) - SENS_HISTORY_YEARS)
+    seasons = pd.to_numeric(train[SEASON_COL], errors="raise").astype(int)
     h = train.loc[seasons.lt(int(cutoff_year)) & seasons.ge(lo)].reset_index(drop=True)
     if h.empty:
         raise RuntimeError(f"no sensitivity history for cutoff={cutoff_year}")
@@ -314,7 +98,6 @@ def build_sensitivity_specs(train: pd.DataFrame, cutoff_year: int) -> list:
         })
     return specs
 
-
 def _lookup(table, rows, keys, field, default=0.0):
     if len(table) == 0:
         return np.full(len(rows), default, dtype=np.float64)
@@ -325,11 +108,9 @@ def _lookup(table, rows, keys, field, default=0.0):
     s = table.set_index(keys)[field]
     return s.reindex(idx).fillna(default).to_numpy(np.float64)
 
-
-def transform_sensitivity_specs(specs: list, rows: pd.DataFrame) -> pd.DataFrame:
+def transform_sensitivity_specs(specs, rows):
     r = _pressure_frame(rows.reset_index(drop=True))
     z = pd.DataFrame(index=np.arange(len(r)))
-
     for spec in specs:
         de = _lookup(spec["table"], r, ["pitcher_id", spec["ctx"]], "delta", 0.0)
         re = _lookup(spec["table"], r, ["pitcher_id", spec["ctx"]], "reliability", 0.0)
@@ -339,7 +120,6 @@ def transform_sensitivity_specs(specs: list, rows: pd.DataFrame) -> pd.DataFrame
 
     balls = pd.to_numeric(r["balls_before"], errors="coerce").fillna(0).astype(int).to_numpy()
     strikes = pd.to_numeric(r["strikes_before"], errors="coerce").fillna(0).astype(int).to_numpy()
-
     for b in range(4):
         z[f"ctx__ball_{b}"] = (balls == b).astype(np.float64)
     for s in range(3):
@@ -350,595 +130,331 @@ def transform_sensitivity_specs(specs: list, rows: pd.DataFrame) -> pd.DataFrame
 
     z = z.replace([np.inf, -np.inf], np.nan).fillna(0.0).astype(np.float64)
     if z.shape[1] != 25:
-        raise RuntimeError(f"sensitivity feature count != 25: {z.shape}")
-    if not np.isfinite(z.to_numpy(np.float64)).all():
-        raise RuntimeError("Sens25 contains NaN/Inf")
+        raise RuntimeError(f"sensitivity feature count !=25: {z.shape}")
     return z
 
-
 def sensitivity25_matrices(train, source_year, target_year, source_rows, target_rows):
-    # shift-faithful: specs are built separately for each cutoff year.
-    source_specs = build_sensitivity_specs(train, source_year)
-    target_specs = build_sensitivity_specs(train, target_year)
-    A = transform_sensitivity_specs(source_specs, source_rows).to_numpy(np.float64)
-    B = transform_sensitivity_specs(target_specs, target_rows).to_numpy(np.float64)
+    # Faithful to shift_v002/v003: specs are constructed separately for each
+    # cutoff year from official labeled history strictly before that year.
+    ss = build_sensitivity_specs(train, source_year)
+    st = build_sensitivity_specs(train, target_year)
+    A = transform_sensitivity_specs(ss, source_rows).to_numpy(np.float64)
+    B = transform_sensitivity_specs(st, target_rows).to_numpy(np.float64)
 
     mu = A.mean(axis=0)
     sd = A.std(axis=0)
     sd = np.where(sd > 1e-6, sd, 1.0)
     Az = np.clip((A - mu) / sd, -8.0, 8.0)
     Bz = np.clip((B - mu) / sd, -8.0, 8.0)
-    return Az, Bz, mu, sd
+    return Az, Bz
 
 
-def ridge_predict_rowwise(model: Ridge, X) -> np.ndarray:
-    """Deterministic row-independent Ridge prediction by fixed-order accumulation."""
-    X64 = np.asarray(X, dtype=np.float64)
-    coef = np.asarray(model.coef_, dtype=np.float64).reshape(-1)
-    icpt = np.asarray(model.intercept_, dtype=np.float64).reshape(-1)
-    acc = np.full(X64.shape[0], float(icpt[0]) if icpt.size else 0.0, dtype=np.float64)
-    for j in range(X64.shape[1]):
-        acc = acc + X64[:, j] * coef[j]
-    return acc
+def digest(path):
+    h = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
-def fit_predict_sens25_pair(Az, residual, Bz):
-    y = np.asarray(residual, dtype=np.float64)
-    ref = Ridge(
-        alpha=RIDGE_ALPHA,
-        solver="lsqr",
-        max_iter=200,
-        tol=1e-5,
-        fit_intercept=True,
-    )
-    shift = Ridge(
-        alpha=RIDGE_ALPHA,
-        solver="lsqr",
-        max_iter=200,
-        tol=1e-5,
-        fit_intercept=False,
-    )
-    ref.fit(Az, y)
-    shift.fit(Az, y)
-
-    corr_ref = ridge_predict_rowwise(ref, Bz)
-    corr_shift = ridge_predict_rowwise(shift, Bz)
-    coef_gap = float(np.max(np.abs(np.asarray(ref.coef_) - np.asarray(shift.coef_))))
-
-    return corr_shift, corr_ref, {
-        "reference_intercept": float(np.asarray(ref.intercept_).reshape(-1)[0]),
-        "coef_gap_max": coef_gap,
-        "shift_coef_l2": float(np.linalg.norm(shift.coef_)),
-        "source_shift_corr_mean": float(np.mean(ridge_predict_rowwise(shift, Az))),
-        "source_reference_corr_mean": float(np.mean(ridge_predict_rowwise(ref, Az))),
-    }
+def write_json(path, value):
+    path = Path(path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    tmp.replace(path)
 
 
-# =============================================================================
-# Prediction arms
-# =============================================================================
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
 
 
-def apply_all(base, corr, scale):
-    return np.clip(
-        np.asarray(base, np.float64) + float(scale) * np.asarray(corr, np.float64),
-        0.0,
-        1.0,
-    )
+def check_columns(frame, columns, name):
+    missing = sorted(set(columns) - set(frame.columns))
+    require(not missing, f"{name}: missing columns {missing}")
 
 
-def apply_masked(base, corr, mask, scale):
-    p = np.asarray(base, np.float64).copy()
-    c = np.asarray(corr, np.float64)
-    m = np.asarray(mask, dtype=bool)
-    p[m] = np.clip(p[m] + float(scale) * c[m], 0.0, 1.0)
-    return p
+def strict_integer(frame, column):
+    values = pd.to_numeric(frame[column], errors="raise").to_numpy(float)
+    require(np.isfinite(values).all() and np.equal(values, np.floor(values)).all(),
+            f"{column}: expected finite integers")
+    frame[column] = values.astype(np.int64)
 
 
-def apply_constant_plus_core(base, const_corr, sens_corr, core_mask):
-    # Level expert on all R, then Shape expert on CORE only.
-    p = apply_all(base, const_corr, CONSTANT_SCALE)
-    m = np.asarray(core_mask, dtype=bool)
-    c = np.asarray(sens_corr, np.float64)
-    p[m] = np.clip(p[m] + SHIFT_SCALE * c[m], 0.0, 1.0)
-    return p
+def parse_args():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--baseline-id", required=True, help="Exact baseline recipe/version; no automatic guessing.")
+    p.add_argument("--bank", type=Path, required=True, help="FINAL OOF CSV or CSV.gz, including R and F.")
+    p.add_argument("--manifest", type=Path, required=True, help="OOF provenance JSON; see README.")
+    p.add_argument("--years", required=True, help="Explicit evaluation years, e.g. 2023,2024; each needs year-1 OOF.")
+    p.add_argument("--train-path", type=Path, default=DATA_DIR / "train.csv")
+    p.add_argument("--output-dir", type=Path, default=VALIDATION_DIR)
+    p.add_argument("--check-only", action="store_true", help="Validate inputs without creating output or fitting Ridge.")
+    args = p.parse_args()
+    try:
+        years = [int(x) for x in args.years.split(",")]
+    except ValueError:
+        p.error("--years must be comma-separated integer years")
+    if not years or len(set(years)) != len(years) or max(years) > 2024:
+        p.error("Use unique historical evaluation years through 2024")
+    args.years = sorted(years)
+    for field in ("bank", "manifest", "train_path", "output_dir"):
+        setattr(args, field, getattr(args, field).expanduser().resolve())
+    return args
 
 
-# =============================================================================
-# Summaries / gates
-# =============================================================================
+def read_inputs(args):
+    for name in ("bank", "manifest", "train_path"):
+        path = getattr(args, name)
+        require(path.is_file(), f"Missing {name}: {path}. L1-only CSVs cannot replace a FINAL OOF bank.")
+    if not args.check_only:
+        require(not args.output_dir.exists(), f"Refusing to overwrite existing results: {args.output_dir}")
+    manifest = json.loads(args.manifest.read_text(encoding="utf-8-sig"))
+    require(manifest.get("schema_version") == 1, "Expected manifest schema_version=1")
+    require(manifest.get("baseline_id") == args.baseline_id, "Baseline ID differs from the manifest")
+    require(manifest.get("prediction_stage") == "FINAL", "Baseline must include the full final stack, not L1")
+    require(manifest.get("oof_kind") == "expanding_temporal", "Expected expanding temporal OOF")
+    require(manifest.get("row_scope") == "ALL", "Full R/F OOF is required to measure F preservation")
+    require(manifest.get("replicate_mode") in
+            ("independent_base_seeds", "fixed_seed_ensemble", "single_base_model"), "Unknown replicate_mode")
+    replicas = manifest.get("replicate_ids", [])
+    require(isinstance(replicas, list) and replicas and all(isinstance(x, str) and x.strip() for x in replicas),
+            "replicate_ids must contain nonempty strings")
+    require(len(set(replicas)) == len(replicas), "Duplicate replicate IDs")
+    if manifest["replicate_mode"] != "independent_base_seeds":
+        require(len(replicas) == 1, "A fixed ensemble or single model is one replicate; do not duplicate its predictions")
+    else:
+        require(len(replicas) >= 2, "independent_base_seeds requires at least two distinct base runs")
+    components = manifest.get("full_stack_components", [])
+    require(isinstance(components, list) and components and all(isinstance(x, str) and x.strip() for x in components),
+            "Declare every fitted final-stack component, including L2/SHIFT when present")
+    require(len(set(components)) == len(components), "Duplicate stack component names")
+    code = Path(manifest.get("generation_code_path", ""))
+    if not code.is_absolute():
+        code = args.manifest.parent / code
+    require(code.is_file(), f"Missing OOF generation code: {code}")
+    hashes = {"bank_sha256": digest(args.bank), "official_train_sha256": digest(args.train_path),
+              "generation_code_sha256": digest(code)}
+    for key, actual in hashes.items():
+        require(manifest.get(key) == actual, f"{key} mismatch; do not mix baseline artifacts or change provenance")
+
+    cols = [ID, TARGET, SEASON_COL, GAME_TYPE_COL, "pitcher_id", "batter_hand", "balls_before", "strikes_before"]
+    train = pd.read_csv(args.train_path, encoding="utf-8-sig", usecols=cols, dtype={ID: "string"})
+    require(train[ID].notna().all() and not train[ID].duplicated().any(), "Official row IDs missing/duplicated")
+    strict_integer(train, SEASON_COL)
+    train[TARGET] = pd.to_numeric(train[TARGET], errors="raise")
+    require(train[TARGET].isin([0, 1]).all(), "Official target must be binary")
+    require(train[GAME_TYPE_COL].notna().all(), "Missing game_type; R/F routing is ambiguous")
+    train = train.set_index(ID, drop=False)
+    bank = pd.read_csv(args.bank, encoding="utf-8-sig", dtype={ID: "string", "replicate_id": "string"})
+    check_columns(bank, [ID, "validation_year", "replicate_id", "y_true", "final_pred"], "FINAL OOF bank")
+    strict_integer(bank, "validation_year")
+    require(bank[ID].notna().all() and bank["replicate_id"].notna().all(), "OOF keys cannot be missing")
+    require(not bank.duplicated(["validation_year", "replicate_id", ID]).any(), "Duplicate OOF keys")
+    for col in ("y_true", "final_pred"):
+        bank[col] = pd.to_numeric(bank[col], errors="raise")
+        require(np.isfinite(bank[col]).all(), f"{col}: nonfinite values")
+    require(bank["final_pred"].between(0, 1).all(), "FINAL probabilities must be in [0,1]")
+    require(bank["y_true"].isin([0, 1]).all(), "OOF labels must be binary")
+    require(set(bank["replicate_id"]) == set(replicas), "OOF replicate IDs differ from manifest")
+    require(set(bank[ID]).issubset(set(train.index)), "OOF row IDs absent from official train")
+    aligned = train.loc[bank[ID]]
+    require(np.array_equal(aligned[SEASON_COL].to_numpy(), bank["validation_year"].to_numpy()), "OOF row years differ")
+    require(np.array_equal(aligned[TARGET].to_numpy(), bank["y_true"].to_numpy()), "OOF labels differ from official train")
+    if "residual" in bank:
+        residual = pd.to_numeric(bank["residual"], errors="raise").to_numpy(float)
+        require(np.allclose(residual, bank["y_true"] - bank["final_pred"], atol=1e-12, rtol=0), "Residual != y - FINAL")
+    needed_years = sorted(set(args.years) | {year - 1 for year in args.years})
+    require(set(needed_years).issubset(set(bank["validation_year"])),
+            f"Missing OOF source/target years. Required: {needed_years}; do not substitute in-sample predictions")
+    require(min(needed_years) > int(train[SEASON_COL].min()), "Insufficient earlier official history for Sens25")
+    lineage = {}
+    for entry in manifest.get("folds", []):
+        year, replica = entry.get("validation_year"), entry.get("replicate_id")
+        require(type(year) is int and isinstance(replica, str), "Invalid lineage fold key")
+        key = (year, replica)
+        require(key not in lineage, f"Duplicate lineage: {key}")
+        maximum = entry.get("component_fit_max_years", {})
+        require(set(maximum) == set(components), f"Incomplete stack lineage: {key}")
+        require(all(type(value) is int and value < year for value in maximum.values()),
+                f"Same/future-year component training in {key}: {maximum}")
+        require(type(entry.get("target_year_used_for_early_stopping")) is bool,
+                f"Declare target-year early stopping explicitly: {key}")
+        lineage[key] = entry
+    folds = {}
+    for year in sorted(bank["validation_year"].unique()):
+        expected = train.loc[train[SEASON_COL].eq(year), ID]
+        require(len(expected) > 0, f"No official rows for {year}")
+        for replica in replicas:
+            key = (int(year), replica)
+            require(key in lineage, f"Missing temporal lineage: {key}")
+            fold = bank.loc[bank["validation_year"].eq(year) & bank["replicate_id"].eq(replica)].set_index(ID)
+            require(len(fold) == len(expected) and set(fold.index) == set(expected), f"Incomplete all-row OOF: {key}")
+            folds[key] = fold.loc[expected]
+        if len(replicas) > 1:
+            for i, first in enumerate(replicas):
+                for second in replicas[i + 1:]:
+                    require(not np.array_equal(folds[(int(year), first)].final_pred.to_numpy(),
+                                               folds[(int(year), second)].final_pred.to_numpy()),
+                            f"Identical base predictions under different replicate IDs in {year}")
+    require(set(lineage) == set(folds), "Manifest folds differ from actual OOF folds")
+    return train, folds, manifest, hashes, code.resolve()
 
 
-def build_year_summary(metrics: pd.DataFrame) -> pd.DataFrame:
-    allr = metrics.loc[metrics["segment"].eq("ALL_R")]
-    return (
-        allr.groupby(["arm", "validation_year"], as_index=False)
-        .agg(
-            seed_count=("base_seed", "size"),
-            total_win_count=("total_win", "sum"),
-            shape_win_count=("shape_win", "sum"),
-            mean_R_total_gain_pt=("R_total_gain_pt", "mean"),
-            std_R_total_gain_pt=("R_total_gain_pt", "std"),
-            min_R_total_gain_pt=("R_total_gain_pt", "min"),
-            mean_R_level_gain_pt=("R_level_gain_pt", "mean"),
-            mean_R_shape_gain_pt=("R_shape_gain_pt", "mean"),
-            std_R_shape_gain_pt=("R_shape_gain_pt", "std"),
-            min_R_shape_gain_pt=("R_shape_gain_pt", "min"),
-        )
-    )
+def decompose(y, pred):
+    err = pred - y
+    total, level = float(np.mean(err * err)), float(np.mean(err) ** 2)
+    return np.array([total, level, total - level])
 
 
-def build_seed_summary(metrics: pd.DataFrame) -> pd.DataFrame:
-    allr = metrics.loc[metrics["segment"].eq("ALL_R")]
-    return (
-        allr.groupby(["arm", "base_seed"], as_index=False)
-        .agg(
-            fold_count=("validation_year", "size"),
-            total_fold_wins=("total_win", "sum"),
-            shape_fold_wins=("shape_win", "sum"),
-            mean_R_total_gain_pt=("R_total_gain_pt", "mean"),
-            mean_R_level_gain_pt=("R_level_gain_pt", "mean"),
-            mean_R_shape_gain_pt=("R_shape_gain_pt", "mean"),
-            worst_R_total_gain_pt=("R_total_gain_pt", "min"),
-            worst_R_shape_gain_pt=("R_shape_gain_pt", "min"),
-        )
-    )
+def measure(y, base, prediction, mask, branch):
+    y, base, prediction = y[mask], base[mask], prediction[mask]
+    require(len(y) > 0, f"No {branch} rows")
+    denominator = float(y.mean() * (1 - y.mean()))
+    require(denominator > 0, f"Undefined {branch} Brier reference")
+    before, after = decompose(y, base), decompose(y, prediction)
+    gains = 100000 * (before - after) / denominator
+    require(abs(gains[0] - gains[1] - gains[2]) < POINT_EPS, "Total != Level + Shape")
+    return {f"n_{branch}": len(y), f"{branch}_base_brier": float(before[0]),
+            f"{branch}_candidate_brier": float(after[0]),
+            **{f"{branch}_{name}_gain_pt": float(value) for name, value in zip(("total", "level", "shape"), gains)}}
 
 
-def summarize_gates(metrics: pd.DataFrame, year_summary: pd.DataFrame) -> dict:
-    y24 = year_summary.loc[
-        year_summary["validation_year"].eq(2024)
-        & year_summary["arm"].isin([PRIMARY_ARM, COMBINED_ARM])
-    ].set_index("arm")
-
-    out = {}
-    for arm in [PRIMARY_ARM, COMBINED_ARM]:
-        if arm not in y24.index:
-            continue
-        row = y24.loc[arm]
-        temporal = year_summary.loc[year_summary["arm"].eq(arm)]
-        core24 = metrics.loc[
-            metrics["arm"].eq(arm)
-            & metrics["validation_year"].eq(2024)
-            & metrics["segment"].eq("CORE")
-        ]
-
-        out[arm] = {
-            "2024_allR_total_3of3_positive": bool(int(row["total_win_count"]) == 3),
-            "2024_allR_shape_3of3_positive": bool(int(row["shape_win_count"]) == 3),
-            "2024_allR_mean_total_positive": bool(float(row["mean_R_total_gain_pt"]) > 0.0),
-            "2024_allR_mean_shape_positive": bool(float(row["mean_R_shape_gain_pt"]) > 0.0),
-            "2024_core_total_3of3_positive": bool((core24["R_total_gain_pt"] > 0).all()),
-            "2024_core_shape_3of3_positive": bool((core24["R_shape_gain_pt"] > 0).all()),
-            "2024_core_mean_total_pt": float(core24["R_total_gain_pt"].mean()),
-            "2024_core_mean_shape_pt": float(core24["R_shape_gain_pt"].mean()),
-            "temporal_allR_total_positive_years": int((temporal["mean_R_total_gain_pt"] > 0).sum()),
-            "temporal_allR_shape_positive_years": int((temporal["mean_R_shape_gain_pt"] > 0).sum()),
-            # Original shift-like diagnostics; baseline is Treatment here, not adjusted_oof.
-            "diagnostic_g23_ge_8": bool(float(
-                temporal.loc[temporal["validation_year"].eq(2023), "mean_R_total_gain_pt"].iloc[0]
-            ) >= 8.0),
-            "diagnostic_g24_ge_10": bool(float(row["mean_R_total_gain_pt"]) >= 10.0),
-            "diagnostic_core24_ge_15": bool(float(core24["R_total_gain_pt"].mean()) >= 15.0),
-        }
-    return out
-
-
-def to_jsonable(obj):
-    if isinstance(obj, dict):
-        return {str(k): to_jsonable(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [to_jsonable(v) for v in obj]
-    if isinstance(obj, np.ndarray):
-        return obj.tolist()
-    if isinstance(obj, (np.integer,)):
-        return int(obj)
-    if isinstance(obj, (np.floating,)):
-        x = float(obj)
-        return None if not np.isfinite(x) else x
-    if isinstance(obj, float):
-        return None if not np.isfinite(obj) else obj
-    if isinstance(obj, Path):
-        return str(obj)
-    return obj
+def run_year(train, folds, replicas, year, output):
+    source_year = year - 1
+    src = train.loc[train[SEASON_COL].eq(source_year) & train[GAME_TYPE_COL].ne("F")].copy()
+    target = train.loc[train[SEASON_COL].eq(year)].copy()
+    r = target[GAME_TYPE_COL].ne("F").to_numpy()
+    f = ~r
+    require(r.any() and f.any(), f"Both R and F rows are required: {year}")
+    # Target labels are excluded from every feature transform. History is < year.
+    sx = src.drop(columns=[TARGET]).reset_index(drop=True)
+    tx = target.drop(columns=[TARGET]).reset_index(drop=True)
+    A, B = sensitivity25_matrices(train.reset_index(drop=True), source_year, year, sx, tx.loc[r])
+    y = target[TARGET].to_numpy(float)
+    result, diagnostics = [], []
+    for replica in replicas:
+        source = folds[(source_year, replica)].loc[src[ID]]
+        base = folds[(year, replica)].loc[target[ID], "final_pred"].to_numpy(float)
+        residual = source["y_true"].to_numpy(float) - source["final_pred"].to_numpy(float)
+        model = Ridge(alpha=RIDGE_ALPHA, solver="lsqr", max_iter=200, tol=1e-5, fit_intercept=False)
+        model.fit(A, residual)
+        c = np.zeros(len(target), dtype=float)
+        c[r] = model.predict(B)
+        require(np.isfinite(c).all(), "Nonfinite Sens25 correction")
+        predicted = base.copy()
+        predicted[r] = np.clip(base[r] + FIXED_SCALE * c[r], 0, 1)
+        require(np.array_equal(predicted[f], base[f]), "F predictions changed")
+        identity = dict(validation_year=year, source_year=source_year, replicate_id=replica)
+        for arm, pred in (("NO_CHANGE", base), ("SENS25_FIXED_015", predicted)):
+            row = {**identity, "arm": arm, "scale": 0.0 if arm == "NO_CHANGE" else FIXED_SCALE}
+            for branch, mask in (("ALL", np.ones(len(y), bool)), ("R", r), ("F", f)):
+                row.update(measure(y, base, pred, mask, branch))
+            row["F_prediction_max_abs_diff"] = float(np.max(np.abs(pred[f] - base[f])))
+            row["clip_count"] = 0 if arm == "NO_CHANGE" else int(np.sum(
+                (base[r] + FIXED_SCALE * c[r] < 0) | (base[r] + FIXED_SCALE * c[r] > 1)))
+            result.append(row)
+        pd.DataFrame({ID: target[ID].to_numpy(), "validation_year": year, "source_year": source_year,
+                      "replicate_id": replica, GAME_TYPE_COL: target[GAME_TYPE_COL].to_numpy(), "y_true": y,
+                      "final_pred": base, "sens25_correction": c, "candidate_pred": predicted}).to_csv(
+                          output / "predictions" / f"fold_{year}_replicate_{replicas.index(replica)}.csv.gz", index=False)
+        diagnostics.append({**identity, "source_R_rows": len(src), "feature_count": int(A.shape[1]),
+                            "source_residual_mean": float(residual.mean()), "coef_l2": float(np.linalg.norm(model.coef_)),
+                            "target_R_correction_mean": float(c[r].mean()), "target_R_correction_std": float(c[r].std()),
+                            "coefficients": model.coef_.tolist()})
+        print(f"[year={year} replicate={replica}] FINAL + Sens25 x 0.15 complete", flush=True)
+    return result, diagnostics
 
 
-# =============================================================================
-# Main
-# =============================================================================
+def report_gates(metrics, manifest):
+    reports = []
+    for year, block in metrics.loc[metrics.arm.eq("SENS25_FIXED_015")].groupby("validation_year"):
+        values = block.R_shape_gain_pt.to_numpy(float)
+        n = len(values)
+        mean, level = float(values.mean()), float(block.R_level_gain_pt.mean())
+        std = float(values.std(ddof=1)) if n > 1 else None
+        three_seed = manifest["replicate_mode"] == "independent_base_seeds" and n == 3
+        tu = 2 * std / math.sqrt(3) if three_seed else None
+        tp = max(5.0, tu) if three_seed else None
+        primary = bool(np.all(values > POINT_EPS) and mean >= tp) if three_seed else None
+        level_pass = abs(level) <= 5.0
+        f_pass = bool(block.F_prediction_max_abs_diff.eq(0).all() and block.F_level_gain_pt.ge(-10).all())
+        if not three_seed:
+            status = "DESCRIPTIVE_ONLY_NO_THREE_SEED_GATE"
+        elif primary and level_pass and f_pass:
+            status = "POSTHOC_GATES_PASS"
+        else:
+            status = "POSTHOC_GATE_FAIL"
+        reports.append({"validation_year": int(year), "status": status, "replicate_count": n,
+                        "shape_mean_pt": mean, "shape_sample_std_pt": std, "shape_wins": int(np.sum(values > POINT_EPS)),
+                        "total_mean_pt": float(block.R_total_gain_pt.mean()), "level_mean_pt": level,
+                        "T_u": tu, "T_p": tp, "primary_pass": primary, "R_level_pass": level_pass,
+                        "F_identity_and_level_pass": f_pass, "deployment_approved": False})
+    return {"baseline_id": manifest["baseline_id"], "replicate_mode": manifest["replicate_mode"],
+            "interpretation": "Historical posthoc audit; seed variation is not statistical significance.",
+            "source_code_lineage_audited": False,
+            "lineage_limit": "Manifest, hashes and year bounds checked; metadata alone cannot prove how OOF was generated.",
+            "reports": reports, "deployment_approved": False}
 
 
 def main():
-    t0 = time.time()
-
-    print("=" * 122)
-    print(EXPERIMENT_NAME)
-    print("=" * 122)
-    print("Purpose       : shift Sens25 Ridge + original CORE router temporal audit")
-    print(f"Bank source   : {BANK_SOURCE_PATH}")
-    print(f"Eval years    : {EVAL_YEARS}")
-    print(f"Ridge         : alpha={RIDGE_ALPHA}, fit_intercept=False, solver=lsqr")
-    print(f"Sens history  : <=3 seasons, decay={SENS_DECAY}")
-    print(f"Shift scale   : {SHIFT_SCALE}")
-    print(f"Constant      : previous-year residual mean * {CONSTANT_SCALE}")
-    print("Router        : FUTURES / ANCHOR_TEAM / CORE (original shift definition)")
-    print("Ridge fit     : source ALL-R residuals; routed application is CORE-only")
-    print("Final model   : NOT TRAINED")
-    print("Test usage    : NONE")
-    print("=" * 122)
-
-    if not TRAIN_PATH.exists():
-        raise FileNotFoundError(TRAIN_PATH)
-    if not BANK_SOURCE_PATH.exists():
-        raise FileNotFoundError(
-            f"Residual bank missing: {BANK_SOURCE_PATH}\n"
-            "Run rresid_v001 first, or set RRESID_BANK_SOURCE."
-        )
-    if VALIDATION_DIR.exists():
-        raise FileExistsError(
-            f"기존 validation 보호를 위해 중단: {VALIDATION_DIR}\n"
-            "기존 폴더를 이동/삭제 후 다시 실행하세요."
-        )
-    VALIDATION_DIR.mkdir(parents=True, exist_ok=False)
-
-    train = pd.read_csv(TRAIN_PATH, encoding="utf-8-sig", low_memory=False)
-    train[SEASON_COL] = pd.to_numeric(train[SEASON_COL], errors="raise").astype(int)
-
-    required = {
-        ID, TARGET, SEASON_COL, GAME_TYPE_COL,
-        "pitcher_id", "batter_hand", "balls_before", "strikes_before",
-        "pitcher_team_id", "batter_team_id",
-    }
-    missing = sorted(required - set(train.columns))
-    if missing:
-        raise KeyError(f"train required columns missing: {missing}")
-
-    bank = pd.read_csv(
-        BANK_SOURCE_PATH,
-        encoding="utf-8-sig",
-        usecols=[ID, "validation_year", "base_seed", "y_true", "treatment_pred", "residual"],
-    )
-    bank["validation_year"] = pd.to_numeric(bank["validation_year"], errors="raise").astype(int)
-    bank["base_seed"] = pd.to_numeric(bank["base_seed"], errors="raise").astype(int)
-    seeds = sorted(bank["base_seed"].unique().tolist())
-
-    needed_years = sorted(set([y - 1 for y in EVAL_YEARS] + EVAL_YEARS))
-    missing_years = sorted(set(needed_years) - set(bank["validation_year"].unique().tolist()))
-    if missing_years:
-        raise RuntimeError(f"residual bank missing OOF years: {missing_years}")
-
-    # Original fixed router anchor, as shift_v003 implemented it.
-    fixed_anchor = discover_anchor_team(train, ANCHOR_DISCOVERY_MAX_SEASON)
-    print(f"Original fixed anchor team (F<=2022): {fixed_anchor}")
-
-    metric_rows = []
-    pred_parts = []
-    router_rows = []
-    diag_rows = []
-
-    for target_year in EVAL_YEARS:
-        source_year = target_year - 1
-
-        # Strict temporal router audit: discover anchor only from information
-        # available by source_year, then assert it equals the original fixed router.
-        causal_anchor = discover_anchor_team(train, source_year)
-        if causal_anchor != fixed_anchor:
-            raise RuntimeError(
-                f"router anchor instability {source_year}->{target_year}: "
-                f"causal={causal_anchor}, fixed={fixed_anchor}"
-            )
-
-        raw_source = train.loc[
-            train[SEASON_COL].eq(source_year)
-            & ~train[GAME_TYPE_COL].fillna("__MISSING__").astype(str).eq("F")
-        ].copy().reset_index(drop=True)
-        raw_target = train.loc[
-            train[SEASON_COL].eq(target_year)
-            & ~train[GAME_TYPE_COL].fillna("__MISSING__").astype(str).eq("F")
-        ].copy().reset_index(drop=True)
-
-        raw_source = attach_route_segment(raw_source, causal_anchor)
-        raw_target = attach_route_segment(raw_target, causal_anchor)
-
-        source_counts = raw_source["route_segment"].value_counts().to_dict()
-        target_counts = raw_target["route_segment"].value_counts().to_dict()
-        if set(raw_target["route_segment"].unique()) - {"CORE", "ANCHOR_TEAM"}:
-            raise RuntimeError("R-only target unexpectedly contains FUTURES/unknown segment")
-
-        router_rows.append({
-            "source_year": int(source_year),
-            "target_year": int(target_year),
-            "fixed_anchor_team": int(fixed_anchor),
-            "causal_anchor_team": int(causal_anchor),
-            "anchor_equal": bool(fixed_anchor == causal_anchor),
-            "source_core_n": int(source_counts.get("CORE", 0)),
-            "source_anchor_team_n": int(source_counts.get("ANCHOR_TEAM", 0)),
-            "target_core_n": int(target_counts.get("CORE", 0)),
-            "target_anchor_team_n": int(target_counts.get("ANCHOR_TEAM", 0)),
-            "target_core_share_R": float(target_counts.get("CORE", 0) / len(raw_target)),
-        })
-
-        print("\n" + "#" * 122)
-        print(
-            f"TARGET={target_year} SOURCE={source_year} | anchor={causal_anchor} | "
-            f"source_R={len(raw_source):,} target_R={len(raw_target):,} | "
-            f"target CORE={target_counts.get('CORE', 0):,} "
-            f"ANCHOR_TEAM={target_counts.get('ANCHOR_TEAM', 0):,}"
-        )
-        print("#" * 122)
-
-        Az, Bz, sens_mu, sens_sd = sensitivity25_matrices(
-            train=train,
-            source_year=source_year,
-            target_year=target_year,
-            source_rows=raw_source,
-            target_rows=raw_target,
-        )
-        core = raw_target["route_segment"].eq(SHIFT_SEGMENT).to_numpy()
-        anchor_mask = raw_target["route_segment"].eq("ANCHOR_TEAM").to_numpy()
-
-        for seed in seeds:
-            sb = bank.loc[
-                bank["validation_year"].eq(source_year)
-                & bank["base_seed"].eq(seed)
-            ].set_index(ID)
-            tb = bank.loc[
-                bank["validation_year"].eq(target_year)
-                & bank["base_seed"].eq(seed)
-            ].set_index(ID)
-
-            if not raw_source[ID].isin(sb.index).all():
-                raise RuntimeError(f"source bank alignment failed {source_year} seed={seed}")
-            if not raw_target[ID].isin(tb.index).all():
-                raise RuntimeError(f"target bank alignment failed {target_year} seed={seed}")
-
-            source_base = raw_source[ID].map(sb["treatment_pred"]).to_numpy(np.float64)
-            source_y = raw_source[ID].map(sb["y_true"]).to_numpy(np.float64)
-            source_resid = source_y - source_base
-
-            target_base = raw_target[ID].map(tb["treatment_pred"]).to_numpy(np.float64)
-            target_y = raw_target[ID].map(tb["y_true"]).to_numpy(np.float64)
-
-            corr_shift, corr_ref, fit_diag = fit_predict_sens25_pair(Az, source_resid, Bz)
-            const_corr = np.full(len(target_y), float(source_resid.mean()), dtype=np.float64)
-
-            preds = {
-                "CONSTANT_S05": apply_all(target_base, const_corr, CONSTANT_SCALE),
-                "SENS25_SHIFT_ALLR_S075": apply_all(target_base, corr_shift, SHIFT_SCALE),
-                PRIMARY_ARM: apply_masked(target_base, corr_shift, core, SHIFT_SCALE),
-                "SENS25_REFERENCE_CORE_S075": apply_masked(target_base, corr_ref, core, SHIFT_SCALE),
-                COMBINED_ARM: apply_constant_plus_core(target_base, const_corr, corr_shift, core),
-            }
-
-            effective_corr = {
-                "CONSTANT_S05": CONSTANT_SCALE * const_corr,
-                "SENS25_SHIFT_ALLR_S075": SHIFT_SCALE * corr_shift,
-                PRIMARY_ARM: SHIFT_SCALE * corr_shift * core.astype(np.float64),
-                "SENS25_REFERENCE_CORE_S075": SHIFT_SCALE * corr_ref * core.astype(np.float64),
-                COMBINED_ARM: (
-                    CONSTANT_SCALE * const_corr + SHIFT_SCALE * corr_shift * core.astype(np.float64)
-                ),
-            }
-
-            print(
-                f"\n[TRANSITION] {source_year}->{target_year} seed={seed} | "
-                f"source resid mean={source_resid.mean():+.8f} std={source_resid.std():.8f} | "
-                f"CORE share={core.mean():.4f}"
-            )
-
-            payload = {
-                ID: raw_target[ID].to_numpy(),
-                "validation_year": int(target_year),
-                "source_year": int(source_year),
-                "base_seed": int(seed),
-                "route_segment": raw_target["route_segment"].to_numpy(),
-                "y_true": target_y,
-                "treatment_pred": target_base,
-                "sens25_shift_correction_raw": corr_shift,
-                "sens25_reference_correction_raw": corr_ref,
-                "constant_correction_raw": const_corr,
-            }
-
-            for arm in ARMS:
-                p = preds[arm]
-                c = effective_corr[arm]
-
-                all_row = metric_row(
-                    arm=arm,
-                    year=target_year,
-                    source_year=source_year,
-                    seed=seed,
-                    segment="ALL_R",
-                    y=target_y,
-                    base=target_base,
-                    pred=p,
-                    correction=c,
-                )
-                metric_rows.append(all_row)
-
-                for seg_name, mask in [("CORE", core), ("ANCHOR_TEAM", anchor_mask)]:
-                    if not mask.any():
-                        continue
-                    metric_rows.append(metric_row(
-                        arm=arm,
-                        year=target_year,
-                        source_year=source_year,
-                        seed=seed,
-                        segment=seg_name,
-                        y=target_y[mask],
-                        base=target_base[mask],
-                        pred=p[mask],
-                        correction=c[mask],
-                    ))
-
-                payload[arm.lower() + "__prediction"] = p
-
-                print(
-                    f"{arm:<45} ALL_R "
-                    f"Total={all_row['R_total_gain_pt']:+9.3f} "
-                    f"Level={all_row['R_level_gain_pt']:+9.3f} "
-                    f"Shape={all_row['R_shape_gain_pt']:+9.3f}"
-                )
-
-            # Print main routed segment decomposition explicitly.
-            for arm in [PRIMARY_ARM, COMBINED_ARM]:
-                z = [
-                    r for r in metric_rows
-                    if r["arm"] == arm
-                    and r["validation_year"] == target_year
-                    and r["base_seed"] == seed
-                    and r["segment"] in ["CORE", "ANCHOR_TEAM"]
-                ]
-                for r in z:
-                    print(
-                        f"  {arm:<43} {r['segment']:<11} "
-                        f"Total={r['R_total_gain_pt']:+9.3f} "
-                        f"Level={r['R_level_gain_pt']:+9.3f} "
-                        f"Shape={r['R_shape_gain_pt']:+9.3f}"
-                    )
-
-            diag_rows.append({
-                "source_year": int(source_year),
-                "target_year": int(target_year),
-                "base_seed": int(seed),
-                "source_residual_mean": float(source_resid.mean()),
-                "source_residual_std": float(source_resid.std()),
-                "core_share_target_R": float(core.mean()),
-                "sens_mu_abs_mean": float(np.mean(np.abs(sens_mu))),
-                "sens_sd_mean": float(np.mean(sens_sd)),
-                **fit_diag,
-            })
-            pred_parts.append(pd.DataFrame(payload))
-
-    metrics = pd.DataFrame(metric_rows)
-    allr_metrics = metrics.loc[metrics["segment"].eq("ALL_R")].copy()
-    segment_metrics = metrics.loc[~metrics["segment"].eq("ALL_R")].copy()
-    predictions = pd.concat(pred_parts, ignore_index=True)
-    year_summary = build_year_summary(metrics)
-    seed_summary = build_seed_summary(metrics)
-    router_audit = pd.DataFrame(router_rows)
-    gates = summarize_gates(metrics, year_summary)
-
-    allr_metrics.to_csv(TRANSITION_METRICS_PATH, index=False, encoding="utf-8-sig")
-    segment_metrics.to_csv(SEGMENT_METRICS_PATH, index=False, encoding="utf-8-sig")
-    predictions.to_csv(PREDICTIONS_PATH, index=False, encoding="utf-8-sig")
-    year_summary.to_csv(YEAR_SUMMARY_PATH, index=False, encoding="utf-8-sig")
-    seed_summary.to_csv(SEED_SUMMARY_PATH, index=False, encoding="utf-8-sig")
-    router_audit.to_csv(ROUTER_AUDIT_PATH, index=False, encoding="utf-8-sig")
-
-    metadata = {
-        "experiment_name": EXPERIMENT_NAME,
-        "purpose": "Sens25 Ridge + original CORE routing temporal audit on Treatment R OOF residuals",
-        "validation_only": True,
-        "final_model_saved": False,
-        "bank_source": str(BANK_SOURCE_PATH),
-        "eval_years": EVAL_YEARS,
-        "base_seeds": seeds,
-        "temporal_protocol": "source year t-1 Treatment OOF residual -> target year t",
-        "router": {
-            "definition": "FUTURES if F; else ANCHOR_TEAM if anchor team involved; else CORE",
-            "original_anchor_discovery_max_season": ANCHOR_DISCOVERY_MAX_SEASON,
-            "original_fixed_anchor_team": int(fixed_anchor),
-            "audit": router_audit.to_dict(orient="records"),
-            "strict_temporal_note": "each transition rediscovers anchor using F rows through source_year and asserts equality to fixed original anchor",
-        },
-        "sens25": {
-            "n_features": 25,
-            "history_years": SENS_HISTORY_YEARS,
-            "decay": SENS_DECAY,
-            "parent_strength": SENS_PARENT_STRENGTH,
-            "hand_strength": SENS_HAND_STRENGTH,
-            "pressure_hand_strength": SENS_PRESSURE_HAND_STRENGTH,
-            "ridge_alpha": RIDGE_ALPHA,
-            "solver": "lsqr",
-            "fit_intercept_primary": False,
-            "scale": SHIFT_SCALE,
-            "fit_source": "all source-year R rows",
-            "apply_primary": "target CORE rows only",
-        },
-        "arms": {
-            "CONSTANT_S05": "all-R previous-year residual mean * 0.50",
-            "SENS25_SHIFT_ALLR_S075": "no-intercept Sens25 * .75 on all R; rresid_v002 comparison",
-            PRIMARY_ARM: "no-intercept Sens25 * .75 on CORE only; primary router audit",
-            "SENS25_REFERENCE_CORE_S075": "intercept Sens25 * .75 on CORE only; Level diagnostic",
-            COMBINED_ARM: "constant .50 all R + no-intercept Sens25 .75 CORE only",
-        },
-        "gates": gates,
-        "diagnostics": diag_rows,
-        "rule_compliance": {
-            "official_train_labels_only": True,
-            "test_rows_used": False,
-            "test_row_aggregation": False,
-            "residual_source": "strictly previous OOF season only",
-            "sensitivity_history": "official labeled seasons strictly before each cutoff year",
-            "router_current_transition_source": "only F covariates through source_year; no target labels used",
-        },
-        "scope_note": "This is not a full reproduction of shift_v003 Phase 5: base is Treatment R OOF, and F residuals are excluded from Ridge fit. It isolates Sens25 + CORE routing for the current R branch.",
-        "outputs": {
-            "transition_metrics": str(TRANSITION_METRICS_PATH),
-            "segment_metrics": str(SEGMENT_METRICS_PATH),
-            "predictions": str(PREDICTIONS_PATH),
-            "year_summary": str(YEAR_SUMMARY_PATH),
-            "seed_summary": str(SEED_SUMMARY_PATH),
-            "router_audit": str(ROUTER_AUDIT_PATH),
-        },
-        "elapsed_seconds": float(time.time() - t0),
-    }
-    META_PATH.write_text(
-        json.dumps(to_jsonable(metadata), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-    print("\n" + "=" * 122)
-    print("YEAR SUMMARY — ALL R")
-    print("=" * 122)
-    print(year_summary.to_string(index=False))
-
-    print("\n" + "=" * 122)
-    print("2024 SEGMENT SUMMARY — PRIMARY / COMBINED")
-    print("=" * 122)
-    seg24 = segment_metrics.loc[
-        segment_metrics["validation_year"].eq(2024)
-        & segment_metrics["arm"].isin([PRIMARY_ARM, COMBINED_ARM])
-    ]
-    if len(seg24):
-        print(
-            seg24.groupby(["arm", "segment"], as_index=False)
-            .agg(
-                seed_count=("base_seed", "size"),
-                total_win_count=("total_win", "sum"),
-                shape_win_count=("shape_win", "sum"),
-                mean_total=("R_total_gain_pt", "mean"),
-                mean_level=("R_level_gain_pt", "mean"),
-                mean_shape=("R_shape_gain_pt", "mean"),
-                min_total=("R_total_gain_pt", "min"),
-                min_shape=("R_shape_gain_pt", "min"),
-            )
-            .to_string(index=False)
-        )
-
-    print("\n" + "=" * 122)
-    print("GATES")
-    print("=" * 122)
-    for arm, gate in gates.items():
-        print(arm)
-        for k, v in gate.items():
-            print(f"  {k}: {v}")
-
-    print("\nSaved:")
-    for path in [
-        TRANSITION_METRICS_PATH,
-        SEGMENT_METRICS_PATH,
-        PREDICTIONS_PATH,
-        YEAR_SUMMARY_PATH,
-        SEED_SUMMARY_PATH,
-        ROUTER_AUDIT_PATH,
-        META_PATH,
-    ]:
-        print(path)
-    print(f"Elapsed: {time.time() - t0:.1f}s")
-    print("=" * 122)
+    args = parse_args()
+    train, folds, manifest, hashes, code = read_inputs(args)
+    print(f"Validated FINAL OOF inputs for {args.baseline_id}; target years={args.years}", flush=True)
+    if args.check_only:
+        print("Input preflight passed. No output or model was created.")
+        return
+    protocol = {"experiment_name": EXPERIMENT_NAME, "baseline_id": args.baseline_id,
+                "validation_only": True, "historical_posthoc": True, "2024_previously_seen": True,
+                "scale_origin": "Fixed 0.15 hypothesis from previously inspected rresid_v001/v002/v003 results",
+                "family": "RIDGE_SENS25", "scale": FIXED_SCALE, "ridge_alpha": RIDGE_ALPHA,
+                "fit_intercept": False, "source_policy": "strict previous-year FINAL OOF residuals, R rows only",
+                "feature_history": "official labeled history strictly before each row year; at most 3 years",
+                "standardization": "source R rows only, ddof=0, feature clip +/-8",
+                "target_correction_recentered": False, "scale_search": False, "test_read": False,
+                "years": args.years, "replicate_mode": manifest["replicate_mode"],
+                "replicate_ids": manifest["replicate_ids"], "input_hashes": hashes,
+                "sens25_helpers_sha256": SENS25_HELPERS_SHA256,
+                "train_script_sha256": digest(__file__), "manifest_sha256": digest(args.manifest),
+                "runtime": {"python": platform.python_version(), "numpy": np.__version__,
+                            "pandas": pd.__version__, "sklearn": sklearn.__version__},
+                "deployment_approved": False}
+    args.output_dir.mkdir(parents=True, exist_ok=False)
+    write_json(args.output_dir / "run_status.json", {"status": "running"})
+    try:
+        write_json(args.output_dir / "protocol.json", protocol)
+        locked = digest(args.output_dir / "protocol.json")
+        shutil.copy2(__file__, args.output_dir / "train_source.py")
+        shutil.copy2(args.manifest, args.output_dir / "baseline_manifest.json")
+        shutil.copy2(code, args.output_dir / "baseline_generation_source.py")
+        (args.output_dir / "predictions").mkdir()
+        rows, diagnostics = [], []
+        for year in args.years:
+            found, diag = run_year(train, folds, manifest["replicate_ids"], year, args.output_dir)
+            rows.extend(found)
+            diagnostics.extend(diag)
+        metrics = pd.DataFrame(rows)
+        metrics.to_csv(args.output_dir / "metrics.csv", index=False)
+        summary = metrics.groupby(["arm", "validation_year"], as_index=False).agg(
+            replicate_count=("replicate_id", "size"), mean_R_total_gain_pt=("R_total_gain_pt", "mean"),
+            mean_R_level_gain_pt=("R_level_gain_pt", "mean"), mean_R_shape_gain_pt=("R_shape_gain_pt", "mean"),
+            std_R_shape_gain_pt=("R_shape_gain_pt", "std"), min_R_shape_gain_pt=("R_shape_gain_pt", "min"),
+            mean_ALL_total_gain_pt=("ALL_total_gain_pt", "mean"), mean_F_level_gain_pt=("F_level_gain_pt", "mean"),
+            max_F_prediction_abs_diff=("F_prediction_max_abs_diff", "max"), clip_count=("clip_count", "sum"))
+        summary.to_csv(args.output_dir / "year_summary.csv", index=False)
+        write_json(args.output_dir / "fit_diagnostics.json", diagnostics)
+        write_json(args.output_dir / "confirmation.json", report_gates(metrics, manifest))
+        require(digest(args.output_dir / "protocol.json") == locked, "Protocol changed during evaluation")
+        write_json(args.output_dir / "run_status.json", {"status": "complete", "metric_rows": len(metrics)})
+        print(summary.to_string(index=False))
+        print(f"Saved validation only: {args.output_dir}")
+    except Exception as exc:
+        write_json(args.output_dir / "run_status.json", {"status": "failed", "error": str(exc)})
+        raise
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (ValueError, FileNotFoundError, FileExistsError) as exc:
+        sys.exit(f"Preflight/evaluation stopped: {exc}")

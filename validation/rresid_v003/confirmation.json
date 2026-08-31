@@ -1,0 +1,155 @@
+{
+  "kind": "historical_posthoc_2024_report",
+  "no_model_family_selected_using_2024": true,
+  "not_untouched_confirmation": true,
+  "results": {
+    "constant_level_control/CONSTANT": {
+      "F_level_gate": {
+        "measured_F_gain": null,
+        "routing_contract": "correction applies only to non-F rows; F must remain unchanged",
+        "status": "not_measured"
+      },
+      "T_p": 5.0,
+      "T_u": 5.1832374382082774e-11,
+      "interpretation": "historical posthoc audit; 2024 was previously inspected",
+      "level_mean_pt": 19.63951642177111,
+      "level_pass": false,
+      "overall_deployment_approval": false,
+      "primary_pass": false,
+      "scale": 0.5,
+      "seed_count": 3,
+      "shape_mean_pt": 7.404624911726112e-12,
+      "shape_sample_std_pt": 4.4888152953349424e-11,
+      "shape_seed_wins": 0,
+      "status": "PRIMARY_FAIL",
+      "total_mean_pt": 19.639516421781085
+    },
+    "discovery_selected/RIDGE_CODED49": {
+      "F_level_gate": {
+        "measured_F_gain": null,
+        "routing_contract": "correction applies only to non-F rows; F must remain unchanged",
+        "status": "not_measured"
+      },
+      "T_p": 27.075832554784213,
+      "T_u": 27.075832554784213,
+      "interpretation": "historical posthoc audit; 2024 was previously inspected",
+      "level_mean_pt": -8.442835846460245,
+      "level_pass": false,
+      "overall_deployment_approval": false,
+      "primary_pass": false,
+      "scale": 0.5,
+      "seed_count": 3,
+      "shape_mean_pt": -47.20502604550571,
+      "shape_sample_std_pt": 23.448358821056846,
+      "shape_seed_wins": 0,
+      "status": "PRIMARY_FAIL",
+      "total_mean_pt": -55.64786189196433
+    },
+    "discovery_selected/RIDGE_SENS25": {
+      "F_level_gate": {
+        "measured_F_gain": null,
+        "routing_contract": "correction applies only to non-F rows; F must remain unchanged",
+        "status": "not_measured"
+      },
+      "T_p": 5.800890342141824,
+      "T_u": 5.800890342141824,
+      "interpretation": "historical posthoc audit; 2024 was previously inspected",
+      "level_mean_pt": 2.3725897300837486,
+      "level_pass": true,
+      "overall_deployment_approval": false,
+      "primary_pass": false,
+      "scale": 0.75,
+      "seed_count": 3,
+      "shape_mean_pt": -9.328669564463592,
+      "shape_sample_std_pt": 5.023718400862624,
+      "shape_seed_wins": 0,
+      "status": "PRIMARY_FAIL",
+      "total_mean_pt": -6.956079834379119
+    },
+    "fixed_015_posthoc_hypothesis/RIDGE_CODED49": {
+      "F_level_gate": {
+        "measured_F_gain": null,
+        "routing_contract": "correction applies only to non-F rows; F must remain unchanged",
+        "status": "not_measured"
+      },
+      "T_p": 5.0,
+      "T_u": 2.3273861455281546,
+      "interpretation": "historical posthoc audit; 2024 was previously inspected",
+      "level_mean_pt": -2.0033240735225566,
+      "level_pass": true,
+      "overall_deployment_approval": false,
+      "primary_pass": true,
+      "scale": 0.15,
+      "seed_count": 3,
+      "shape_mean_pt": 11.217333241358963,
+      "shape_sample_std_pt": 2.015575526443328,
+      "shape_seed_wins": 3,
+      "status": "POSTHOC_R_GATES_PASS",
+      "total_mean_pt": 9.21400916784131
+    },
+    "fixed_015_posthoc_hypothesis/RIDGE_SENS25": {
+      "F_level_gate": {
+        "measured_F_gain": null,
+        "routing_contract": "correction applies only to non-F rows; F must remain unchanged",
+        "status": "not_measured"
+      },
+      "T_p": 5.0,
+      "T_u": 1.1551999722335227,
+      "interpretation": "historical posthoc audit; 2024 was previously inspected",
+      "level_mean_pt": 0.48414072074471753,
+      "level_pass": true,
+      "overall_deployment_approval": false,
+      "primary_pass": true,
+      "scale": 0.15,
+      "seed_count": 3,
+      "shape_mean_pt": 9.708809512273165,
+      "shape_sample_std_pt": 1.0004325224053088,
+      "shape_seed_wins": 3,
+      "status": "POSTHOC_R_GATES_PASS",
+      "total_mean_pt": 10.19295023301713
+    },
+    "legacy_anchor/RIDGE_CODED49": {
+      "F_level_gate": {
+        "measured_F_gain": null,
+        "routing_contract": "correction applies only to non-F rows; F must remain unchanged",
+        "status": "not_measured"
+      },
+      "T_p": 27.075832554784213,
+      "T_u": 27.075832554784213,
+      "interpretation": "historical posthoc audit; 2024 was previously inspected",
+      "level_mean_pt": -8.442835846460245,
+      "level_pass": false,
+      "overall_deployment_approval": false,
+      "primary_pass": false,
+      "scale": 0.5,
+      "seed_count": 3,
+      "shape_mean_pt": -47.20502604550571,
+      "shape_sample_std_pt": 23.448358821056846,
+      "shape_seed_wins": 0,
+      "status": "PRIMARY_FAIL",
+      "total_mean_pt": -55.64786189196433
+    },
+    "legacy_anchor/RIDGE_SENS25": {
+      "F_level_gate": {
+        "measured_F_gain": null,
+        "routing_contract": "correction applies only to non-F rows; F must remain unchanged",
+        "status": "not_measured"
+      },
+      "T_p": 5.800890342141824,
+      "T_u": 5.800890342141824,
+      "interpretation": "historical posthoc audit; 2024 was previously inspected",
+      "level_mean_pt": 2.3725897300837486,
+      "level_pass": true,
+      "overall_deployment_approval": false,
+      "primary_pass": false,
+      "scale": 0.75,
+      "seed_count": 3,
+      "shape_mean_pt": -9.328669564463592,
+      "shape_sample_std_pt": 5.023718400862624,
+      "shape_seed_wins": 0,
+      "status": "PRIMARY_FAIL",
+      "total_mean_pt": -6.956079834379119
+    }
+  },
+  "selection_sha256": "beef7769a5cc1b48280a1efc8c08ed8ac8e3225ea3b6a19b6d509d0e988ebcd5"
+}

@@ -164,8 +164,25 @@ BRANCHES = ("ALL", "R", "F")
 LS_METRICS_PATH = VALIDATION_DIR / "ls_metrics.csv"
 GATE_PATH = VALIDATION_DIR / "gate.json"
 
+# --- E5: L1 시드평균 -----------------------------------------------------------
+# L2 는 ADAPTER_SEEDS 로 이미 3 시드를 평균하는데 L1 은 단일 시드였다.
+# 43_* §4 실측(2024 R행 Δshape, 단일시드 대비):
+#     W_R=0.25 단독 +12.06   |   L1 3시드평균 +16.81   |   6시드평균 +20.96
+#     그러나 2023 체제단절에서는 시드평균 +3.2 vs W_R +190.6 — 둘은 보완재다.
+# 트리 수는 fold(seed=BASE_SEED) 값을 시드 전체에 공통 적용한다.
+#     근거: L2 가 이미 같은 규약이다 (FINAL_ADAPTER_CFG 고정 + ADAPTER_SEEDS 3개).
+# L1_SEEDS = (BASE_SEED,) 이면 시드평균 도입 이전과 비트 단위 동일하다.
+#
+# 🚩 현재 (42,) 로 꺼 두었다 — 변인 통제.
+#     danker_v003 제출은 v002(LB 1036.84) 대비 **W_R = 0.25 하나만** 바꾼 것이어야 한다.
+#     E5 시드평균을 함께 켜면 변경이 둘이 되고, L3 제출(1025.34)이 겪은
+#     "동시 2변경 → 원인 격리 불가" 를 그대로 반복한다 (44_* §1).
+#     W_R 의 LB 전이를 확인한 다음에 (42, 2026, 314) 로 켠다.
+L1_SEEDS = (42,)
+# L1_SEEDS = (42, 2026, 314)      # E5 활성화용. W_R 제출 결과 확인 후 교체할 것
+
 # --- E2b: 라우팅을 곱셈 가중치로. W_R=0 이면 v002 와 수학적으로 동일 -------------
-W_R = 0.0
+W_R = 0.25
 # W_F 는 아래 F_BLEND_WEIGHT (fanchor_blend_v001 검증 완료, 고정)
 
 # --- E1a / E1b: L2 잔차 어댑터의 적용 범위와 학습 범위 --------------------------
@@ -219,12 +236,15 @@ def assert_invariants():
         raise ValueError(f"unknown L1_TARGET_MODE: {L1_TARGET_MODE!r}")
     if len(SEEDS) < 2:
         raise ValueError("seed 표준편차를 낼 수 없다 — SEEDS 는 2개 이상")
+    if len(L1_SEEDS) < 1 or len(set(L1_SEEDS)) != len(L1_SEEDS):
+        raise ValueError(f"L1_SEEDS 가 비었거나 중복이다: {L1_SEEDS}")
 
 
 def is_neutral():
     """E0 중립 설정인가? True 면 danker_v002 와 비트 동일해야 한다."""
     return (
-        W_R == 0.0
+        tuple(L1_SEEDS) == (BASE_SEED,)
+        and W_R == 0.0
         and not L2_APPLY_F
         and not L2_TRAIN_ON_ALL
         and not DYNAMIC_TRAIN_ON_ALL
@@ -247,6 +267,7 @@ def freeze():
         "experiment_name": EXPERIMENT_NAME,
         "expected_target_year": EXPECTED_TARGET_YEAR,
         "w_r": float(W_R),
+        "l1_seeds": [int(x) for x in L1_SEEDS],
         "w_f": float(F_BLEND_WEIGHT),
         "l2_apply_f": bool(L2_APPLY_F),
         "l2_train_on_all": bool(L2_TRAIN_ON_ALL),
@@ -2401,25 +2422,26 @@ def fit_dynamic_full_model(
     iterations,
     label,
 ):
-    """Final full-data Dynamic-ASOF residual CatBoost."""
+    """Final full-data Dynamic-ASOF residual CatBoost. E5: L1_SEEDS 시드평균."""
+    seeds = tuple(L1_SEEDS)
     X = prepare_features(view[features], cat_cols)
-    params = {**MODEL_PARAMS, "iterations": int(iterations), "random_seed": BASE_SEED}
-    model = CatBoostRegressor(**params)
-    print(
-        f"\n[{label}] final full training | rows={len(X):,} "
-        f"| features={len(features)} | trees={iterations}"
-    )
-    t0 = time.time()
-    model.fit(
-        X,
-        np.asarray(y, dtype=np.float64) - np.asarray(anchor, dtype=np.float64),
-        cat_features=cat_cols,
-        verbose=100,
-    )
-    elapsed = time.time() - t0
-    if hasattr(model, "feature_names_") and list(model.feature_names_) != list(features):
-        raise RuntimeError(f"{label} final feature order mismatch")
-    return model, params, elapsed
+    target = np.asarray(y, dtype=np.float64) - np.asarray(anchor, dtype=np.float64)
+    models, params_list, total = [], [], 0.0
+    for sd in seeds:
+        params = {**MODEL_PARAMS, "iterations": int(iterations), "random_seed": int(sd)}
+        model = CatBoostRegressor(**params)
+        print(
+            f"\n[{label} seed={sd}] final full training | rows={len(X):,} "
+            f"| features={len(features)} | trees={iterations}"
+        )
+        t0 = time.time()
+        model.fit(X, target, cat_features=cat_cols, verbose=100)
+        total += time.time() - t0
+        if hasattr(model, "feature_names_") and list(model.feature_names_) != list(features):
+            raise RuntimeError(f"{label} final feature order mismatch (seed={sd})")
+        models.append(model)
+        params_list.append(params)
+    return models, params_list, total
 
 
 # =============================================================================
@@ -3210,17 +3232,27 @@ def fit_fold_model(
     return model, pred, best_zero, elapsed
 
 
-def fit_full_model(view, features, cat_cols, y, iterations, label):
+def fit_full_model(view, features, cat_cols, y, iterations, label, seeds=None):
+    """최종 full-fit. L1_SEEDS 개수만큼 학습해 모델 리스트를 돌려준다 (E5).
+
+    seeds=(BASE_SEED,) 이면 시드평균 도입 이전과 비트 단위 동일하다.
+    """
+    seeds = tuple(L1_SEEDS if seeds is None else seeds)
     X = prepare_features(view[features], cat_cols)
-    params = {**MODEL_PARAMS, "iterations": int(iterations), "random_seed": BASE_SEED}
-    model = CatBoostRegressor(**params)
-    print(f"\n[{label}] final full training | rows={len(X):,} | features={len(features)} | trees={iterations}")
-    t0 = time.time()
-    model.fit(X, y, cat_features=cat_cols, verbose=100)
-    elapsed = time.time() - t0
-    if hasattr(model, "feature_names_") and list(model.feature_names_) != list(features):
-        raise RuntimeError(f"{label} final feature order mismatch")
-    return model, params, elapsed
+    models, params_list, total = [], [], 0.0
+    for sd in seeds:
+        params = {**MODEL_PARAMS, "iterations": int(iterations), "random_seed": int(sd)}
+        model = CatBoostRegressor(**params)
+        print(f"\n[{label} seed={sd}] final full training | rows={len(X):,} "
+              f"| features={len(features)} | trees={iterations}")
+        t0 = time.time()
+        model.fit(X, y, cat_features=cat_cols, verbose=100)
+        total += time.time() - t0
+        if hasattr(model, "feature_names_") and list(model.feature_names_) != list(features):
+            raise RuntimeError(f"{label} final feature order mismatch (seed={sd})")
+        models.append(model)
+        params_list.append(params)
+    return models, params_list, total
 
 
 # =============================================================================
@@ -3235,7 +3267,10 @@ def main():
     print("=" * 112)
     print("Standalone    : YES (no existing model/validation artifact)")
     print("L1 base       : CatBoost Exact-ASOF5 + HB-EB + R-only PC FULL")
-    print("R branch      : TREATMENT (PC FULL, R-only feature activation)")
+    print(
+        f"R branch      : (1-{W_R:g})*TREATMENT + {W_R:g}*DYNAMIC_ASOF"
+        + ("   [W_R=0 → v002 라우팅과 비트 동일]" if W_R == 0.0 else "   [E2b]")
+    )
     print("F branch      : 0.75 * CONTROL + 0.25 * DYNAMIC_ASOF")
     print(f"Dynamic λ     : {DYNAMIC_LAMBDA}")
     print(f"Dynamic κ     : {DYNAMIC_KAPPA}")
@@ -3484,7 +3519,7 @@ def main():
     )
     y_full = train[TARGET].to_numpy(dtype=np.float64)
 
-    control_model, control_final_params, control_final_time = fit_full_model(
+    control_models, control_final_params, control_final_time = fit_full_model(
         final_views["train_control"],
         final_views["control_features"],
         final_views["control_cat_cols"],
@@ -3493,7 +3528,7 @@ def main():
         "CONTROL",
     )
 
-    treatment_model, treatment_final_params, treatment_final_time = fit_full_model(
+    treatment_models, treatment_final_params, treatment_final_time = fit_full_model(
         final_views["train_treatment"],
         final_views["treatment_features"],
         final_views["treatment_cat_cols"],
@@ -3515,7 +3550,7 @@ def main():
         exact_view=final_views["train_control"],
         prev_anchor=prev_anchor_full,
     )
-    dynamic_model, dynamic_final_params, dynamic_final_time = fit_dynamic_full_model(
+    dynamic_models, dynamic_final_params, dynamic_final_time = fit_dynamic_full_model(
         view=final_views["train_control"],
         features=final_views["control_features"],
         cat_cols=final_views["control_cat_cols"],
@@ -3570,33 +3605,36 @@ def main():
 
     artifact = {
         "experiment_name": EXPERIMENT_NAME,
-        "model_type": "Danker routed CatBoost L1 + R-only ExtraTrees L2",
+        "model_type": "Danker weighted-blend CatBoost L1 + R-only ExtraTrees L2",
         "random_seed": BASE_SEED,
         "expected_target_year": EXPECTED_TARGET_YEAR,
 
         "control": {
-            "model": control_model,
+            "models": control_models,
             "features": list(final_views["control_features"]),
             "cat_cols": list(final_views["control_cat_cols"]),
             "final_iterations": control_trees,
             "model_params": control_final_params,
+            "seeds": [int(x) for x in L1_SEEDS],
         },
 
         "treatment": {
-            "model": treatment_model,
+            "models": treatment_models,
             "features": list(final_views["treatment_features"]),
             "cat_cols": list(final_views["treatment_cat_cols"]),
             "final_iterations": treatment_trees,
             "model_params": treatment_final_params,
+            "seeds": [int(x) for x in L1_SEEDS],
             "pc_features": list(PC_FEATURES),
         },
 
         "dynamic": {
-            "model": dynamic_model,
+            "models": dynamic_models,
             "features": list(final_views["control_features"]),
             "cat_cols": list(final_views["control_cat_cols"]),
             "final_iterations": dynamic_trees,
             "model_params": dynamic_final_params,
+            "seeds": [int(x) for x in L1_SEEDS],
             "target_definition": "control_success - dynamic_anchor",
             "anchor_strength": float(ANCHOR_STRENGTH),
             "anchor_fallback_rate": float(ANCHOR_FALLBACK_RATE),
@@ -3632,8 +3670,17 @@ def main():
             "column": GAME_TYPE_COL,
             "R_rule": "game_type != 'F'",
             "F_rule": "game_type == 'F'",
-            "R_prediction": "TREATMENT",
-            "F_prediction": "0.75 * CONTROL + 0.25 * DYNAMIC_ASOF",
+            # 라우팅은 곱셈 가중치다 (blend_weights / blend).
+            #   p_main = where(F, CONTROL, TREATMENT)
+            #   w      = where(F, w_f, w_r)
+            #   L1     = clip((1 - w) * p_main + w * DYNAMIC_ASOF, 0, 1)
+            "R_main": "TREATMENT",
+            "F_main": "CONTROL",
+            "R_prediction": "(1 - w_r) * TREATMENT + w_r * DYNAMIC_ASOF",
+            "F_prediction": "(1 - w_f) * CONTROL + w_f * DYNAMIC_ASOF",
+            # 기술용 사본. 추론 측 단일 진실원은 artifact 최상위 "w_r" 이며,
+            # script.py 가 두 값의 일치를 검사한다.
+            "w_r": float(W_R),
             "f_blend_weight": float(F_BLEND_WEIGHT),
             "b_F": False,
         },
@@ -3753,8 +3800,13 @@ def main():
         "external_model_dependency": False,
         "external_validation_dependency": False,
         "architecture": {
-            "L1_R": "CatBoost Exact-ASOF5 + HB-EB + R-only PC FULL treatment",
-            "L1_F": "0.75*Control + 0.25*Dynamic-ASOF residual CatBoost",
+            "L1_R": (
+                f"(1-{W_R:g})*Treatment + {W_R:g}*Dynamic-ASOF  "
+                "| Treatment = CatBoost Exact-ASOF5 + HB-EB + R-only PC FULL"
+            ),
+            "L1_F": (
+                f"(1-{F_BLEND_WEIGHT:g})*Control + {F_BLEND_WEIGHT:g}*Dynamic-ASOF"
+            ),
             "Dynamic": "A_t=(1-alpha)A_prev+alpha*R_t; lambda=1; kappa=100; no b_F",
             "L2": "ExtraTrees residual adapter; core + Exact-ASOF5; no PC; R-only correction",
             "L3": False,

@@ -1,0 +1,508 @@
+{
+  "checks": [
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 5.329070518200751e-15,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 2.7755575615628914e-17,
+        "candidate_brier": 2.7755575615628914e-17,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_CODED49_S05",
+      "base_seed": 42,
+      "status": "pass",
+      "validation_year": 2021
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 5.329070518200751e-15,
+        "R_shape_gain_pt": 2.2219559525638033e-11,
+        "R_total_gain_pt": 2.2218671347218333e-11,
+        "base_brier": 2.7755575615628914e-17,
+        "candidate_brier": 8.326672684688674e-17,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_SENS25_SHIFT_ALLR_S075",
+      "base_seed": 42,
+      "status": "pass",
+      "validation_year": 2021
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 0.0,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 2.7755575615628914e-17,
+        "candidate_brier": 2.7755575615628914e-17,
+        "scale": 0.0
+      },
+      "arm": "CONSTANT_S05",
+      "base_seed": 42,
+      "status": "pass",
+      "validation_year": 2021
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 1.5987211554602254e-14,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 1.7763568394002505e-15,
+        "base_brier": 2.7755575615628914e-17,
+        "candidate_brier": 8.326672684688674e-17,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_CODED49_S05",
+      "base_seed": 2026,
+      "status": "pass",
+      "validation_year": 2021
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 0.0,
+        "R_shape_gain_pt": 1.7763568394002505e-15,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 2.7755575615628914e-17,
+        "candidate_brier": 8.326672684688674e-17,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_SENS25_SHIFT_ALLR_S075",
+      "base_seed": 2026,
+      "status": "pass",
+      "validation_year": 2021
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 0.0,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 2.7755575615628914e-17,
+        "candidate_brier": 2.7755575615628914e-17,
+        "scale": 0.0
+      },
+      "arm": "CONSTANT_S05",
+      "base_seed": 2026,
+      "status": "pass",
+      "validation_year": 2021
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 8.881784197001252e-15,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 0.0,
+        "candidate_brier": 2.7755575615628914e-17,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_CODED49_S05",
+      "base_seed": 314,
+      "status": "pass",
+      "validation_year": 2021
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 0.0,
+        "R_shape_gain_pt": 5.551115123125783e-17,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 0.0,
+        "candidate_brier": 2.7755575615628914e-17,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_SENS25_SHIFT_ALLR_S075",
+      "base_seed": 314,
+      "status": "pass",
+      "validation_year": 2021
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 0.0,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 0.0,
+        "candidate_brier": 0.0,
+        "scale": 0.0
+      },
+      "arm": "CONSTANT_S05",
+      "base_seed": 314,
+      "status": "pass",
+      "validation_year": 2021
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 1.865174681370263e-14,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 5.551115123125783e-17,
+        "candidate_brier": 0.0,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_CODED49_S05",
+      "base_seed": 42,
+      "status": "pass",
+      "validation_year": 2022
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 1.0769163338864018e-14,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 3.552713678800501e-15,
+        "base_brier": 5.551115123125783e-17,
+        "candidate_brier": 2.7755575615628914e-17,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_SENS25_SHIFT_ALLR_S075",
+      "base_seed": 42,
+      "status": "pass",
+      "validation_year": 2022
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 0.0,
+        "R_shape_gain_pt": 3.2311742677852644e-27,
+        "R_total_gain_pt": 4.440892098500626e-16,
+        "base_brier": 5.551115123125783e-17,
+        "candidate_brier": 5.551115123125783e-17,
+        "scale": 0.0
+      },
+      "arm": "CONSTANT_S05",
+      "base_seed": 42,
+      "status": "pass",
+      "validation_year": 2022
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 2.842170943040401e-14,
+        "R_shape_gain_pt": 3.552713678800501e-15,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 2.7755575615628914e-17,
+        "candidate_brier": 2.7755575615628914e-17,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_CODED49_S05",
+      "base_seed": 2026,
+      "status": "pass",
+      "validation_year": 2022
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 4.107825191113079e-15,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 2.7755575615628914e-17,
+        "candidate_brier": 2.7755575615628914e-17,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_SENS25_SHIFT_ALLR_S075",
+      "base_seed": 2026,
+      "status": "pass",
+      "validation_year": 2022
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 0.0,
+        "R_shape_gain_pt": 1.6155871338926322e-27,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 2.7755575615628914e-17,
+        "candidate_brier": 0.0,
+        "scale": 0.0
+      },
+      "arm": "CONSTANT_S05",
+      "base_seed": 2026,
+      "status": "pass",
+      "validation_year": 2022
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 3.197442310920451e-14,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 5.551115123125783e-17,
+        "candidate_brier": 2.7755575615628914e-17,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_CODED49_S05",
+      "base_seed": 314,
+      "status": "pass",
+      "validation_year": 2022
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 8.881784197001252e-15,
+        "R_shape_gain_pt": 1.7763568394002505e-15,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 5.551115123125783e-17,
+        "candidate_brier": 0.0,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_SENS25_SHIFT_ALLR_S075",
+      "base_seed": 314,
+      "status": "pass",
+      "validation_year": 2022
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 0.0,
+        "R_shape_gain_pt": 3.2311742677852644e-27,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 5.551115123125783e-17,
+        "candidate_brier": 5.551115123125783e-17,
+        "scale": 0.0
+      },
+      "arm": "CONSTANT_S05",
+      "base_seed": 314,
+      "status": "pass",
+      "validation_year": 2022
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 2.4158453015843406e-13,
+        "R_shape_gain_pt": 1.4210854715202004e-14,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 0.0,
+        "candidate_brier": 2.7755575615628914e-17,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_CODED49_S05",
+      "base_seed": 42,
+      "status": "pass",
+      "validation_year": 2023
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 1.305622276959184e-13,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 0.0,
+        "candidate_brier": 0.0,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_SENS25_SHIFT_ALLR_S075",
+      "base_seed": 42,
+      "status": "pass",
+      "validation_year": 2023
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 0.0,
+        "R_shape_gain_pt": 1.6155871338926322e-27,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 0.0,
+        "candidate_brier": 2.7755575615628914e-17,
+        "scale": 0.0
+      },
+      "arm": "CONSTANT_S05",
+      "base_seed": 42,
+      "status": "pass",
+      "validation_year": 2023
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 1.0658141036401503e-13,
+        "R_shape_gain_pt": 1.4210854715202004e-14,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 0.0,
+        "candidate_brier": 0.0,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_CODED49_S05",
+      "base_seed": 2026,
+      "status": "pass",
+      "validation_year": 2023
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 4.3520742565306136e-14,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 0.0,
+        "candidate_brier": 8.326672684688674e-17,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_SENS25_SHIFT_ALLR_S075",
+      "base_seed": 2026,
+      "status": "pass",
+      "validation_year": 2023
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 0.0,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 0.0,
+        "candidate_brier": 8.326672684688674e-17,
+        "scale": 0.0
+      },
+      "arm": "CONSTANT_S05",
+      "base_seed": 2026,
+      "status": "pass",
+      "validation_year": 2023
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 1.1368683772161603e-13,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 0.0,
+        "candidate_brier": 2.7755575615628914e-17,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_CODED49_S05",
+      "base_seed": 314,
+      "status": "pass",
+      "validation_year": 2023
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 1.0835776720341528e-13,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 0.0,
+        "candidate_brier": 5.551115123125783e-17,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_SENS25_SHIFT_ALLR_S075",
+      "base_seed": 314,
+      "status": "pass",
+      "validation_year": 2023
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 0.0,
+        "R_shape_gain_pt": 1.6155871338926322e-27,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 0.0,
+        "candidate_brier": 8.326672684688674e-17,
+        "scale": 0.0
+      },
+      "arm": "CONSTANT_S05",
+      "base_seed": 314,
+      "status": "pass",
+      "validation_year": 2023
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 4.263256414560601e-14,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 8.326672684688674e-17,
+        "candidate_brier": 8.326672684688674e-17,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_CODED49_S05",
+      "base_seed": 42,
+      "status": "pass",
+      "validation_year": 2024
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 1.1102230246251565e-14,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 8.326672684688674e-17,
+        "candidate_brier": 0.0,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_SENS25_SHIFT_ALLR_S075",
+      "base_seed": 42,
+      "status": "pass",
+      "validation_year": 2024
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 1.7763568394002505e-15,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 8.326672684688674e-17,
+        "candidate_brier": 0.0,
+        "scale": 0.0
+      },
+      "arm": "CONSTANT_S05",
+      "base_seed": 42,
+      "status": "pass",
+      "validation_year": 2024
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 3.019806626980426e-14,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 2.7755575615628914e-17,
+        "candidate_brier": 0.0,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_CODED49_S05",
+      "base_seed": 2026,
+      "status": "pass",
+      "validation_year": 2024
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 2.1760371282653068e-14,
+        "R_shape_gain_pt": 1.1107559316769766e-11,
+        "R_total_gain_pt": 1.1105782959930366e-11,
+        "base_brier": 2.7755575615628914e-17,
+        "candidate_brier": 8.326672684688674e-17,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_SENS25_SHIFT_ALLR_S075",
+      "base_seed": 2026,
+      "status": "pass",
+      "validation_year": 2024
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 0.0,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 2.7755575615628914e-17,
+        "candidate_brier": 8.326672684688674e-17,
+        "scale": 0.0
+      },
+      "arm": "CONSTANT_S05",
+      "base_seed": 2026,
+      "status": "pass",
+      "validation_year": 2024
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 1.2434497875801753e-14,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 0.0,
+        "candidate_brier": 0.0,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_CODED49_S05",
+      "base_seed": 314,
+      "status": "pass",
+      "validation_year": 2024
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 7.993605777301127e-15,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 0.0,
+        "candidate_brier": 0.0,
+        "scale": 0.0
+      },
+      "arm": "RIDGE_SENS25_SHIFT_ALLR_S075",
+      "base_seed": 314,
+      "status": "pass",
+      "validation_year": 2024
+    },
+    {
+      "absolute_gaps": {
+        "R_level_gain_pt": 1.7763568394002505e-15,
+        "R_shape_gain_pt": 0.0,
+        "R_total_gain_pt": 0.0,
+        "base_brier": 0.0,
+        "candidate_brier": 2.7755575615628914e-17,
+        "scale": 0.0
+      },
+      "arm": "CONSTANT_S05",
+      "base_seed": 314,
+      "status": "pass",
+      "validation_year": 2024
+    }
+  ]
+}

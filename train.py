@@ -21,7 +21,7 @@ from sklearn.ensemble import ExtraTreesRegressor
 # Config
 # =============================================================================
 
-EXPERIMENT_NAME = "danker_v003"
+EXPERIMENT_NAME = "danker_v006"
 
 DATA_DIR = Path("./data")
 TRAIN_PATH = DATA_DIR / "train.csv"
@@ -95,7 +95,8 @@ MODEL_PARAMS = {
 EARLY_STOPPING_ROUNDS = 80
 
 EXPECTED_CONTROL_FEATURES = 52
-EXPECTED_TREATMENT_FEATURES = 86
+EXPECTED_TREATMENT_FEATURES_BASE = 86      # SUCCESS13 까지
+# FA(S3) 20열은 ENABLE_OUTCOME_STATE 에 따라 더해진다 — 값은 상수 정의 뒤에서 확정한다.
 
 # -----------------------------------------------------------------------------
 # Validated F Dynamic-ASOF blend (fanchor_blend_v001 -> danker_v001)
@@ -164,8 +165,27 @@ BRANCHES = ("ALL", "R", "F")
 LS_METRICS_PATH = VALIDATION_DIR / "ls_metrics.csv"
 GATE_PATH = VALIDATION_DIR / "gate.json"
 
+# --- E5: L1 시드평균 -----------------------------------------------------------
+# L2 는 ADAPTER_SEEDS 로 이미 3 시드를 평균하는데 L1 은 단일 시드였다.
+# 43_* §4 실측(2024 R행 Δshape, 단일시드 대비):
+#     W_R=0.25 단독 +12.06   |   L1 3시드평균 +16.81   |   6시드평균 +20.96
+#     그러나 2023 체제단절에서는 시드평균 +3.2 vs W_R +190.6 — 둘은 보완재다.
+# fold 도 같은 시드로 돌려 **시드평균된 L1 OOF** 로 L2 를 적합한다.
+#     그렇지 않으면 L2 가 학습한 base_pred(단일시드)와 배포 base_pred(시드평균)가
+#     어긋난다 — 2024 실측 std 기준 13.3% (W_R 도입 때의 10.2% 보다 크다).
+# 트리 수는 각 시드가 자기 fold 의 best iteration 을 쓴다.
+# L1_SEEDS = (BASE_SEED,) 이면 시드평균 도입 이전과 비트 단위 동일하다.
+#
+# 🚩 danker_v004 = 제출 A (E5 단독).
+#     v003(W_R=0.25, L1_SEEDS=(42,)) 대비 **이 상수 하나만** 바뀐다.
+#     45_* §1 실측: 배포 기준(seed 42) 대비 R행 Δshape
+#       2021 +9.71   2022 +27.00   2023 +10.94   2024 +14.90   → 4/4 양수
+#     Jensen 부등식으로 "개별 시드 평균보다 나쁘지 않음"이 보장된다 (4/4 확인).
+L1_SEEDS = (42, 2026, 314)
+# L1_SEEDS = (42,)                # E5 를 끄고 v003 재현할 때
+
 # --- E2b: 라우팅을 곱셈 가중치로. W_R=0 이면 v002 와 수학적으로 동일 -------------
-W_R = 0.0
+W_R = 0.25
 # W_F 는 아래 F_BLEND_WEIGHT (fanchor_blend_v001 검증 완료, 고정)
 
 # --- E1a / E1b: L2 잔차 어댑터의 적용 범위와 학습 범위 --------------------------
@@ -176,10 +196,30 @@ L2_TRAIN_ON_ALL = False
 DYNAMIC_TRAIN_ON_ALL = False
 
 # --- E3c: 가산 보정항 (절편 없는 Ridge) ----------------------------------------
-SHIFT_SCALE = 0.0
+# 45_* §3 의 구성 ⑤ 를 그대로 구현한다.
+#     도메인   R 전체 (game_type != "F")
+#     적합     과거 전 연도 pooled OOF 잔차   (배포는 2021~2024 전부)
+#     절편     없음
+#     η        0.5
+#
+# 46_* 사전실측 — v005 의 실제 base(3시드평균 L1 + W_R 블렌드) 위에서 walk-forward,
+# **total** BSS pt (shape 전용 아님):
+#     2022  +15.11    2023  +12.90    2024  +18.92      3/3 양수
+#     α 1e1~1e5 전 구간 3/3 양수,  η 0.30~0.60 전 구간 3/3 양수
+#
+# ⚠️ 이 측정의 base 는 L1 이고 L2 는 빠져 있다. 실제로는 L1+L2 위에 얹히므로
+#    L2 와 겹치는 만큼 이득이 줄 수 있다. train 로그에 상관계수를 남긴다.
+# η 는 0.50 에서 0.30 으로 내렸다 (48_* §4).
+# 학습 로그의 겹침 진단 corr(w_l2·L2corr, η·shift) = +0.3011 에서
+#   η=0.50  기대 +5.18 전행 pt,  ρ≥0.44 에서 음수
+#   η=0.30  기대 +7.23 전행 pt,  ρ≥0.62 까지 양수   ← minimax
+# 46_* §4 의 안전대역 [0.15, 0.60] 안이고 walk-forward 3/3 양수인 값이다.
+SHIFT_SCALE = 0.30
 SHIFT_RIDGE_ALPHA = 1e3
 SHIFT_FIT_INTERCEPT = False          # 영구 False. 변경 금지.
-SHIFT_CLIP = 8.0
+SHIFT_CLIP = 8.0                     # 표준화된 **특징**을 자른다 (출력이 아니다)
+SHIFT_FIT_YEARS = (2021, 2022, 2023, 2024)
+SHIFT_APPLY_F = False                # F 는 Dynamic anchor 가 맡는다
 
 # --- E3d: 대비 가산표 (06 방식) ------------------------------------------------
 ADD_TABLE_SPECS = ()
@@ -219,12 +259,33 @@ def assert_invariants():
         raise ValueError(f"unknown L1_TARGET_MODE: {L1_TARGET_MODE!r}")
     if len(SEEDS) < 2:
         raise ValueError("seed 표준편차를 낼 수 없다 — SEEDS 는 2개 이상")
+    if len(L1_SEEDS) < 1 or len(set(L1_SEEDS)) != len(L1_SEEDS):
+        raise ValueError(f"L1_SEEDS 가 비었거나 중복이다: {L1_SEEDS}")
+    if ENABLE_OUTCOME_STATE:
+        if len(OUTCOME_FEATURES) != len(OUTCOME_KINDS) * (len(OUTCOME_STRENGTHS) + 2):
+            raise ValueError(
+                f"OUTCOME_FEATURES 개수 불일치: {len(OUTCOME_FEATURES)}")
+        if len(set(OUTCOME_FEATURES)) != len(OUTCOME_FEATURES):
+            raise ValueError("OUTCOME_FEATURES 에 중복이 있다")
+    if SHIFT_SCALE != 0.0:
+        if not SHIFT_FIT_YEARS:
+            raise ValueError("SHIFT_SCALE != 0 인데 SHIFT_FIT_YEARS 가 비었다")
+        if sorted(set(SHIFT_FIT_YEARS)) != sorted(SHIFT_FIT_YEARS):
+            raise ValueError(f"SHIFT_FIT_YEARS 에 중복: {SHIFT_FIT_YEARS}")
+        if max(SHIFT_FIT_YEARS) > SOURCE_YEAR:
+            raise ValueError(
+                f"SHIFT_FIT_YEARS 최대 {max(SHIFT_FIT_YEARS)} > SOURCE_YEAR {SOURCE_YEAR} "
+                "— 라벨이 없는 연도로는 적합할 수 없다"
+            )
+        if SHIFT_RIDGE_ALPHA <= 0.0:
+            raise ValueError("SHIFT_RIDGE_ALPHA 는 양수여야 한다")
 
 
 def is_neutral():
     """E0 중립 설정인가? True 면 danker_v002 와 비트 동일해야 한다."""
     return (
-        W_R == 0.0
+        tuple(L1_SEEDS) == (BASE_SEED,)
+        and W_R == 0.0
         and not L2_APPLY_F
         and not L2_TRAIN_ON_ALL
         and not DYNAMIC_TRAIN_ON_ALL
@@ -233,6 +294,7 @@ def is_neutral():
         and AFFINE_ALPHA == 1.0
         and AFFINE_OFFSET == 0.0
         and L1_TARGET_MODE == "direct"
+        and not ENABLE_OUTCOME_STATE
     )
 
 
@@ -247,6 +309,7 @@ def freeze():
         "experiment_name": EXPERIMENT_NAME,
         "expected_target_year": EXPECTED_TARGET_YEAR,
         "w_r": float(W_R),
+        "l1_seeds": [int(x) for x in L1_SEEDS],
         "w_f": float(F_BLEND_WEIGHT),
         "l2_apply_f": bool(L2_APPLY_F),
         "l2_train_on_all": bool(L2_TRAIN_ON_ALL),
@@ -256,10 +319,14 @@ def freeze():
         "dynamic_kappa": float(DYNAMIC_KAPPA),
         "shift_scale": float(SHIFT_SCALE),
         "shift_clip": float(SHIFT_CLIP),
+        "shift_alpha": float(SHIFT_RIDGE_ALPHA),
+        "shift_apply_f": bool(SHIFT_APPLY_F),
+        "shift_fit_years": [int(x) for x in SHIFT_FIT_YEARS],
         "affine_alpha": float(AFFINE_ALPHA),
         "affine_center": float(AFFINE_CENTER),
         "affine_offset": float(AFFINE_OFFSET),
         "l1_target_mode": str(L1_TARGET_MODE),
+        "outcome_state": bool(ENABLE_OUTCOME_STATE),
         "is_neutral": is_neutral(),
     }
 
@@ -992,6 +1059,154 @@ def standardize(mat, mu, sd, clip: float = 8.0) -> np.ndarray:
 
 
 # =========================================================
+# E3c — SHIFT 설계행렬 (30열) 과 절편 없는 Ridge
+# =========================================================
+#
+# 규칙 준수: 30열 전부 **현재 행의 공식 컬럼만** 쓴다. 다른 행을 참조하는 항이
+# 하나도 없다. median / mu / sd / beta 는 전부 공식 학습 데이터에서만 나오며
+# artifact 에 동결된다 — script.py 는 test 분포에서 어떤 상수도 재추정하지 않는다.
+#
+# 열 구성은 46_* 의 walk-forward 검증에 쓴 것과 **동일**하다. 열 하나라도 바꾸면
+# 그 측정치는 무효다. 특히 base_pred 계열(base, base-0.5, (base-0.5)^2)을
+# 넣으면 안 된다 — 46_* §2 에서 정상 연도 2/3 을 음수로 뒤집는 것을 확인했다.
+
+SHIFT_COLS = [
+    "game_month", "inning", "balls_before", "strikes_before", "outs_before",
+    "num_runners_on", "score_diff_pitcher_team", "home_win_expectancy", "li",
+    "asof_pitcher_success_rate", "asof_pitcher_reverse_rate",
+    "asof_pitcher_middle_rate", "asof_pitcher_ball_rate",
+    "asof_pitcher_strike_rate",
+    "asof_pitcher_prev1_game_success_rate",
+    "asof_pitcher_prev3_game_success_rate",
+    "asof_pitcher_prev5_game_success_rate",
+    "asof_batter_success_rate", "asof_batter_middle_rate",
+    "log_pn", "log_bn",
+    "recent35", "recent_delta", "sb",
+    "same_hand", "two_strike", "three_ball", "runners", "late", "close",
+]
+
+
+SHIFT_SOURCE_COLS = [
+    "game_month", "inning", "balls_before", "strikes_before", "outs_before",
+    "num_runners_on", "score_diff_pitcher_team", "home_win_expectancy", "li",
+    "asof_pitcher_n", "asof_batter_n",
+    "asof_pitcher_success_rate", "asof_pitcher_reverse_rate",
+    "asof_pitcher_middle_rate", "asof_pitcher_ball_rate",
+    "asof_pitcher_strike_rate",
+    "asof_pitcher_prev1_game_success_rate",
+    "asof_pitcher_prev3_game_success_rate",
+    "asof_pitcher_prev5_game_success_rate",
+    "asof_batter_success_rate", "asof_batter_middle_rate",
+    "pitcher_hand", "batter_hand",
+]
+
+
+def assert_shift_source_columns(frame) -> None:
+    """설계행렬의 원천 컬럼이 전부 있는지 확인한다.
+
+    numeric_series 는 컬럼이 없으면 조용히 NaN 을 돌려준다. 그러면 median 으로
+    채워져 **에러 없이 틀린** 예측이 나온다 — 가장 추적하기 어려운 실패다.
+    """
+    missing = [c for c in SHIFT_SOURCE_COLS if c not in frame.columns]
+    if missing:
+        raise KeyError(f"SHIFT 원천 컬럼 누락: {missing}")
+
+
+def build_shift_matrix(frame: pd.DataFrame) -> pd.DataFrame:
+    """E3c 민감도 설계행렬. 결측은 채우지 않고 NaN 으로 돌려준다.
+
+    채우기는 artifact 에 동결된 median 으로 별도 단계에서 한다 — 그래야
+    train 과 script 가 정확히 같은 값을 쓴다.
+    """
+    assert_shift_source_columns(frame)
+    x = pd.DataFrame(index=frame.index)
+    def num(col):
+        return numeric_series(frame, col)
+
+    for col in [
+        "game_month", "inning", "balls_before", "strikes_before", "outs_before",
+        "num_runners_on", "score_diff_pitcher_team", "home_win_expectancy", "li",
+        "asof_pitcher_success_rate", "asof_pitcher_reverse_rate",
+        "asof_pitcher_middle_rate", "asof_pitcher_ball_rate",
+        "asof_pitcher_strike_rate",
+        "asof_pitcher_prev1_game_success_rate",
+        "asof_pitcher_prev3_game_success_rate",
+        "asof_pitcher_prev5_game_success_rate",
+        "asof_batter_success_rate", "asof_batter_middle_rate",
+    ]:
+        x[col] = num(col)
+
+    x["log_pn"] = np.log1p(num("asof_pitcher_n").clip(lower=0))
+    x["log_bn"] = np.log1p(num("asof_batter_n").clip(lower=0))
+
+    career = num("asof_pitcher_success_rate").fillna(0.5)
+    p1 = num("asof_pitcher_prev1_game_success_rate").fillna(career)
+    p3 = num("asof_pitcher_prev3_game_success_rate").fillna(p1)
+    p5 = num("asof_pitcher_prev5_game_success_rate").fillna(p3)
+    x["recent35"] = 0.5 * p1 + 0.3 * p3 + 0.2 * p5
+    x["recent_delta"] = x["recent35"] - career
+    x["sb"] = num("asof_pitcher_strike_rate") - num("asof_pitcher_ball_rate")
+
+    if "pitcher_hand" in frame.columns and "batter_hand" in frame.columns:
+        x["same_hand"] = (
+            frame["pitcher_hand"].astype(str) == frame["batter_hand"].astype(str)
+        ).astype(float)
+    else:
+        raise KeyError("SHIFT: pitcher_hand / batter_hand 가 없다")
+
+    x["two_strike"] = (num("strikes_before") == 2).astype(float)
+    x["three_ball"] = (num("balls_before") == 3).astype(float)
+    x["runners"] = (num("num_runners_on") > 0).astype(float)
+    x["late"] = (num("inning") >= 7).astype(float)
+    x["close"] = (num("score_diff_pitcher_team").abs() <= 1).astype(float)
+
+    x = x.replace([np.inf, -np.inf], np.nan)
+    if list(x.columns) != SHIFT_COLS:
+        raise RuntimeError(
+            f"SHIFT 열 순서 불일치\n  기대: {SHIFT_COLS}\n  실제: {list(x.columns)}"
+        )
+    return x.astype(np.float64)
+
+
+def shift_correction(matrix, median, mu, sd, beta, clip: float) -> np.ndarray:
+    """설계행렬 -> 보정량. train.py 와 script.py 가 공유하는 정의."""
+    mat = np.asarray(matrix, dtype=np.float64)
+    med = np.asarray(median, dtype=np.float64)
+    filled = np.where(np.isnan(mat), med, mat)
+    if not np.isfinite(filled).all():
+        raise RuntimeError("SHIFT 행렬에 median 으로도 못 채운 NaN/Inf 가 있다")
+    z = standardize(filled, mu, sd, clip)
+    return z @ np.asarray(beta, dtype=np.float64)
+
+
+def fit_shift_ridge(matrix, residual, alpha: float, clip: float) -> dict:
+    """절편 없는 Ridge. 표준화 -> 특징 clip -> 정규방정식 정해."""
+    if SHIFT_FIT_INTERCEPT:
+        raise ValueError("SHIFT_FIT_INTERCEPT must stay False")
+    mat = np.asarray(matrix, dtype=np.float64)
+    r = np.asarray(residual, dtype=np.float64)
+    if len(mat) != len(r):
+        raise ValueError(f"SHIFT 적합 길이 불일치: {len(mat)} vs {len(r)}")
+
+    median = np.nanmedian(mat, axis=0)
+    if not np.isfinite(median).all():
+        raise RuntimeError("SHIFT median 에 NaN — 전부 결측인 열이 있다")
+    filled = np.where(np.isnan(mat), median, mat)
+
+    mu = filled.mean(axis=0)
+    sd = filled.std(axis=0)
+    sd = np.where(np.abs(sd) < 1e-12, 1.0, sd)
+    z = standardize(filled, mu, sd, clip)
+
+    gram = z.T @ z + float(alpha) * np.eye(z.shape[1])
+    beta = np.linalg.solve(gram, z.T @ r)
+    if not np.isfinite(beta).all():
+        raise RuntimeError("SHIFT beta 에 NaN/Inf")
+    return {"median": median, "mu": mu, "sd": sd, "beta": beta,
+            "clip": float(clip), "alpha": float(alpha), "n_fit": int(len(r))}
+
+
+# =========================================================
 # 후처리 파이프라인
 # =========================================================
 def apply_postproc(
@@ -1022,13 +1237,13 @@ def apply_postproc(
     # ---- 가산 1: 절편 없는 Ridge 민감도 보정 ----
     scale = float(art["shift_scale"])
     if scale != 0.0:
-        model = art.get("shift_model")
-        if model is None or sens_matrix is None:
-            raise ValueError("shift_scale != 0 인데 shift_model 또는 sens_matrix 가 없다")
-        z = standardize(
-            sens_matrix, art["sens_mu"], art["sens_sd"], float(art.get("shift_clip", 8.0))
+        beta = art.get("shift_beta")
+        if beta is None or sens_matrix is None:
+            raise ValueError("shift_scale != 0 인데 shift_beta 또는 sens_matrix 가 없다")
+        corr = shift_correction(
+            sens_matrix, art["shift_median"], art["sens_mu"], art["sens_sd"],
+            beta, float(art.get("shift_clip", 8.0)),
         )
-        corr = np.asarray(model.predict(z), dtype=np.float64)
         if corr.shape != out.shape:
             raise ValueError(f"shift 보정 길이 불일치: {corr.shape} vs {out.shape}")
         out = out + scale * corr
@@ -2401,25 +2616,30 @@ def fit_dynamic_full_model(
     iterations,
     label,
 ):
-    """Final full-data Dynamic-ASOF residual CatBoost."""
+    """Final full-data Dynamic-ASOF residual CatBoost. E5: L1_SEEDS 시드평균."""
+    seeds = tuple(L1_SEEDS)
+    iters = (list(iterations) if isinstance(iterations, (list, tuple))
+             else [int(iterations)] * len(seeds))
+    if len(iters) != len(seeds):
+        raise ValueError(f"{label}: iterations {len(iters)} != seeds {len(seeds)}")
     X = prepare_features(view[features], cat_cols)
-    params = {**MODEL_PARAMS, "iterations": int(iterations), "random_seed": BASE_SEED}
-    model = CatBoostRegressor(**params)
-    print(
-        f"\n[{label}] final full training | rows={len(X):,} "
-        f"| features={len(features)} | trees={iterations}"
-    )
-    t0 = time.time()
-    model.fit(
-        X,
-        np.asarray(y, dtype=np.float64) - np.asarray(anchor, dtype=np.float64),
-        cat_features=cat_cols,
-        verbose=100,
-    )
-    elapsed = time.time() - t0
-    if hasattr(model, "feature_names_") and list(model.feature_names_) != list(features):
-        raise RuntimeError(f"{label} final feature order mismatch")
-    return model, params, elapsed
+    target = np.asarray(y, dtype=np.float64) - np.asarray(anchor, dtype=np.float64)
+    models, params_list, total = [], [], 0.0
+    for sd, it in zip(seeds, iters):
+        params = {**MODEL_PARAMS, "iterations": int(it), "random_seed": int(sd)}
+        model = CatBoostRegressor(**params)
+        print(
+            f"\n[{label} seed={sd}] final full training | rows={len(X):,} "
+            f"| features={len(features)} | trees={it}"
+        )
+        t0 = time.time()
+        model.fit(X, target, cat_features=cat_cols, verbose=100)
+        total += time.time() - t0
+        if hasattr(model, "feature_names_") and list(model.feature_names_) != list(features):
+            raise RuntimeError(f"{label} final feature order mismatch (seed={sd})")
+        models.append(model)
+        params_list.append(params)
+    return models, params_list, total
 
 
 # =============================================================================
@@ -2470,6 +2690,199 @@ SUCCESS_FEATURES = [
     # matchup current-state diff
     "gseason__pitcher_minus_batter_k80",
 ]
+
+
+# =========================================================
+# FA / S3 — 4-type 시즌내 상태 (42_SUCCESS §3, 50_* 카드 FA Tier 2)
+# =========================================================
+#
+# SUCCESS 축과 **완전히 같은 기계**를 success 외 4종 outcome 으로 확장한다.
+#     career    = asof_pitcher_{k}_rate               (그 행의 값)
+#     cumulative= round(asof_n × career)               (통산 누적 복원)
+#     current_n = max(asof_n − hist_n, 0)              (당해 시즌 표본수)
+#     current_k = clip(cumulative − hist_k, 0, current_n)
+#
+# success 는 라벨 합으로 hist 를 만들지만 4종은 라벨이 없다. 대신 각 투수의
+# **이력 마지막 행 as-of 스냅샷**에서 누적 카운트를 복원한다.
+# 두 방식의 정합은 오프라인에서 확인했다 (n·cnt 상관 1.000000, 중앙 |차이| 1행).
+#
+# 사전 검증 (재학습 0회, 42_SUCCESS §4):
+#   D-a  round(asof_n × rate) 정수 정합    5종 전부 100.0000%
+#   D-b  5종 합 = 1 아님(평균 1.706) → 독립 축 2개. wayoff 는 별도 개념
+#   D-d  L1 잔차 위 선형 후처리 증분  +5.62 (α 1e2~1e5 에서 +5.62~+7.04, 3/3 양수)
+#        비교: FA-Tier1 share 5열 = +0.41
+#
+# 규칙 준수: bank 는 공식 학습 데이터의 **과거 시즌**만으로 만들고 artifact 에 동결한다.
+# 추론은 현재 행의 asof 값 + 동결 bank 만 쓴다 — 다른 test 행을 보지 않는다.
+
+ENABLE_OUTCOME_STATE = True
+
+OUTCOME_KINDS = ("reverse", "middle", "ball", "strike")
+OUTCOME_STRENGTHS = (40.0, 80.0, 160.0)
+
+OUTCOME_FEATURES = [
+    f"gseason__pitcher_{k}_{v}"
+    for k in OUTCOME_KINDS
+    for v in ("rate_k40", "rate_k80", "rate_k160", "raw", "minus_career")
+]
+
+
+def _outcome_rate_col(kind: str) -> str:
+    return f"asof_pitcher_{kind}_rate"
+
+
+def build_outcome_bank(history: pd.DataFrame) -> dict:
+    """과거 시즌만으로 4종 누적 카운트 bank 를 만든다.
+
+    각 투수의 이력 마지막 행에서 `round(asof_n × rate)` 로 누적을 복원한다.
+    prior 는 이력의 마지막 시즌 평균 rate 다 (build_success_bank 의 prior 규약과 동형).
+    """
+    id_col = SUCCESS_SPEC["pitcher"]["id_col"]
+    empty = {k: {"count": {}, "prior": 0.0} for k in OUTCOME_KINDS}
+    if len(history) == 0:
+        return empty
+
+    hist = history.sort_values([id_col, SEASON, ID], kind="mergesort")
+    last = hist.groupby(id_col, sort=False, dropna=False).tail(1)
+    asof_n = (
+        pd.to_numeric(last[SUCCESS_SPEC["pitcher"]["n_col"]], errors="coerce")
+        .fillna(0.0).clip(lower=0.0)
+    )
+    max_year = int(pd.to_numeric(history[SEASON], errors="raise").max())
+    tail_rows = history.loc[
+        pd.to_numeric(history[SEASON], errors="coerce").eq(max_year)
+    ]
+
+    out = {}
+    for kind in OUTCOME_KINDS:
+        col = _outcome_rate_col(kind)
+        counts = rounded_cumulative_count(asof_n, pd.to_numeric(last[col], errors="coerce"))
+        prior = float(pd.to_numeric(tail_rows[col], errors="coerce").mean())
+        if not np.isfinite(prior):
+            prior = 0.0
+        out[kind] = {
+            "count": pd.Series(counts, index=last[id_col]).to_dict(),
+            "prior": prior,
+        }
+    return out
+
+
+def transform_outcome_state(
+    rows: pd.DataFrame,
+    outcome_bank: dict,
+    hist_n_map,
+    out: pd.DataFrame,
+) -> pd.DataFrame:
+    """4종 시즌내 상태 20열. hist_n 은 success bank 와 **같은 것**을 쓴다."""
+    id_col = SUCCESS_SPEC["pitcher"]["id_col"]
+    ids = rows[id_col]
+
+    hist_n = ids.map(hist_n_map).fillna(0.0).to_numpy(dtype=np.float64)
+    asof_n = (
+        pd.to_numeric(rows[SUCCESS_SPEC["pitcher"]["n_col"]], errors="coerce")
+        .fillna(0.0).clip(lower=0.0).to_numpy(dtype=np.float64)
+    )
+    current_n = np.maximum(asof_n - hist_n, 0.0)
+
+    for kind in OUTCOME_KINDS:
+        blk = outcome_bank[kind]
+        prior = float(blk["prior"])
+        career = pd.to_numeric(rows[_outcome_rate_col(kind)], errors="coerce").to_numpy(np.float64)
+        cumulative = rounded_cumulative_count(asof_n, career)
+        hist_c = ids.map(blk["count"]).fillna(0.0).to_numpy(dtype=np.float64)
+        current_c = np.clip(cumulative - hist_c, 0.0, current_n)
+
+        for strength in OUTCOME_STRENGTHS:
+            out[f"gseason__pitcher_{kind}_rate_k{int(strength)}"] = (
+                (current_c + strength * prior) / (current_n + strength)
+            )
+        raw = np.where(current_n > 0.0, current_c / np.maximum(current_n, 1.0), prior)
+        out[f"gseason__pitcher_{kind}_raw"] = raw
+        career_filled = np.where(np.isfinite(career), career, prior)
+        out[f"gseason__pitcher_{kind}_minus_career"] = raw - career_filled
+
+    return out
+
+
+def build_outcome_state_for_rows(
+    rows: pd.DataFrame,
+    available_history: pd.DataFrame,
+) -> pd.DataFrame:
+    """행의 목표 시즌별로 bank 를 갈아끼우며 20열을 만든다 (SUCCESS 경로와 동형)."""
+    out = pd.DataFrame(index=rows.index)
+    for col in OUTCOME_FEATURES:
+        out[col] = np.nan
+
+    seasons = pd.to_numeric(rows[SEASON], errors="raise").astype(int)
+    id_col = SUCCESS_SPEC["pitcher"]["id_col"]
+    for target_year in sorted(seasons.unique()):
+        mask = seasons.eq(int(target_year))
+        rr = rows.loc[mask].copy()
+        hist = available_history.loc[
+            pd.to_numeric(available_history[SEASON], errors="raise").astype(int)
+            .lt(int(target_year))
+        ]
+        obank = build_outcome_bank(hist)
+        hist_n_map = (
+            hist.groupby(id_col, sort=False, dropna=False).size()
+            if len(hist) else pd.Series(dtype=np.float64)
+        )
+        block = transform_outcome_state(rr, obank, hist_n_map, pd.DataFrame(index=rr.index))
+        for col in OUTCOME_FEATURES:
+            out.loc[mask, col] = block[col].to_numpy(dtype=np.float64)
+
+    values = out.to_numpy(dtype=np.float64)
+    if not np.isfinite(values).all():
+        bad = [c for c in OUTCOME_FEATURES if not np.isfinite(out[c].to_numpy(np.float64)).all()]
+        raise RuntimeError(f"OUTCOME state contains NaN/Inf: {bad}")
+    return out
+
+
+def build_outcome_history_artifact(full_train: pd.DataFrame) -> dict:
+    """script.py 가 raw train 없이 bank 를 복원할 수 있게 시즌별 스냅샷을 저장한다.
+
+    (pitcher_id, season) 마다 그 시즌 **마지막 행**의 asof_n 과 4종 누적 카운트,
+    그리고 시즌별 rate 평균(prior 재료)과 행 수(hist_n 재료)를 담는다.
+    """
+    id_col = SUCCESS_SPEC["pitcher"]["id_col"]
+    n_col = SUCCESS_SPEC["pitcher"]["n_col"]
+    df = full_train.sort_values([id_col, SEASON, ID], kind="mergesort")
+    last = df.groupby([id_col, SEASON], sort=False, dropna=False).tail(1)
+
+    asof_n = pd.to_numeric(last[n_col], errors="coerce").fillna(0.0).clip(lower=0.0)
+    snap = pd.DataFrame({
+        id_col: last[id_col].to_numpy(),
+        SEASON: pd.to_numeric(last[SEASON], errors="raise").astype(int).to_numpy(),
+        "asof_n": asof_n.to_numpy(dtype=np.float64),
+    })
+    for kind in OUTCOME_KINDS:
+        snap[f"cnt_{kind}"] = rounded_cumulative_count(
+            asof_n, pd.to_numeric(last[_outcome_rate_col(kind)], errors="coerce")
+        )
+
+    counts = (
+        full_train.groupby([id_col, SEASON], sort=False, dropna=False)
+        .size().rename("n").reset_index()
+    )
+    counts[SEASON] = pd.to_numeric(counts[SEASON], errors="raise").astype(int)
+
+    priors = {}
+    for season, grp in full_train.groupby(SEASON, sort=False, dropna=False):
+        key = int(season)
+        priors[key] = {
+            kind: float(pd.to_numeric(grp[_outcome_rate_col(kind)], errors="coerce").mean())
+            for kind in OUTCOME_KINDS
+        }
+
+    return {
+        "id_col": id_col,
+        "snapshots": snap.reset_index(drop=True),
+        "row_counts": counts.reset_index(drop=True),
+        "priors_by_season": priors,
+        "kinds": list(OUTCOME_KINDS),
+        "strengths": [float(x) for x in OUTCOME_STRENGTHS],
+        "features": list(OUTCOME_FEATURES),
+    }
 
 
 def rounded_cumulative_count(
@@ -3149,8 +3562,23 @@ def make_l1_views(df_train_raw, df_apply_raw, base_features, scope):
         tr_treat[col] = state_tr[col]
         ap_treat[col] = state_ap[col]
 
+    # --- FA / S3: 4-type 시즌내 상태 20열 (TREATMENT 전용) -------------------
+    # CONTROL·DYNAMIC 은 건드리지 않는다 → **F 분기가 비트 동일**하고 R 게이트만 보면 된다
+    # (42_SUCCESS §0-4).
+    if ENABLE_OUTCOME_STATE:
+        outcome_tr = build_outcome_state_for_rows(
+            rows=df_train_raw, available_history=df_train_raw)
+        outcome_ap = build_outcome_state_for_rows(
+            rows=df_apply_raw, available_history=df_train_raw)
+        for col in OUTCOME_FEATURES:
+            if col in tr_treat.columns or col in ap_treat.columns:
+                raise RuntimeError(f"Duplicate OUTCOME feature: {col}")
+            tr_treat[col] = outcome_tr[col]
+            ap_treat[col] = outcome_ap[col]
+
     treatment_features = (
         list(control_features) + list(PC_FEATURES) + list(SUCCESS_FEATURES)
+        + (list(OUTCOME_FEATURES) if ENABLE_OUTCOME_STATE else [])
     )
     control_cat_cols = [c for c in CAT_COLS if c in control_features]
     treatment_cat_cols = [c for c in CAT_COLS if c in treatment_features]
@@ -3159,9 +3587,12 @@ def make_l1_views(df_train_raw, df_apply_raw, base_features, scope):
         raise RuntimeError(
             f"control feature count {len(control_features)} != {EXPECTED_CONTROL_FEATURES}"
         )
-    if len(treatment_features) != EXPECTED_TREATMENT_FEATURES:
+    expected_treat = EXPECTED_TREATMENT_FEATURES_BASE + (
+        len(OUTCOME_FEATURES) if ENABLE_OUTCOME_STATE else 0
+    )
+    if len(treatment_features) != expected_treat:
         raise RuntimeError(
-            f"treatment feature count {len(treatment_features)} != {EXPECTED_TREATMENT_FEATURES}"
+            f"treatment feature count {len(treatment_features)} != {expected_treat}"
         )
 
     return {
@@ -3210,22 +3641,162 @@ def fit_fold_model(
     return model, pred, best_zero, elapsed
 
 
-def fit_full_model(view, features, cat_cols, y, iterations, label):
+def fit_fold_seeded(train_view, val_view, features, cat_cols, y_train, y_val,
+                    label, seeds):
+    """fold 를 시드마다 돌려 (평균 예측, 시드별 트리 수, 총 소요) 를 돌려준다 (E5).
+
+    배포 L1 이 시드평균이므로 L2 가 학습할 base_pred 도 시드평균이어야 한다.
+    단일 시드 fold 로 L2 를 적합하면 배포 시 base_pred 가 13.3%(std 기준) 어긋난다.
+    """
+    preds, trees, total = [], [], 0.0
+    for sd in tuple(seeds):
+        _, pred, best_zero, sec = fit_fold_model(
+            train_view, val_view, features, cat_cols, y_train, y_val,
+            f"{label}[seed={sd}]", seed=int(sd),
+        )
+        preds.append(np.asarray(pred, dtype=np.float64))
+        trees.append(int(best_zero) + 1)
+        total += sec
+    return np.mean(np.column_stack(preds), axis=1), trees, total
+
+
+def fit_dynamic_fold_seeded(train_view, val_view, features, cat_cols,
+                            y_train, y_val, anchor_train, anchor_val,
+                            label, seeds):
+    """DYNAMIC fold 시드 루프. 예측과 보정을 각각 평균한다 (E5)."""
+    preds, corrs, trees, total = [], [], [], 0.0
+    for sd in tuple(seeds):
+        _, pred, corr, best_zero, sec = fit_dynamic_fold_model(
+            train_view=train_view, val_view=val_view,
+            features=features, cat_cols=cat_cols,
+            y_train=y_train, y_val=y_val,
+            anchor_train=anchor_train, anchor_val=anchor_val,
+            label=f"{label}[seed={sd}]", seed=int(sd),
+        )
+        preds.append(np.asarray(pred, dtype=np.float64))
+        corrs.append(np.asarray(corr, dtype=np.float64))
+        trees.append(int(best_zero) + 1)
+        total += sec
+    return (np.mean(np.column_stack(preds), axis=1),
+            np.mean(np.column_stack(corrs), axis=1),
+            trees, total)
+
+
+def fit_full_model(view, features, cat_cols, y, iterations, label, seeds=None):
+    """최종 full-fit. L1_SEEDS 개수만큼 학습해 모델 리스트를 돌려준다 (E5).
+
+    seeds=(BASE_SEED,) 이면 시드평균 도입 이전과 비트 단위 동일하다.
+    """
+    seeds = tuple(L1_SEEDS if seeds is None else seeds)
+    iters = (list(iterations) if isinstance(iterations, (list, tuple))
+             else [int(iterations)] * len(seeds))
+    if len(iters) != len(seeds):
+        raise ValueError(f"{label}: iterations {len(iters)} != seeds {len(seeds)}")
     X = prepare_features(view[features], cat_cols)
-    params = {**MODEL_PARAMS, "iterations": int(iterations), "random_seed": BASE_SEED}
-    model = CatBoostRegressor(**params)
-    print(f"\n[{label}] final full training | rows={len(X):,} | features={len(features)} | trees={iterations}")
-    t0 = time.time()
-    model.fit(X, y, cat_features=cat_cols, verbose=100)
-    elapsed = time.time() - t0
-    if hasattr(model, "feature_names_") and list(model.feature_names_) != list(features):
-        raise RuntimeError(f"{label} final feature order mismatch")
-    return model, params, elapsed
+    models, params_list, total = [], [], 0.0
+    for sd, it in zip(seeds, iters):
+        params = {**MODEL_PARAMS, "iterations": int(it), "random_seed": int(sd)}
+        model = CatBoostRegressor(**params)
+        print(f"\n[{label} seed={sd}] final full training | rows={len(X):,} "
+              f"| features={len(features)} | trees={it}")
+        t0 = time.time()
+        model.fit(X, y, cat_features=cat_cols, verbose=100)
+        total += time.time() - t0
+        if hasattr(model, "feature_names_") and list(model.feature_names_) != list(features):
+            raise RuntimeError(f"{label} final feature order mismatch (seed={sd})")
+        models.append(model)
+        params_list.append(params)
+    return models, params_list, total
 
 
 # =============================================================================
 # Main
 # =============================================================================
+
+def run_shift_fold(train, base_features, target_year: int) -> dict:
+    """SHIFT 적합용 과거 fold 하나를 돌린다 (E3c).
+
+    2024 fold 와 **완전히 같은 절차**다. 다만 SHIFT 에 필요한 것만 돌려준다.
+    < target_year 로 학습해 target_year 를 예측하므로, 각 연도의 L1 예측은
+    그 연도를 보지 않은 정직한 OOF 다.
+    """
+    fold_train = train.loc[train[SEASON_COL] < target_year].copy().reset_index(drop=True)
+    fold_val = train.loc[train[SEASON_COL] == target_year].copy().reset_index(drop=True)
+    if len(fold_train) == 0 or len(fold_val) == 0:
+        raise RuntimeError(f"SHIFT fold {target_year}: 학습 또는 검증 행이 없다")
+
+    print("\n" + "-" * 112)
+    print(f"SHIFT FOLD  {int(fold_train[SEASON_COL].min())}~{target_year - 1} -> {target_year}"
+          f"   (train {len(fold_train):,} / val {len(fold_val):,})")
+    print("-" * 112)
+
+    views = make_l1_views(
+        df_train_raw=fold_train,
+        df_apply_raw=fold_val,
+        base_features=base_features,
+        scope=f"shift{target_year}",
+    )
+    y_tr = fold_train[TARGET].to_numpy(dtype=np.float64)
+    y_va = fold_val[TARGET].to_numpy(dtype=np.float64)
+
+    pred_control, _, sec_c = fit_fold_seeded(
+        views["train_control"], views["apply_control"],
+        views["control_features"], views["control_cat_cols"],
+        y_tr, y_va, f"CONTROL[{target_year}]", L1_SEEDS,
+    )
+    pred_treat, _, sec_t = fit_fold_seeded(
+        views["train_treatment"], views["apply_treatment"],
+        views["treatment_features"], views["treatment_cat_cols"],
+        y_tr, y_va, f"TREATMENT[{target_year}]", L1_SEEDS,
+    )
+
+    league_means = build_season_league_means(fold_train)
+    prev_tr = compute_prev_anchor(
+        rows=fold_train,
+        pitcher_season_stats=views["pitcher_season_stats"],
+        season_league_means=league_means,
+    )
+    prev_va = compute_prev_anchor(
+        rows=fold_val,
+        pitcher_season_stats=views["pitcher_season_stats"],
+        season_league_means=league_means,
+    )
+    anchor_tr, _ = compute_dynamic_anchor(
+        exact_view=views["train_control"], prev_anchor=prev_tr,
+    )
+    anchor_va, _ = compute_dynamic_anchor(
+        exact_view=views["apply_control"], prev_anchor=prev_va,
+    )
+    pred_dynamic, _, _, sec_d = fit_dynamic_fold_seeded(
+        train_view=views["train_control"],
+        val_view=views["apply_control"],
+        features=views["control_features"],
+        cat_cols=views["control_cat_cols"],
+        y_train=y_tr,
+        y_val=y_va,
+        anchor_train=anchor_tr,
+        anchor_val=anchor_va,
+        label=f"DYNAMIC_ASOF[{target_year}]",
+        seeds=L1_SEEDS,
+    )
+
+    gt = fold_val[GAME_TYPE_COL].fillna("__MISSING__").astype(str).to_numpy()
+    f_mask = gt == "F"
+    p_main = np.where(f_mask, pred_control, pred_treat)
+    weights = blend_weights(gt, w_r=W_R, w_f=F_BLEND_WEIGHT)
+    l1_oof = blend(p_main, pred_dynamic, weights)
+
+    print(f"  L1 {target_year} Brier : {brier_score(y_va, l1_oof):.10f}"
+          f"   R행 {int((~f_mask).sum()):,}   {sec_c + sec_t + sec_d:.1f}s")
+    return {
+        "year": int(target_year),
+        "rows": fold_val,
+        "y": y_va,
+        "l1_oof": l1_oof,
+        "r_mask": ~f_mask,
+        "seconds": sec_c + sec_t + sec_d,
+    }
+
 
 def main():
     total_start = time.time()
@@ -3235,7 +3806,10 @@ def main():
     print("=" * 112)
     print("Standalone    : YES (no existing model/validation artifact)")
     print("L1 base       : CatBoost Exact-ASOF5 + HB-EB + R-only PC FULL")
-    print("R branch      : TREATMENT (PC FULL, R-only feature activation)")
+    print(
+        f"R branch      : (1-{W_R:g})*TREATMENT + {W_R:g}*DYNAMIC_ASOF"
+        + ("   [W_R=0 → v002 라우팅과 비트 동일]" if W_R == 0.0 else "   [E2b]")
+    )
     print("F branch      : 0.75 * CONTROL + 0.25 * DYNAMIC_ASOF")
     print(f"Dynamic λ     : {DYNAMIC_LAMBDA}")
     print(f"Dynamic κ     : {DYNAMIC_KAPPA}")
@@ -3250,6 +3824,8 @@ def main():
     print(f"FINAL ET cfg  : {FINAL_ADAPTER_CFG}")
     print(f"Shrink        : {ADAPTER_SHRINK}")
     print("L3            : OFF")
+    print("FA / S3       : " + ("ON  (+%d열, TREATMENT 전용)" % len(OUTCOME_FEATURES)
+                                if ENABLE_OUTCOME_STATE else "OFF"))
     print("Test usage    : HEADER ONLY")
     print("=" * 112)
 
@@ -3330,7 +3906,7 @@ def main():
     y24 = fold_val[TARGET].to_numpy(dtype=np.float64)
 
     # CONTROL
-    _, pred_control24, control_best_zero, control_fold_time = fit_fold_model(
+    pred_control24, control_trees, control_fold_time = fit_fold_seeded(
         fold_views["train_control"],
         fold_views["apply_control"],
         fold_views["control_features"],
@@ -3338,10 +3914,11 @@ def main():
         y_tr,
         y24,
         "CONTROL",
+        L1_SEEDS,
     )
 
     # R TREATMENT
-    _, pred_treat24, treatment_best_zero, treatment_fold_time = fit_fold_model(
+    pred_treat24, treatment_trees, treatment_fold_time = fit_fold_seeded(
         fold_views["train_treatment"],
         fold_views["apply_treatment"],
         fold_views["treatment_features"],
@@ -3349,6 +3926,7 @@ def main():
         y_tr,
         y24,
         "TREATMENT",
+        L1_SEEDS,
     )
 
     # F DYNAMIC-ASOF expert
@@ -3372,12 +3950,11 @@ def main():
         prev_anchor=prev_anchor24,
     )
     (
-        _,
         pred_dynamic24,
         dynamic_correction24,
-        dynamic_best_zero,
+        dynamic_trees,
         dynamic_fold_time,
-    ) = fit_dynamic_fold_model(
+    ) = fit_dynamic_fold_seeded(
         train_view=fold_views["train_control"],
         val_view=fold_views["apply_control"],
         features=fold_views["control_features"],
@@ -3387,6 +3964,7 @@ def main():
         anchor_train=dynamic_anchor_train,
         anchor_val=dynamic_anchor24,
         label="DYNAMIC_ASOF",
+        seeds=L1_SEEDS,
     )
 
     gt24 = fold_val[GAME_TYPE_COL].fillna("__MISSING__").astype(str).to_numpy()
@@ -3420,9 +3998,8 @@ def main():
                 f"(max|diff|={float(np.abs(l1_oof24 - _ref).max()):.3e})"
             )
 
-    control_trees = int(control_best_zero + 1)
-    treatment_trees = int(treatment_best_zero + 1)
-    dynamic_trees = int(dynamic_best_zero + 1)
+    # control_trees / treatment_trees / dynamic_trees 는 fit_fold_seeded 가
+    # 시드별 리스트로 돌려준다 (E5). 각 시드가 자기 fold best iteration 을 쓴다.
 
     # Paired 2024 F diagnostics.
     y24_f = y24[f24]
@@ -3474,6 +4051,100 @@ def main():
     oof_df.to_csv(OOF_2024_PATH, index=False, encoding="utf-8-sig")
 
     # -----------------------------------------------------------------
+    # 1b) E3c SHIFT — 과거 전 연도 OOF 잔차로 절편 없는 Ridge 를 적합
+    # -----------------------------------------------------------------
+    shift_fit = None
+    shift_corr_2024 = None
+    if SHIFT_SCALE != 0.0:
+        print("\n" + "=" * 112)
+        print(f"E3c SHIFT — 적합 연도 {tuple(SHIFT_FIT_YEARS)} · 도메인 R 전체 · 절편 없음")
+        print(f"            η={SHIFT_SCALE}  α={SHIFT_RIDGE_ALPHA:.0e}  feature clip=±{SHIFT_CLIP}")
+        print("=" * 112)
+
+        folds = {}
+        for year in sorted(SHIFT_FIT_YEARS):
+            if int(year) == SOURCE_YEAR:
+                # 2024 는 위에서 이미 돌렸다. 다시 돌리지 않는다.
+                folds[int(year)] = {
+                    "year": SOURCE_YEAR, "rows": fold_val, "y": y24,
+                    "l1_oof": l1_oof24, "r_mask": r24, "seconds": 0.0,
+                }
+            else:
+                folds[int(year)] = run_shift_fold(train, base_features, int(year))
+
+        mats, resids, years, sizes = [], [], [], []
+        for year in sorted(folds):
+            fd = folds[year]
+            m = fd["r_mask"]
+            mat = build_shift_matrix(fd["rows"]).to_numpy(dtype=np.float64)[m]
+            res = (fd["y"] - fd["l1_oof"])[m]
+            mats.append(mat)
+            resids.append(res)
+            years.append(np.full(int(m.sum()), year, dtype=np.int64))
+            sizes.append(int(m.sum()))
+
+        X_shift = np.vstack(mats)
+        r_shift = np.concatenate(resids)
+        year_vec = np.concatenate(years)
+
+        shift_fit = fit_shift_ridge(
+            X_shift, r_shift, alpha=SHIFT_RIDGE_ALPHA, clip=SHIFT_CLIP,
+        )
+        shift_fit["cols"] = list(SHIFT_COLS)
+        shift_fit["fit_years"] = [int(y) for y in sorted(folds)]
+        shift_fit["fit_rows_by_year"] = {int(y): int(n) for y, n in zip(sorted(folds), sizes)}
+
+        print(f"\n적합 표본     : {shift_fit['n_fit']:,} R행  "
+              f"({', '.join(f'{y}:{n:,}' for y, n in shift_fit['fit_rows_by_year'].items())})")
+        print(f"잔차 평균/표준편차: {r_shift.mean():+.8f} / {r_shift.std():.8f}")
+
+        # ---- 진단: 각 적합 연도에서의 in-sample 이득 (정직한 측정이 아니다) ----
+        # 정직한 walk-forward 는 46_* 에서 재학습 없이 이미 쟀다.
+        # 여기서는 계수가 죽지 않았는지 확인하는 용도로만 본다.
+        corr_all = shift_correction(
+            X_shift, shift_fit["median"], shift_fit["mu"], shift_fit["sd"],
+            shift_fit["beta"], shift_fit["clip"],
+        )
+        print(f"보정량 |ηc|   : 평균 {np.abs(SHIFT_SCALE * corr_all).mean():.6f}  "
+              f"최대 {np.abs(SHIFT_SCALE * corr_all).max():.6f}")
+
+        rows_diag = []
+        base_all = np.concatenate([folds[y]["l1_oof"][folds[y]["r_mask"]] for y in sorted(folds)])
+        y_all = np.concatenate([folds[y]["y"][folds[y]["r_mask"]] for y in sorted(folds)])
+        print(f"\n{'연도':>6}{'R행':>10}{'in-sample BSS pt':>20}")
+        for year in sorted(folds):
+            sel = year_vec == year
+            yv = y_all[sel]
+            p0 = base_all[sel]
+            p1 = np.clip(p0 + SHIFT_SCALE * corr_all[sel], 0.0, 1.0)
+            b0 = float(np.mean(yv) * (1.0 - np.mean(yv)))
+            gain = 1e5 * (float(np.mean((yv - p0) ** 2)) - float(np.mean((yv - p1) ** 2))) / b0
+            print(f"{year:>6}{int(sel.sum()):>10,}{gain:>+20.2f}")
+            rows_diag.append({
+                "year": int(year), "n_R": int(sel.sum()),
+                "brier_before": float(np.mean((yv - p0) ** 2)),
+                "brier_after": float(np.mean((yv - p1) ** 2)),
+                "in_sample_bss_pt": float(gain),
+                "mean_abs_corr": float(np.abs(SHIFT_SCALE * corr_all[sel]).mean()),
+            })
+
+        pd.DataFrame(rows_diag).to_csv(
+            VALIDATION_DIR / "shift_fit_diag.csv", index=False, encoding="utf-8-sig",
+        )
+        pd.DataFrame({
+            "feature": list(SHIFT_COLS),
+            "beta": shift_fit["beta"],
+            "median": shift_fit["median"],
+            "mu": shift_fit["mu"],
+            "sd": shift_fit["sd"],
+        }).to_csv(
+            VALIDATION_DIR / "shift_coefficients.csv", index=False, encoding="utf-8-sig",
+        )
+
+        sel24 = year_vec == SOURCE_YEAR
+        shift_corr_2024 = corr_all[sel24]
+
+    # -----------------------------------------------------------------
     # 2) Final full L1 from all official train (2019~2024)
     # -----------------------------------------------------------------
     final_views = make_l1_views(
@@ -3484,7 +4155,7 @@ def main():
     )
     y_full = train[TARGET].to_numpy(dtype=np.float64)
 
-    control_model, control_final_params, control_final_time = fit_full_model(
+    control_models, control_final_params, control_final_time = fit_full_model(
         final_views["train_control"],
         final_views["control_features"],
         final_views["control_cat_cols"],
@@ -3493,7 +4164,7 @@ def main():
         "CONTROL",
     )
 
-    treatment_model, treatment_final_params, treatment_final_time = fit_full_model(
+    treatment_models, treatment_final_params, treatment_final_time = fit_full_model(
         final_views["train_treatment"],
         final_views["treatment_features"],
         final_views["treatment_cat_cols"],
@@ -3515,7 +4186,7 @@ def main():
         exact_view=final_views["train_control"],
         prev_anchor=prev_anchor_full,
     )
-    dynamic_model, dynamic_final_params, dynamic_final_time = fit_dynamic_full_model(
+    dynamic_models, dynamic_final_params, dynamic_final_time = fit_dynamic_full_model(
         view=final_views["train_control"],
         features=final_views["control_features"],
         cat_cols=final_views["control_cat_cols"],
@@ -3525,8 +4196,39 @@ def main():
         label="DYNAMIC_ASOF",
     )
 
+    # E3c 진단: L2 보정과 SHIFT 보정이 같은 것을 배우고 있는가?
+    # 46_* 의 walk-forward 는 base 가 L1 이라 L2 를 보지 않았다. 여기서 겹침을
+    # 실제로 재서 다음 실험의 근거로 남긴다. 실패해도 학습을 막지 않는다.
+    def _report_shift_l2_overlap(l2_models_dict, X_matrix, r_mask_24):
+        if shift_corr_2024 is None:
+            return
+        try:
+            preds = [
+                np.asarray(m.predict(X_matrix), dtype=np.float64)
+                for m in l2_models_dict.values()
+            ]
+            l2c = np.mean(np.column_stack(preds), axis=1)[r_mask_24]
+            a = ADAPTER_SHRINK * l2c
+            b = SHIFT_SCALE * shift_corr_2024
+            if len(a) != len(b):
+                print(f"\n[진단] SHIFT/L2 겹침 측정 생략 — 길이 {len(a)} vs {len(b)}")
+                return
+            rho = float(np.corrcoef(a, b)[0, 1])
+            print("\n" + "-" * 112)
+            print("E3c 진단 — L2 보정과 SHIFT 보정의 겹침 (2024 R행, in-sample L2)")
+            print("-" * 112)
+            print(f"  corr(w_l2·L2corr, η·shift) : {rho:+.4f}")
+            print(f"  |w_l2·L2corr| 평균          : {np.abs(a).mean():.6f}")
+            print(f"  |η·shift|     평균          : {np.abs(b).mean():.6f}")
+            print("  ⚠️ L2 는 2024 에 in-sample 이므로 실제 겹침의 상한으로 읽는다.")
+        except Exception as exc:                       # 진단 실패가 학습을 막지 않는다
+            print(f"\n[진단] SHIFT/L2 겹침 측정 실패: {exc}")
+
     pc_tables_by_source_season = build_pc_tables_by_source_season(train)
     success_history_artifact = build_success_history_artifact(train)
+    outcome_history_artifact = (
+        build_outcome_history_artifact(train) if ENABLE_OUTCOME_STATE else None
+    )
 
     # -----------------------------------------------------------------
     # 3) Final R-only L2 on genuine 2024 OOT residuals from danker L1
@@ -3563,6 +4265,8 @@ def main():
         residual24=residual24,
     )
 
+    _report_shift_l2_overlap(l2_models, X24, l2_r_mask)
+
     # -----------------------------------------------------------------
     # 4) Save one self-contained artifact
     # -----------------------------------------------------------------
@@ -3570,33 +4274,36 @@ def main():
 
     artifact = {
         "experiment_name": EXPERIMENT_NAME,
-        "model_type": "Danker routed CatBoost L1 + R-only ExtraTrees L2",
+        "model_type": "Danker weighted-blend CatBoost L1 + R-only ExtraTrees L2",
         "random_seed": BASE_SEED,
         "expected_target_year": EXPECTED_TARGET_YEAR,
 
         "control": {
-            "model": control_model,
+            "models": control_models,
             "features": list(final_views["control_features"]),
             "cat_cols": list(final_views["control_cat_cols"]),
             "final_iterations": control_trees,
             "model_params": control_final_params,
+            "seeds": [int(x) for x in L1_SEEDS],
         },
 
         "treatment": {
-            "model": treatment_model,
+            "models": treatment_models,
             "features": list(final_views["treatment_features"]),
             "cat_cols": list(final_views["treatment_cat_cols"]),
             "final_iterations": treatment_trees,
             "model_params": treatment_final_params,
+            "seeds": [int(x) for x in L1_SEEDS],
             "pc_features": list(PC_FEATURES),
         },
 
         "dynamic": {
-            "model": dynamic_model,
+            "models": dynamic_models,
             "features": list(final_views["control_features"]),
             "cat_cols": list(final_views["control_cat_cols"]),
             "final_iterations": dynamic_trees,
             "model_params": dynamic_final_params,
+            "seeds": [int(x) for x in L1_SEEDS],
             "target_definition": "control_success - dynamic_anchor",
             "anchor_strength": float(ANCHOR_STRENGTH),
             "anchor_fallback_rate": float(ANCHOR_FALLBACK_RATE),
@@ -3626,14 +4333,27 @@ def main():
             "success_spec": SUCCESS_SPEC,
             "success_features": list(SUCCESS_FEATURES),
             "success_history": success_history_artifact,
+            "outcome_history": outcome_history_artifact,
+            "outcome_features": (
+                list(OUTCOME_FEATURES) if ENABLE_OUTCOME_STATE else []
+            ),
         },
 
         "l1_routing": {
             "column": GAME_TYPE_COL,
             "R_rule": "game_type != 'F'",
             "F_rule": "game_type == 'F'",
-            "R_prediction": "TREATMENT",
-            "F_prediction": "0.75 * CONTROL + 0.25 * DYNAMIC_ASOF",
+            # 라우팅은 곱셈 가중치다 (blend_weights / blend).
+            #   p_main = where(F, CONTROL, TREATMENT)
+            #   w      = where(F, w_f, w_r)
+            #   L1     = clip((1 - w) * p_main + w * DYNAMIC_ASOF, 0, 1)
+            "R_main": "TREATMENT",
+            "F_main": "CONTROL",
+            "R_prediction": "(1 - w_r) * TREATMENT + w_r * DYNAMIC_ASOF",
+            "F_prediction": "(1 - w_f) * CONTROL + w_f * DYNAMIC_ASOF",
+            # 기술용 사본. 추론 측 단일 진실원은 artifact 최상위 "w_r" 이며,
+            # script.py 가 두 값의 일치를 검사한다.
+            "w_r": float(W_R),
             "f_blend_weight": float(F_BLEND_WEIGHT),
             "b_F": False,
         },
@@ -3684,9 +4404,30 @@ def main():
     # 후처리 상수를 artifact 에 동결한다.
     # script.py 는 test 분포에서 어떤 상수도 재추정하지 않는다 (평가 데이터 독립 추론).
     artifact.update(freeze())
-    artifact.setdefault("shift_model", None)
-    artifact.setdefault("sens_mu", None)
-    artifact.setdefault("sens_sd", None)
+    if shift_fit is None:
+        artifact.setdefault("shift_beta", None)
+        artifact.setdefault("shift_median", None)
+        artifact.setdefault("shift_cols", None)
+        artifact.setdefault("sens_mu", None)
+        artifact.setdefault("sens_sd", None)
+    else:
+        artifact["shift_beta"] = np.asarray(shift_fit["beta"], dtype=np.float64)
+        artifact["shift_median"] = np.asarray(shift_fit["median"], dtype=np.float64)
+        artifact["shift_cols"] = list(shift_fit["cols"])
+        artifact["sens_mu"] = np.asarray(shift_fit["mu"], dtype=np.float64)
+        artifact["sens_sd"] = np.asarray(shift_fit["sd"], dtype=np.float64)
+        artifact["shift_meta"] = {
+            "n_fit": int(shift_fit["n_fit"]),
+            "alpha": float(shift_fit["alpha"]),
+            "clip": float(shift_fit["clip"]),
+            "fit_years": list(shift_fit["fit_years"]),
+            "fit_rows_by_year": dict(shift_fit["fit_rows_by_year"]),
+            "domain": "game_type != 'F' (R 전체)",
+            "fit_intercept": False,
+            "residual_source": "각 연도 정직한 OOF L1 잔차 (< 연도로 학습)",
+        }
+        if len(artifact["shift_cols"]) != len(artifact["shift_beta"]):
+            raise RuntimeError("SHIFT 열 수와 beta 길이가 다르다")
     artifact.setdefault("add_tables", tuple())
     if float(artifact["affine_offset"]) != 0.0:
         raise RuntimeError("affine_offset must be 0.0 (38_* §5)")
@@ -3710,12 +4451,11 @@ def main():
         "n_R": int(r24.sum()),
         "n_F": int(f24.sum()),
 
-        "control_best_iteration_zero_based": control_best_zero,
-        "control_final_tree_count": control_trees,
-        "treatment_best_iteration_zero_based": treatment_best_zero,
-        "treatment_final_tree_count": treatment_trees,
-        "dynamic_best_iteration_zero_based": dynamic_best_zero,
-        "dynamic_final_tree_count": dynamic_trees,
+        # E5: 시드별 리스트다. L1_SEEDS 와 같은 순서.
+        "l1_seeds": [int(x) for x in L1_SEEDS],
+        "control_final_tree_count": list(control_trees),
+        "treatment_final_tree_count": list(treatment_trees),
+        "dynamic_final_tree_count": list(dynamic_trees),
 
         "control_brier_2024": brier_score(y24, pred_control24),
         "treatment_brier_2024": brier_score(y24, pred_treat24),
@@ -3753,8 +4493,13 @@ def main():
         "external_model_dependency": False,
         "external_validation_dependency": False,
         "architecture": {
-            "L1_R": "CatBoost Exact-ASOF5 + HB-EB + R-only PC FULL treatment",
-            "L1_F": "0.75*Control + 0.25*Dynamic-ASOF residual CatBoost",
+            "L1_R": (
+                f"(1-{W_R:g})*Treatment + {W_R:g}*Dynamic-ASOF  "
+                "| Treatment = CatBoost Exact-ASOF5 + HB-EB + R-only PC FULL"
+            ),
+            "L1_F": (
+                f"(1-{F_BLEND_WEIGHT:g})*Control + {F_BLEND_WEIGHT:g}*Dynamic-ASOF"
+            ),
             "Dynamic": "A_t=(1-alpha)A_prev+alpha*R_t; lambda=1; kappa=100; no b_F",
             "L2": "ExtraTrees residual adapter; core + Exact-ASOF5; no PC; R-only correction",
             "L3": False,
@@ -3813,6 +4558,9 @@ def main():
     print(f"Model         : {MODEL_PATH}")
     print(f"Metadata      : {META_PATH}")
     print(f"2024 L1 OOF   : {OOF_2024_PATH}")
+    if shift_fit is not None:
+        print(f"SHIFT 계수    : {VALIDATION_DIR / 'shift_coefficients.csv'}")
+        print(f"SHIFT 진단    : {VALIDATION_DIR / 'shift_fit_diag.csv'}")
     print(f"Fold4 meta    : {FOLD4_META_PATH}")
     print(f"CONTROL trees : {control_trees}")
     print(f"TREATMENT trees: {treatment_trees}")
