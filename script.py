@@ -1,19 +1,26 @@
-"""script.py — danker_v004 inference
+"""script.py — dankerTrack_v001 inference
 
-danker_v002(=danker_sj_v001) 추론 코드에 E2b(W_R) 를 반영한 판본이다.
+danker_v005 추론 코드에 E6(TRACK 멤버) 를 반영한 판본이다.
 구조 상수는 전부 artifact(pkl) 에서 읽는다. 이 파일에는 튜닝 가능한 값이 없다.
 
 Final architecture
 ------------------
 L1 합성 (라우팅을 곱셈 가중치로 — train.py blend_weights / blend 와 동일 정의):
 
-    p_main = where(game_type == "F", CONTROL, TREATMENT)
-    w      = where(game_type == "F", w_f, w_r)          # 둘 다 artifact 동결 상수
-    L1     = clip( (1 - w) * p_main + w * DYNAMIC , 0, 1 )
+    R_MEMBER = (1 - track_w) * TREATMENT + track_w * TRACK    # E6, R 전용
+    p_main   = where(game_type == "F", CONTROL, R_MEMBER)
+    w        = where(game_type == "F", w_f, w_r)        # 전부 artifact 동결 상수
+    L1       = clip( (1 - w) * p_main + w * DYNAMIC , 0, 1 )
 
-    w_r = 0 이면 danker_v001/v002 의 np.where 라우팅과 비트 단위 동일하다.
-        R 행 : (1-0) * TREATMENT + 0 * DYNAMIC        = TREATMENT
-        F 행 : (1-0.25) * CONTROL + 0.25 * DYNAMIC    = 기존 f_blend
+    track_w = 0 (또는 track 블록 없음) 이면 R_MEMBER = TREATMENT 그대로라
+    danker_v005 와 비트 단위 동일하다. w_r = 0 이면 v001/v002 라우팅과도 동일.
+
+E6 TRACK 멤버:
+    TREATMENT 피처 + 공식 투구추적 로그의 선수별 프로파일 54열.
+    프로파일은 train.py 가 공식 로그(2019~2024)와 공식 두 테이블의 통계 결합
+    매핑만으로 만들어 artifact 에 동결한 은행이다. 추론은 각 행이 자기
+    pitcher_id 로 은행을 **조회만** 한다 — 다른 test 행 참조가 없다.
+    은행에 없는 투수는 전 열 NaN + track_hist_missing=1 (학습과 동일 규약).
 
 L1 시드평균 (E5):
     CONTROL / TREATMENT / DYNAMIC 각각 L1_SEEDS 개의 모델을 산술평균한다.
@@ -82,7 +89,7 @@ import pandas as pd
 # 경로 — 프로젝트 표준
 # =============================================================================
 
-EXPERIMENT_NAME = "danker_v006"
+EXPERIMENT_NAME = "dankerTrack_v001"
 
 DATA_DIR = Path("./data")
 
@@ -360,7 +367,8 @@ def load_artifact(path: Path) -> dict:
         "w_r",
         "l2_apply_f",
         "shift_scale",
-        "outcome_state",
+        "track_enabled",
+        "track_w",
     }
     if float(art.get("shift_scale", 0.0)) != 0.0:
         required_top |= {
@@ -371,19 +379,22 @@ def load_artifact(path: Path) -> dict:
     if missing:
         raise KeyError(f"artifact required keys missing: {missing}")
 
-    if bool(art.get("outcome_state", False)):
-        shared = art.get("shared_l1_state", {})
-        need = ["outcome_history", "outcome_features"]
-        gone = [k for k in need if not shared.get(k)]
-        if gone:
-            raise KeyError(f"outcome_state=True 인데 shared_l1_state 에 없다: {gone}")
-        feats = list(shared["outcome_features"])
-        in_treat = [c for c in feats if c in set(art["treatment"]["features"])]
-        if len(in_treat) != len(feats):
+    # E6 일관성 — track 플래그와 블록이 서로 맞아야 한다.
+    if bool(art["track_enabled"]) and float(art["track_w"]) != 0.0:
+        if not isinstance(art.get("track"), dict):
+            raise KeyError("track_enabled 인데 artifact['track'] 블록이 없다")
+        tw_doc = art.get("l1_routing", {}).get("track_w")
+        if tw_doc is not None and float(tw_doc) != float(art["track_w"]):
             raise RuntimeError(
-                "OUTCOME feature 가 treatment feature 목록과 어긋난다: "
-                f"{len(in_treat)}/{len(feats)}"
+                f"artifact track_w 불일치: top-level={float(art['track_w'])} "
+                f"vs l1_routing={float(tw_doc)}"
             )
+        need_tk = {"models", "features", "cat_cols", "track_cols", "bank_target"}
+        miss_tk = sorted(need_tk - set(art["track"]))
+        if miss_tk:
+            raise KeyError(f"artifact['track'] 필수 키 누락: {miss_tk}")
+    if not (0.0 <= float(art["track_w"]) <= 0.5):
+        raise ValueError(f"track_w out of [0, 0.5]: {art['track_w']}")
 
     assert_supported_flags(art)
     force_deterministic_forests(art)
@@ -1210,114 +1221,6 @@ def _transform_success_state(
     }
 
 
-# =============================================================================
-# FA / S3 — 4-type 시즌내 상태 (train.py 와 **동일한 정의**)
-# =============================================================================
-#
-# artifact 의 outcome_history 만으로 bank 를 복원한다. raw train 을 읽지 않고
-# test 의 다른 행도 보지 않는다 — 현재 행의 asof 값 + 동결 bank 뿐이다.
-
-def _rounded_cumulative_count(n, rate) -> np.ndarray:
-    n = np.asarray(n, dtype=np.float64)
-    rate = np.asarray(rate, dtype=np.float64)
-    out = np.zeros(len(n), dtype=np.float64)
-    ok = (n > 0.0) & np.isfinite(rate)
-    out[ok] = np.rint(n[ok] * rate[ok])
-    return out
-
-
-def _build_frozen_outcome_bank(outcome_history: dict, target_year: int) -> dict:
-    """target_year 미만 시즌만으로 4종 누적 카운트 bank + hist_n 을 복원한다."""
-    id_col = outcome_history["id_col"]
-    kinds = list(outcome_history["kinds"])
-
-    snap = outcome_history["snapshots"]
-    snap = snap.loc[snap[SEASON_COL].astype(int) < int(target_year)]
-    counts = outcome_history["row_counts"]
-    counts = counts.loc[counts[SEASON_COL].astype(int) < int(target_year)]
-
-    if len(snap) == 0:
-        return {
-            "hist_n": {},
-            "count": {k: {} for k in kinds},
-            "prior": {k: 0.0 for k in kinds},
-        }
-
-    # 각 투수의 **가장 최근** 이력 시즌 스냅샷
-    snap = snap.sort_values([id_col, SEASON_COL], kind="mergesort")
-    last = snap.groupby(id_col, sort=False, dropna=False).tail(1)
-
-    hist_n = counts.groupby(id_col, sort=False, dropna=False)["n"].sum()
-
-    max_year = int(snap[SEASON_COL].astype(int).max())
-    priors_all = outcome_history["priors_by_season"]
-    prior_block = priors_all.get(max_year, priors_all.get(str(max_year), {}))
-
-    out = {"hist_n": hist_n.to_dict(), "count": {}, "prior": {}}
-    for kind in kinds:
-        out["count"][kind] = pd.Series(
-            last[f"cnt_{kind}"].to_numpy(dtype=np.float64), index=last[id_col]
-        ).to_dict()
-        val = float(prior_block.get(kind, 0.0))
-        out["prior"][kind] = val if np.isfinite(val) else 0.0
-    return out
-
-
-def _transform_outcome_state(rows: pd.DataFrame, bank: dict, kinds, strengths,
-                             id_col: str) -> pd.DataFrame:
-    ids = rows[id_col]
-    z = pd.DataFrame(index=rows.index)
-
-    hist_n = ids.map(bank["hist_n"]).fillna(0.0).to_numpy(dtype=np.float64)
-    asof_n = (
-        numeric_series(rows, "asof_pitcher_n")
-        .fillna(0.0).clip(lower=0.0).to_numpy(dtype=np.float64)
-    )
-    current_n = np.maximum(asof_n - hist_n, 0.0)
-
-    for kind in kinds:
-        prior = float(bank["prior"][kind])
-        career = numeric_series(rows, f"asof_pitcher_{kind}_rate").to_numpy(dtype=np.float64)
-        cumulative = _rounded_cumulative_count(asof_n, career)
-        hist_c = ids.map(bank["count"][kind]).fillna(0.0).to_numpy(dtype=np.float64)
-        current_c = np.clip(cumulative - hist_c, 0.0, current_n)
-
-        for strength in strengths:
-            z[f"gseason__pitcher_{kind}_rate_k{int(strength)}"] = (
-                (current_c + float(strength) * prior) / (current_n + float(strength))
-            )
-        raw = np.where(current_n > 0.0, current_c / np.maximum(current_n, 1.0), prior)
-        z[f"gseason__pitcher_{kind}_raw"] = raw
-        career_filled = np.where(np.isfinite(career), career, prior)
-        z[f"gseason__pitcher_{kind}_minus_career"] = raw - career_filled
-    return z
-
-
-def build_outcome_test_features(
-    test: pd.DataFrame,
-    outcome_history: dict,
-    outcome_features: list[str],
-    target_year: int,
-) -> pd.DataFrame:
-    kinds = list(outcome_history["kinds"])
-    strengths = list(outcome_history["strengths"])
-    id_col = outcome_history["id_col"]
-
-    bank = _build_frozen_outcome_bank(outcome_history, int(target_year))
-    z = _transform_outcome_state(test, bank, kinds, strengths, id_col)
-
-    missing = [c for c in outcome_features if c not in z.columns]
-    if missing:
-        raise RuntimeError(f"OUTCOME feature 누락: {missing}")
-    z = z.reindex(columns=list(outcome_features))
-    values = z.to_numpy(dtype=np.float64)
-    if not np.isfinite(values).all():
-        bad = [c for c in outcome_features
-               if not np.isfinite(z[c].to_numpy(np.float64)).all()]
-        raise RuntimeError(f"OUTCOME state contains NaN/Inf: {bad}")
-    return z
-
-
 def build_success_test_features(
     test: pd.DataFrame,
     success_history: dict,
@@ -1530,24 +1433,60 @@ def build_treatment_view(
             raise RuntimeError(f"duplicate SUCCESS feature at inference: {col}")
         out[col] = success[col].to_numpy()
 
-    # --- FA / S3: 4-type 시즌내 상태 20열 ---
-    if bool(art.get("outcome_state", False)):
-        outcome = build_outcome_test_features(
-            test=test,
-            outcome_history=shared["outcome_history"],
-            outcome_features=list(shared["outcome_features"]),
-            target_year=int(art["expected_target_year"]),
-        )
-        for col in outcome.columns:
-            if col in out.columns:
-                raise RuntimeError(f"duplicate OUTCOME feature at inference: {col}")
-            out[col] = outcome[col].to_numpy()
-
     features = list(art["treatment"]["features"])
     missing = sorted(set(features) - set(out.columns))
     if missing:
         raise KeyError(f"treatment transformed columns missing: {missing}")
 
+    return out
+
+
+# =============================================================================
+# E6 TRACK — 동결 프로파일 은행 lookup (row-local)
+# =============================================================================
+
+
+def build_track_view(
+    treatment_view: pd.DataFrame,
+    test: pd.DataFrame,
+    art: dict,
+) -> pd.DataFrame:
+    """TRACK 멤버 입력 = TREATMENT 뷰 + 동결 은행의 프로파일 54열.
+
+    은행은 train.py 가 공식 로그(2019~2024)로 만들어 artifact 에 담은 것이고,
+    여기서는 각 행이 자기 pitcher_id 하나로 **조회만** 한다. 다른 test 행을
+    보지 않으므로 행 독립이 자명하고, selfcheck 가 이를 실측한다.
+    """
+    tk = art["track"]
+    track_cols = list(tk["track_cols"])
+    bank = tk["bank_target"]
+    if not isinstance(bank, pd.DataFrame):
+        raise TypeError("artifact['track']['bank_target'] must be DataFrame")
+    if list(bank.columns) != track_cols:
+        raise RuntimeError("TRACK bank 컬럼 순서가 track_cols 와 다르다")
+
+    pids = pd.to_numeric(test["pitcher_id"], errors="raise").astype("int64")
+    if len(bank) == 0:
+        mat = pd.DataFrame(np.nan, index=test.index, columns=track_cols)
+        mat["track_hist_missing"] = 1.0
+    else:
+        mat = bank.reindex(pids.to_numpy())
+        mat.index = test.index
+        found = mat["track_hist_n_log"].notna()
+        mat["track_hist_missing"] = np.where(found, 0.0, 1.0)
+
+    overlap = set(track_cols) & set(treatment_view.columns)
+    if overlap:
+        raise RuntimeError(f"TRACK 열이 TREATMENT 뷰와 겹친다: {sorted(overlap)}")
+
+    out = pd.concat(
+        [treatment_view.reset_index(drop=True), mat.reset_index(drop=True)],
+        axis=1,
+    )
+    features = list(tk["features"])
+    missing = sorted(set(features) - set(out.columns))
+    if missing:
+        raise KeyError(f"track member columns missing: {missing}")
     return out
 
 
@@ -1785,6 +1724,19 @@ def predict(test: pd.DataFrame, art: dict) -> dict[str, np.ndarray]:
         1.0,
     )
 
+    # E6 TRACK member — 동결 은행 lookup + CatBoost 시드평균.
+    track_enabled = bool(art["track_enabled"]) and float(art["track_w"]) != 0.0
+    track_w = float(art["track_w"])
+    if track_enabled:
+        track_view = build_track_view(treatment_view, test, art)
+        pred_track = np.clip(
+            _predict_catboost(art["track"], track_view, "TRACK"),
+            0.0,
+            1.0,
+        )
+    else:
+        pred_track = None
+
     # -----------------------------------------------------------------
     # Dynamic-ASOF F expert
     # -----------------------------------------------------------------
@@ -1842,8 +1794,15 @@ def predict(test: pd.DataFrame, art: dict) -> dict[str, np.ndarray]:
 
     w_row = np.where(f_mask, w_f, w_r).astype(np.float64)
 
+    # E6: R 주 예측기 = (1-track_w)*TREATMENT + track_w*TRACK.
+    # track 중립이면 경로 자체를 우회한다 (부동소수 연산 없음 → v005 비트 동일).
+    if track_enabled:
+        r_member = (1.0 - track_w) * pred_treatment + track_w * pred_track
+    else:
+        r_member = pred_treatment
+
     # 주 예측기는 game_type 으로 고른다 (train.py p_main24 와 동일).
-    p_main = np.where(f_mask, pred_control, pred_treatment)
+    p_main = np.where(f_mask, pred_control, r_member)
 
     # train.py blend() 와 동일한 식·동일한 연산 순서.
     pred_l1 = np.clip(
@@ -1944,7 +1903,7 @@ def predict(test: pd.DataFrame, art: dict) -> dict[str, np.ndarray]:
     if ((final < 0.0) | (final > 1.0)).any():
         raise RuntimeError("final prediction outside [0, 1]")
 
-    return {
+    out = {
         "control": pred_control,
         "treatment": pred_treatment,
         "prev_anchor": prev_anchor,
@@ -1960,6 +1919,10 @@ def predict(test: pd.DataFrame, art: dict) -> dict[str, np.ndarray]:
         "_w_l2": w_l2,
         "_w_shift": w_shift,
     }
+    if track_enabled:
+        out["track"] = pred_track
+        out["r_member"] = r_member
+    return out
 
 
 # =============================================================================
@@ -2002,6 +1965,10 @@ def selfcheck(
     ]
 
     full = predict(test, art)
+    # E6: track 이 켜져 있으면 그 중간 산출물도 행 독립 검사 대상이다.
+    for extra in ("track", "r_member"):
+        if extra in full:
+            keys.insert(keys.index("l1"), extra)
     rng = np.random.default_rng(seed)
 
     selected = rng.choice(
