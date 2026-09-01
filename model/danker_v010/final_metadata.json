@@ -1,0 +1,273 @@
+{
+  "experiment_name": "dankerTrack_v001",
+  "standalone_training": true,
+  "external_model_dependency": false,
+  "external_validation_dependency": false,
+  "compute": {
+    "gpu_enabled": true,
+    "devices": "0:1",
+    "note": "GPU 학습은 CPU 기준선과 비트 비동일 (border_count=254 정렬)"
+  },
+  "architecture": {
+    "L1_R": "(1-0.25)*[(1-0.15)*Treatment + 0.15*Track] + 0.25*Dynamic-ASOF  | Treatment = CatBoost Exact-ASOF5 + HB-EB + R-only PC FULL | Track = Treatment 피처 + 공식 투구추적 프로파일 54열",
+    "L1_F": "(1-0.25)*Control + 0.25*Dynamic-ASOF",
+    "Dynamic": "A_t=(1-alpha)A_prev+alpha*R_t; lambda=1; kappa=100; no b_F",
+    "L2": "ExtraTrees residual adapter; core + Exact-ASOF5; no PC; R-only correction",
+    "L3": false
+  },
+  "validated_source": {
+    "f_blend_experiment": "fanchor_blend_v001",
+    "f_blend_primary_gate": "2024 F gain > 0 for 3/3 CatBoost seeds",
+    "f_blend_temporal_mean_gate": "2021~2024 positive in 4/4 folds",
+    "settings_frozen": {
+      "dynamic_lambda": 1.0,
+      "dynamic_kappa": 100.0,
+      "f_blend_weight": 0.25
+    }
+  },
+  "latest_fold": {
+    "train_seasons": [
+      2019,
+      2020,
+      2021,
+      2022,
+      2023
+    ],
+    "validation_season": 2024,
+    "n_train": 1221585,
+    "n_validation": 253507,
+    "n_R": 223497,
+    "n_F": 30010,
+    "l1_seeds": [
+      42,
+      2026,
+      314
+    ],
+    "control_final_tree_count": [
+      134,
+      133,
+      112
+    ],
+    "treatment_final_tree_count": [
+      169,
+      126,
+      152
+    ],
+    "dynamic_final_tree_count": [
+      120,
+      152,
+      192
+    ],
+    "control_brier_2024": 0.24783215896412938,
+    "treatment_brier_2024": 0.24769367755550914,
+    "dynamic_brier_2024": 0.24780477303080067,
+    "danker_l1_brier_2024": 0.2476707581650928,
+    "danker_l1_bss_2024": 855.1278459043576,
+    "control_brier_2024_F": 0.2475210372188823,
+    "dynamic_brier_2024_F": 0.24735140073675166,
+    "blend_brier_2024_F": 0.2474126077263689,
+    "dynamic_gain_2024_F_pt": 68.3076361067535,
+    "blend_gain_2024_F_pt": 43.66137652007021,
+    "dynamic_lambda": 1.0,
+    "dynamic_kappa": 100.0,
+    "f_blend_weight": 0.25,
+    "dynamic_diag_train": {
+      "lambda": 1.0,
+      "kappa": 100.0,
+      "asof_available_rate": 0.9984700205061458,
+      "mean_current_n": 732.011189561103,
+      "median_current_n": 530.0,
+      "mean_alpha": 0.7578361835098746,
+      "p90_alpha": 0.9468367889420521,
+      "mean_abs_anchor_shift": 0.03885197759289125,
+      "max_abs_anchor_shift": 0.20682404287760736
+    },
+    "dynamic_diag_2024": {
+      "lambda": 1.0,
+      "kappa": 100.0,
+      "asof_available_rate": 0.9984576362782882,
+      "mean_current_n": 687.150240427286,
+      "median_current_n": 505.0,
+      "mean_alpha": 0.7525632134833465,
+      "p90_alpha": 0.9426934097421203,
+      "mean_abs_anchor_shift": 0.03695058224786419,
+      "max_abs_anchor_shift": 0.21485221911915103
+    },
+    "control_fold_seconds": 32.267484188079834,
+    "treatment_fold_seconds": 39.79601788520813,
+    "dynamic_fold_seconds": 34.43903088569641,
+    "dynamic_correction_mean_2024": -0.004002680063002107,
+    "dynamic_correction_std_2024": 0.024318724942166203,
+    "dynamic_correction_abs_mean_2024": 0.018320425333829746,
+    "track_enabled": true,
+    "track_w": 0.15,
+    "track_final_tree_count": [
+      163,
+      173,
+      206
+    ],
+    "track_brier_2024": 0.24767839684496049,
+    "track_fold_seconds": 50.11861753463745,
+    "track_coverage_fold": {
+      "train": 0.4457061931834461,
+      "apply": 0.5198081315308848
+    },
+    "track_w_grid_2024_R_paired": [
+      {
+        "w": 0.0,
+        "d_total_pt": 0.0,
+        "d_level_pt": 0.0,
+        "d_shape_pt": 0.0
+      },
+      {
+        "w": 0.1,
+        "d_total_pt": 1.5081917332610666,
+        "d_level_pt": -0.26328304516278966,
+        "d_shape_pt": 1.771474778421234
+      },
+      {
+        "w": 0.15,
+        "d_total_pt": 2.1802630336583784,
+        "d_level_pt": -0.3954838718050747,
+        "d_shape_pt": 2.5757469054688684
+      },
+      {
+        "w": 0.2,
+        "d_total_pt": 2.797651289955744,
+        "d_level_pt": -0.5280575678217196,
+        "d_shape_pt": 3.325708857778204
+      },
+      {
+        "w": 0.25,
+        "d_total_pt": 3.360356502119843,
+        "d_level_pt": -0.6610041332120246,
+        "d_shape_pt": 4.021360635338134
+      },
+      {
+        "w": 0.3,
+        "d_total_pt": 3.8683786701506744,
+        "d_level_pt": -0.7943235679763911,
+        "d_shape_pt": 4.662702238126444
+      }
+    ]
+  },
+  "final_l1": {
+    "control_tree_count": [
+      134,
+      133,
+      112
+    ],
+    "treatment_tree_count": [
+      169,
+      126,
+      152
+    ],
+    "dynamic_tree_count": [
+      120,
+      152,
+      192
+    ],
+    "control_fit_seconds": 29.363251209259033,
+    "treatment_fit_seconds": 36.20230984687805,
+    "dynamic_fit_seconds": 32.417285442352295,
+    "control_features": 52,
+    "treatment_features": 86,
+    "dynamic_features": 52,
+    "dynamic_full_diag": {
+      "lambda": 1.0,
+      "kappa": 100.0,
+      "asof_available_rate": 0.9984678921721493,
+      "mean_current_n": 724.3014571294536,
+      "median_current_n": 526.0,
+      "mean_alpha": 0.7569299791426113,
+      "p90_alpha": 0.9462654486835035,
+      "mean_abs_anchor_shift": 0.03852520676793132,
+      "max_abs_anchor_shift": 0.21485221911915103
+    },
+    "track_tree_count": [
+      163,
+      173,
+      206
+    ],
+    "track_fit_seconds": 46.28546929359436,
+    "track_features": 140,
+    "track_coverage_full": {
+      "train": 0.45844123620763993
+    }
+  },
+  "l2": {
+    "source_year": 2024,
+    "n_source_rows": 253507,
+    "n_R": 223497,
+    "n_F_protected": 30010,
+    "n_features": 49,
+    "n_core_features": 44,
+    "n_exact_features": 5,
+    "residual_mean_all": -0.008768665751526239,
+    "residual_std_all": 0.49758805116886684,
+    "residual_mean_R": -0.00766356422247813,
+    "residual_std_R": 0.49764112674670763,
+    "adapter_seeds": [
+      42,
+      2026,
+      314
+    ],
+    "final_cfg": {
+      "n_estimators": 120,
+      "max_depth": 10,
+      "min_samples_leaf": 200,
+      "max_features": 0.7
+    },
+    "shrink": 0.5,
+    "fit_diagnostics": [
+      {
+        "adapter_seed": 42,
+        "n_train_R": 223497,
+        "n_train_used": 223497,
+        "l2_train_on_all": false,
+        "n_protected_F": 30010,
+        "fit_elapsed_seconds": 26.675077199935913,
+        "train_correction_mean_R": -0.007663564222478131,
+        "train_correction_std_R": 0.01713663699174561,
+        "train_correction_abs_mean_R": 0.015003015630679028
+      },
+      {
+        "adapter_seed": 2026,
+        "n_train_R": 223497,
+        "n_train_used": 223497,
+        "l2_train_on_all": false,
+        "n_protected_F": 30010,
+        "fit_elapsed_seconds": 26.58383798599243,
+        "train_correction_mean_R": -0.007663564222478129,
+        "train_correction_std_R": 0.016709303976555182,
+        "train_correction_abs_mean_R": 0.01464210033885419
+      },
+      {
+        "adapter_seed": 314,
+        "n_train_R": 223497,
+        "n_train_used": 223497,
+        "l2_train_on_all": false,
+        "n_protected_F": 30010,
+        "fit_elapsed_seconds": 26.537586212158203,
+        "train_correction_mean_R": -0.00766356422247813,
+        "train_correction_std_R": 0.01696118861638397,
+        "train_correction_abs_mean_R": 0.01485775658689201
+      }
+    ]
+  },
+  "rule_compliance": {
+    "test_rows_used_during_training": false,
+    "test_usage_during_training": "header_only",
+    "test_row_aggregation": false,
+    "other_test_rows_used": false,
+    "dynamic_state_source": "current row official ASOF only",
+    "dynamic_historical_source": "official labeled train only",
+    "l2_residual_source": "official 2024 labels + genuine danker 2024 L1 OOT prediction",
+    "exact_asof": "row-local official ASOF minus completed prior-season train labels",
+    "pc_source": "exactly previous labeled season only",
+    "track_profile_source": "official trackman_history.csv, row season 미만 시즌만 집계한 동결 은행; 2025 추론 은행은 <=2024 전체",
+    "track_mapping_source": "official train+trackman 통계 결합으로만 생성 (08_* 게이트, Tier A); test.csv 는 어느 단계에서도 미사용",
+    "track_inference": "row-local pitcher_id lookup only; no test aggregation"
+  },
+  "elapsed_seconds": 1081.6415257453918
+}
