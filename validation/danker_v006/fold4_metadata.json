@@ -1,0 +1,75 @@
+{
+  "train_seasons": [
+    2019,
+    2020,
+    2021,
+    2022,
+    2023
+  ],
+  "validation_season": 2024,
+  "n_train": 1221585,
+  "n_validation": 253507,
+  "n_R": 223497,
+  "n_F": 30010,
+  "l1_seeds": [
+    42,
+    2026,
+    314
+  ],
+  "control_final_tree_count": [
+    216,
+    177,
+    172
+  ],
+  "treatment_final_tree_count": [
+    176,
+    183,
+    242
+  ],
+  "dynamic_final_tree_count": [
+    182,
+    193,
+    210
+  ],
+  "control_brier_2024": 0.24782457508433306,
+  "treatment_brier_2024": 0.2477248365539156,
+  "dynamic_brier_2024": 0.24781734428166782,
+  "danker_l1_brier_2024": 0.24768527661967063,
+  "danker_l1_bss_2024": 849.3159756066237,
+  "control_brier_2024_F": 0.24751070731162647,
+  "dynamic_brier_2024_F": 0.24749004151579476,
+  "blend_brier_2024_F": 0.24743728607892068,
+  "dynamic_gain_2024_F_pt": 8.321509876877276,
+  "blend_gain_2024_F_pt": 29.564577048432035,
+  "dynamic_lambda": 1.0,
+  "dynamic_kappa": 100.0,
+  "f_blend_weight": 0.25,
+  "dynamic_diag_train": {
+    "lambda": 1.0,
+    "kappa": 100.0,
+    "asof_available_rate": 0.9984700205061458,
+    "mean_current_n": 732.011189561103,
+    "median_current_n": 530.0,
+    "mean_alpha": 0.7578361835098746,
+    "p90_alpha": 0.9468367889420521,
+    "mean_abs_anchor_shift": 0.03885197759289125,
+    "max_abs_anchor_shift": 0.20682404287760736
+  },
+  "dynamic_diag_2024": {
+    "lambda": 1.0,
+    "kappa": 100.0,
+    "asof_available_rate": 0.9984576362782882,
+    "mean_current_n": 687.150240427286,
+    "median_current_n": 505.0,
+    "mean_alpha": 0.7525632134833465,
+    "p90_alpha": 0.9426934097421203,
+    "mean_abs_anchor_shift": 0.03695058224786419,
+    "max_abs_anchor_shift": 0.21485221911915103
+  },
+  "control_fold_seconds": 257.0678253173828,
+  "treatment_fold_seconds": 380.69810247421265,
+  "dynamic_fold_seconds": 275.3772442340851,
+  "dynamic_correction_mean_2024": -0.0032034803682027967,
+  "dynamic_correction_std_2024": 0.025139345963044544,
+  "dynamic_correction_abs_mean_2024": 0.01882964675427804
+}
